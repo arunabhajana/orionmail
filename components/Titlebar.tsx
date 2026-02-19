@@ -1,6 +1,7 @@
 "use client";
 
-import { getCurrentWindow } from "@tauri-apps/api/window";
+
+import { Window as TauriWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X, RefreshCw } from "lucide-react";
 import { useEffect, useState, memo } from "react";
 import { cn } from "@/lib/utils";
@@ -94,7 +95,7 @@ function SyncIndicator() {
 
 export default function Titlebar() {
     // Use state to safely access window object only on client
-    const [appWindow, setAppWindow] = useState<any>(null);
+    const [appWindow, setAppWindow] = useState<TauriWindow | null>(null);
 
     useEffect(() => {
         import("@tauri-apps/api/window").then((mod) => {
@@ -130,19 +131,19 @@ export default function Titlebar() {
             <div className="justify-self-end flex gap-1.5 px-1.5">
                 <WindowControl
                     icon={Minus}
-                    onClick={() => appWindow.minimize()}
+                    onClick={() => { appWindow?.minimize(); }}
                     aria-label="Minimize"
                 />
                 <WindowControl
                     icon={Square}
                     iconSize={16}
                     iconRx={4}
-                    onClick={() => appWindow.toggleMaximize()}
+                    onClick={() => { appWindow?.toggleMaximize(); }}
                     aria-label="Maximize"
                 />
                 <WindowControl
                     icon={X}
-                    onClick={() => appWindow.close()}
+                    onClick={() => { appWindow?.close(); }}
                     className="hover:bg-[#e81123] hover:text-white"
                     aria-label="Close"
                 />

@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import EmailList from '@/components/EmailList';
 import EmailDetail from '@/components/EmailDetail';
-import { MOCK_EMAILS, Email } from '@/lib/data';
+import { MOCK_EMAILS } from '@/lib/data';
 
 export default function MainLayout() {
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(MOCK_EMAILS[0].id);

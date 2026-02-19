@@ -1,15 +1,18 @@
 "use client";
 
-import React, { memo } from "react";
+import React, { memo, useState } from "react";
 import {
     Inbox,
     Send,
     File,
     Trash2,
-    Pencil,
-    LucideIcon,
+    Settings,
+    LogOut,
+    UserPlus
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link"; // Import Link for navigation
 
 // --- Types ---
 
@@ -18,10 +21,10 @@ interface SidebarProps {
 }
 
 interface NavItemConfig {
-    icon: LucideIcon;
+    icon: React.ElementType;
     label: string;
     badge?: number;
-    highlight?: boolean; // If true, adds primary background style
+    highlight?: boolean;
 }
 
 interface TagConfig {
@@ -47,85 +50,105 @@ const TAG_ITEMS: TagConfig[] = [
 
 // --- Sub-Components ---
 
-const UserProfile = memo(() => (
-    <div className="p-6 flex items-center gap-3">
-        <div
-            className="w-10 h-10 rounded-full bg-cover bg-center border border-white/40"
-            style={{ backgroundImage: `url('${CURRENT_USER?.avatar || ""}')` }}
-            aria-label="User Avatar"
-        />
-        <div className="flex flex-col overflow-hidden">
-            <span className="text-foreground font-semibold text-sm truncate">
-                {CURRENT_USER.name}
-            </span>
-            <span className="text-muted-foreground text-xs truncate">
-                {CURRENT_USER.email}
-            </span>
+const ProfileDropdown = ({ onClose }: { onClose: () => void }) => (
+    <motion.div
+        initial={{ opacity: 0, y: -10, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -10, scale: 0.95 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="absolute top-full left-0 w-full mt-2 p-1.5 rounded-xl border border-white/20 bg-white/70 backdrop-blur-xl shadow-2xl z-50 origin-top"
+    >
+        <div className="flex flex-col gap-1">
+            <Link href="/settings" onClick={onClose} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-black/5 transition-colors cursor-pointer">
+                <Settings className="w-4 h-4 text-muted-foreground" />
+                <span>Settings</span>
+            </Link>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-black/5 transition-colors cursor-pointer">
+                <UserPlus className="w-4 h-4 text-muted-foreground" />
+                <span>Add Account</span>
+            </div>
+            <div className="h-px bg-black/5 my-1" />
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-600 hover:bg-red-500/10 transition-colors cursor-pointer">
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out</span>
+            </div>
         </div>
-    </div>
-));
-UserProfile.displayName = "UserProfile";
+    </motion.div>
+);
 
-const NavItem = memo(({ item }: { item: NavItemConfig }) => {
-    const Icon = item.icon;
+const UserProfile = memo(() => {
+    const [isOpen, setIsOpen] = useState(false);
 
     return (
-        <div
-            className={cn(
-                "group flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200",
-                // Default state
-                "text-muted-foreground hover:bg-white/30 hover:text-foreground",
-                // Simple scale effect on hover
-                "hover:scale-[1.02]",
-                // Highlight logic (Inbox style)
-                item.highlight && "bg-primary/10 text-primary hover:bg-primary/15"
-            )}
-        >
-            <Icon className="w-5 h-5" strokeWidth={2} />
-            <span className="text-sm font-medium">{item.label}</span>
+        <div className="relative p-4">
+            <AnimatePresence>
+                {isOpen && <ProfileDropdown onClose={() => setIsOpen(false)} />}
+            </AnimatePresence>
 
-            {item.badge && (
-                <span
-                    className={cn(
-                        "ml-auto text-xs font-semibold px-2 py-0.5 rounded-full",
-                        item.highlight
-                            ? "bg-primary/20 text-primary"
-                            : "bg-muted text-muted-foreground"
-                    )}
-                >
-                    {item.badge}
-                </span>
-            )}
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className={cn(
+                    "w-full p-2 flex items-center gap-3 rounded-xl transition-all duration-200 outline-none",
+                    "hover:bg-white/40 border border-transparent hover:border-white/20",
+                    isOpen && "bg-white/40 border-white/20"
+                )}
+            >
+                <div
+                    className="w-10 h-10 rounded-full bg-cover bg-center border border-white/40 shadow-sm"
+                    style={{ backgroundImage: `url('${CURRENT_USER?.avatar || ""}')` }}
+                    aria-label="User Avatar"
+                />
+                <div className="flex flex-col items-start overflow-hidden">
+                    <span className="text-foreground font-semibold text-sm truncate">
+                        {CURRENT_USER.name}
+                    </span>
+                    <span className="text-muted-foreground text-xs truncate">
+                        {CURRENT_USER.email}
+                    </span>
+                </div>
+            </button>
         </div>
     );
 });
+UserProfile.displayName = "UserProfile";
+
+const NavItem = memo(({ icon: Icon, label, badge, highlight }: NavItemConfig) => (
+    <button
+        className={cn(
+            "w-full flex items-center gap-3 pl-4 pr-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 outline-none items-center",
+            highlight
+                ? "bg-white/60 text-foreground shadow-sm ring-1 ring-black/5" // Active state
+                : "text-muted-foreground hover:text-foreground hover:bg-white/40" // Inactive state
+        )}
+    >
+        <Icon
+            className={cn(
+                "w-[18px] h-[18px] transition-colors",
+                highlight ? "text-primary" : "text-muted-foreground"
+            )}
+        />
+        <span className="flex-1 text-left truncate">{label}</span>
+        {badge && (
+            <span className={cn(
+                "text-xs px-1.5 py-0.5 rounded-md font-semibold",
+                highlight
+                    ? "bg-white/50 text-foreground"
+                    : "text-muted-foreground/70"
+            )}>
+                {badge}
+            </span>
+        )}
+    </button>
+));
 NavItem.displayName = "NavItem";
 
-const TagItem = memo(({ tag }: { tag: TagConfig }) => (
-    <div className="flex items-center gap-3 px-3 py-2 rounded-lg text-muted-foreground hover:bg-white/30 hover:text-foreground transition-all duration-200 cursor-pointer hover:scale-[1.02]">
-        <span className={cn("w-2 h-2 rounded-full", tag.colorClass)} />
-        <span className="text-sm font-medium">{tag.label}</span>
-    </div>
+const TagItem = memo(({ label, colorClass }: TagConfig) => (
+    <button className="w-full flex items-center gap-3 pl-4 pr-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/40 transition-all duration-200">
+        <span className={cn("w-2.5 h-2.5 rounded-full ring-1 ring-black/5", colorClass)} />
+        <span className="truncate">{label}</span>
+    </button>
 ));
 TagItem.displayName = "TagItem";
-
-const ComposeButton = memo(() => (
-    <div className="p-4 mt-auto">
-        <button
-            className={cn(
-                "w-full flex items-center justify-center gap-2",
-                "bg-primary text-primary-foreground", // Use semantic primary color
-                "py-2.5 rounded-2xl shadow-lg shadow-primary/20", // Rounded-2xl as requested
-                "hover:bg-primary/90 hover:shadow-primary/30 active:scale-[0.98]",
-                "transition-all duration-200 font-medium text-sm"
-            )}
-        >
-            <Pencil className="w-[18px] h-[18px]" strokeWidth={2.5} />
-            Compose
-        </button>
-    </div>
-));
-ComposeButton.displayName = "ComposeButton";
 
 // --- Main Component ---
 
@@ -139,30 +162,29 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
                 className
             )}
         >
-            {/* 1. User Profile */}
+            {/* 1. Header / User Profile */}
             <UserProfile />
 
-            {/* 2. Navigation List */}
-            <nav className="flex-1 px-3 space-y-1 overflow-y-auto custom-scrollbar">
-                {NAV_ITEMS.map((item) => (
-                    <NavItem key={item.label} item={item} />
-                ))}
+            {/* 2. Navigation Items */}
+            <nav className="flex-1 px-3 py-2 space-y-1 overflow-y-auto custom-scrollbar">
+                <div className="mb-6 space-y-1">
+                    {NAV_ITEMS.map((item) => (
+                        <NavItem key={item.label} {...item} />
+                    ))}
+                </div>
 
                 {/* 3. Tags Section */}
-                <div className="mt-8 px-3">
-                    <h3 className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-3">
+                <div className="mt-6">
+                    <h3 className="px-4 text-xs font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
                         Tags
                     </h3>
                     <div className="space-y-1">
-                        {TAG_ITEMS.map((tag) => (
-                            <TagItem key={tag.label} tag={tag} />
+                        {TAG_ITEMS.map((item) => (
+                            <TagItem key={item.label} {...item} />
                         ))}
                     </div>
                 </div>
             </nav>
-
-            {/* 4. Compose Action */}
-            <ComposeButton />
         </aside>
     );
 };

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useState } from 'react';
+import React, { memo } from 'react';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/data';
