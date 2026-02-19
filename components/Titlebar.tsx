@@ -35,7 +35,6 @@ const WindowControl = memo(({
         className={cn(
             "w-[36px] h-[26px] flex items-center justify-center rounded-md transition-all active:scale-95",
             "bg-transparent hover:bg-black/5 text-foreground/70",
-            "dark:hover:bg-white/10 dark:text-foreground/80", // Dark mode support
             className
         )}
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
@@ -68,8 +67,7 @@ function SyncIndicator() {
         <div
             className={cn(
                 "flex items-center gap-2 px-2 py-0.5 rounded-full select-none transition-all duration-300",
-                "bg-white/40 border border-black/5",
-                "dark:bg-white/5 dark:border-white/10" // Dark mode support
+                "bg-transparent"
             )}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
@@ -145,7 +143,7 @@ export default function Titlebar() {
                 <WindowControl
                     icon={X}
                     onClick={() => appWindow.close()}
-                    className="hover:bg-[#e81123] hover:text-white dark:hover:bg-[#e81123]"
+                    className="hover:bg-[#e81123] hover:text-white"
                     aria-label="Close"
                 />
             </div>

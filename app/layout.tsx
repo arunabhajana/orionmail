@@ -21,7 +21,7 @@ export default function RootLayout({
 }>) {
   // Adding comment to force recompile
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="light" suppressHydrationWarning>
       <body
         className={`${inter.variable} font-sans antialiased`}
         suppressHydrationWarning

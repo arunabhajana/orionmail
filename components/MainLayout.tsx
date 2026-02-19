@@ -1,13 +1,15 @@
 "use client";
 
-import React from 'react';
+import React, { useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import EmailList from '@/components/EmailList';
 import EmailDetail from '@/components/EmailDetail';
-import { cn } from '@/lib/utils'; // Keep utility for merging if needed
+import { MOCK_EMAILS, Email } from '@/lib/data';
 
 export default function MainLayout() {
-    const [selectedEmail, setSelectedEmail] = React.useState<any>(null); // Lift state up for selection
+    const [selectedEmailId, setSelectedEmailId] = useState<string | null>(MOCK_EMAILS[0].id);
+
+    const selectedEmail = MOCK_EMAILS.find(e => e.id === selectedEmailId);
 
     return (
         /* Main Dashboard Container - Full Window Fill */
@@ -18,8 +20,9 @@ export default function MainLayout() {
             {/* Column 2: Message List */}
             <EmailList
                 className="w-[380px] flex flex-col shrink-0"
-                onSelectEmail={setSelectedEmail}
-                selectedEmailId={selectedEmail ? selectedEmail.id : '1'} // Default select first
+                emails={MOCK_EMAILS}
+                selectedEmailId={selectedEmailId}
+                onSelectEmail={(id) => setSelectedEmailId(id)}
             />
 
             {/* Column 3: Reading Pane */}
