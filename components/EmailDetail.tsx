@@ -8,7 +8,8 @@ import {
     MoreVertical,
     AlertOctagon,
     File,
-    Download
+    Download,
+    Star
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/data';
@@ -19,6 +20,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 interface EmailDetailProps {
     className?: string;
     email?: Email | null;
+    onToggleStar?: (emailId: string) => void;
 }
 
 // --- Sub-Components ---
@@ -45,12 +47,22 @@ const ToolbarButton = memo(({
 ));
 ToolbarButton.displayName = "ToolbarButton";
 
-const DetailToolbar = memo(() => (
+const DetailToolbar = memo(({ isStarred, onToggleStar }: { isStarred?: boolean; onToggleStar?: () => void }) => (
     <div className="h-16 px-6 flex items-center justify-between border-b border-border/60 shrink-0 bg-background/50 backdrop-blur-sm">
         <div className="flex items-center gap-2">
             <ToolbarButton icon={Archive} />
             <ToolbarButton icon={AlertOctagon} />
             <ToolbarButton icon={Trash2} />
+            <div className="w-px h-6 bg-border mx-2" />
+            <button
+                onClick={onToggleStar}
+                className="p-2 rounded-lg transition-colors text-muted-foreground hover:bg-muted hover:text-foreground group"
+            >
+                <Star className={cn(
+                    "w-5 h-5 transition-all",
+                    isStarred ? "fill-yellow-400 text-yellow-400" : "group-hover:text-yellow-400"
+                )} />
+            </button>
         </div>
         <div className="flex items-center gap-2">
             <button
@@ -127,7 +139,7 @@ AttachmentCard.displayName = "AttachmentCard";
 
 // --- Main Component ---
 
-const EmailDetail: React.FC<EmailDetailProps> = ({ className, email }) => {
+const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar }) => {
     if (!email) {
         return (
             <section className={cn("flex flex-col h-full bg-white items-center justify-center text-muted-foreground", className)}>
@@ -143,7 +155,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email }) => {
                 className
             )}
         >
-            <DetailToolbar />
+            <DetailToolbar
+                isStarred={email?.starred}
+                onToggleStar={() => email && onToggleStar?.(email.id)}
+            />
 
             {/* Content Scroll Area */}
             <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">

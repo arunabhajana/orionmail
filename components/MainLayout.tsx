@@ -13,9 +13,31 @@ import gsap from 'gsap';
 export default function MainLayout() {
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(MOCK_EMAILS[0].id);
     const [isComposeOpen, setIsComposeOpen] = useState(false);
+
+    // --- New State for Folders & Stars ---
+    const [currentFolder, setCurrentFolder] = useState<string>("inbox");
+    const [emails, setEmails] = useState(MOCK_EMAILS);
+
     const layoutRef = useRef<HTMLDivElement>(null);
 
-    const selectedEmail = MOCK_EMAILS.find(e => e.id === selectedEmailId);
+    // --- Derived State ---
+
+    const filteredEmails = emails.filter(email => {
+        if (currentFolder === "starred") {
+            return email.starred;
+        }
+        return email.folder === currentFolder;
+    });
+
+    const selectedEmail = emails.find(e => e.id === selectedEmailId);
+
+    // --- Handlers ---
+
+    const toggleStar = (emailId: string) => {
+        setEmails(prev => prev.map(email =>
+            email.id === emailId ? { ...email, starred: !email.starred } : email
+        ));
+    };
 
     useLayoutEffect(() => {
         const ctx = gsap.context(() => {
@@ -52,20 +74,24 @@ export default function MainLayout() {
             <Sidebar
                 className="sidebar-anim w-64 flex flex-col shrink-0"
                 onCompose={() => setIsComposeOpen(true)}
+                currentFolder={currentFolder}
+                onFolderSelect={setCurrentFolder}
             />
 
             {/* Column 2: Message List */}
             <EmailList
                 className="list-anim w-[380px] flex flex-col shrink-0"
-                emails={MOCK_EMAILS}
+                emails={filteredEmails}
                 selectedEmailId={selectedEmailId}
                 onSelectEmail={(id) => setSelectedEmailId(id)}
+                onToggleStar={toggleStar}
             />
 
             {/* Column 3: Reading Pane */}
             <EmailDetail
                 className="detail-anim flex-1 flex flex-col"
                 email={selectedEmail}
+                onToggleStar={toggleStar}
             />
 
             {/* Compose Modal Overlay */}

@@ -9,7 +9,8 @@ import {
     Settings,
     LogOut,
     UserPlus,
-    Pencil
+    Pencil,
+    Star
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -20,11 +21,14 @@ import Link from "next/link"; // Import Link for navigation
 interface SidebarProps {
     className?: string;
     onCompose: () => void;
+    currentFolder?: string;
+    onFolderSelect?: (folder: string) => void;
 }
 
 interface NavItemConfig {
     icon: React.ElementType;
     label: string;
+    id: string; // Used for folder selection
     badge?: number;
     highlight?: boolean;
 }
@@ -39,10 +43,11 @@ import { CURRENT_USER } from "@/lib/data";
 // --- Constants ---
 
 const NAV_ITEMS: NavItemConfig[] = [
-    { icon: Inbox, label: "Inbox", badge: 12, highlight: true },
-    { icon: Send, label: "Sent" },
-    { icon: File, label: "Drafts" },
-    { icon: Trash2, label: "Trash" },
+    { icon: Inbox, label: "Inbox", id: "inbox", badge: 12 },
+    { icon: Star, label: "Starred", id: "starred" },
+    { icon: Send, label: "Sent", id: "sent" },
+    { icon: File, label: "Drafts", id: "drafts" },
+    { icon: Trash2, label: "Trash", id: "trash" },
 ];
 
 const TAG_ITEMS: TagConfig[] = [
@@ -114,8 +119,9 @@ const UserProfile = memo(() => {
 });
 UserProfile.displayName = "UserProfile";
 
-const NavItem = memo(({ icon: Icon, label, badge, highlight }: NavItemConfig) => (
+const NavItem = memo(({ icon: Icon, label, id, badge, highlight, onClick }: NavItemConfig & { onClick?: () => void }) => (
     <button
+        onClick={onClick}
         className={cn(
             "w-full flex items-center gap-3 pl-4 pr-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 outline-none items-center",
             highlight
@@ -154,7 +160,7 @@ TagItem.displayName = "TagItem";
 
 // --- Main Component ---
 
-const Sidebar: React.FC<SidebarProps> = ({ className, onCompose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, currentFolder, onFolderSelect }) => {
     return (
         <aside
             className={cn(
@@ -171,7 +177,12 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose }) => {
             <nav className="flex-1 px-3 py-2 space-y-1 overflow-y-auto custom-scrollbar">
                 <div className="mb-6 space-y-1">
                     {NAV_ITEMS.map((item) => (
-                        <NavItem key={item.label} {...item} />
+                        <NavItem
+                            key={item.id}
+                            {...item}
+                            highlight={currentFolder === item.id}
+                            onClick={() => onFolderSelect?.(item.id)}
+                        />
                     ))}
                 </div>
 

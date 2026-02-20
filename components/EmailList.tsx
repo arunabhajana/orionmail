@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/data';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,6 +13,7 @@ interface EmailListProps {
     emails: Email[];
     selectedEmailId: string | null;
     onSelectEmail: (id: string) => void;
+    onToggleStar?: (emailId: string) => void;
 }
 
 // --- Constants ---
@@ -54,11 +55,13 @@ FilterTabs.displayName = "FilterTabs";
 const EmailListItem = memo(({
     email,
     isSelected,
-    onSelect
+    onSelect,
+    onToggleStar
 }: {
     email: Email;
     isSelected: boolean;
     onSelect?: (id: string) => void;
+    onToggleStar?: (id: string) => void;
 }) => (
     <motion.div
         layoutId={`email-${email.id}`}
@@ -76,11 +79,27 @@ const EmailListItem = memo(({
     >
         <div className="flex justify-between items-start mb-1">
             <div className="flex items-center gap-2">
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleStar?.(email.id);
+                    }}
+                    className="group/star p-1 -ml-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                >
+                    <Star
+                        className={cn(
+                            "w-4 h-4 transition-all duration-200",
+                            email.starred
+                                ? "fill-yellow-400 text-yellow-400 scale-110"
+                                : "text-muted-foreground/40 group-hover/star:text-muted-foreground group-hover/star:scale-110"
+                        )}
+                    />
+                </button>
                 {email.unread && !isSelected && (
                     <span className="w-2 h-2 rounded-full bg-primary shrink-0 animate-pulse" />
                 )}
                 <span className={cn(
-                    "text-sm truncate max-w-[180px]",
+                    "text-sm truncate max-w-[160px]",
                     isSelected || email.unread
                         ? "font-semibold text-foreground"
                         : "font-medium text-foreground/80"
@@ -104,7 +123,7 @@ const EmailListItem = memo(({
         <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
             {email.preview}
         </p>
-    </motion.div>
+    </motion.div >
 ));
 EmailListItem.displayName = "EmailListItem";
 
@@ -114,7 +133,8 @@ const EmailList: React.FC<EmailListProps> = ({
     className,
     emails,
     selectedEmailId,
-    onSelectEmail
+    onSelectEmail,
+    onToggleStar
 }) => {
     return (
         <main
@@ -139,6 +159,7 @@ const EmailList: React.FC<EmailListProps> = ({
                             email={email}
                             isSelected={selectedEmailId === email.id}
                             onSelect={onSelectEmail}
+                            onToggleStar={onToggleStar}
                         />
                     ))}
                 </AnimatePresence>
