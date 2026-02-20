@@ -35,3 +35,4 @@ imap = { version = "2.4.1", features = ["native-tls"] }
 native-tls = { version = "0.2.12", features = ["vendored"] }
 base64 = "0.22.1"
 mailparse = "0.16.1"
+rusqlite = { version = "0.38.0", features = ["bundled"] }

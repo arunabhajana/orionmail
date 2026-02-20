@@ -2,10 +2,12 @@ use crate::auth::account::Account;
 use std::time::Duration;
 use native_tls::TlsConnector;
 use mailparse::parse_mail;
+use tauri::AppHandle;
 
 #[derive(Debug, serde::Serialize)]
 pub struct MessageHeader {
     pub uid: u32,
+    pub uid_validity: u32,
     pub subject: String,
     pub from: String,
     pub date: String,
@@ -13,9 +15,10 @@ pub struct MessageHeader {
     pub flagged: bool,
 }
 
-pub async fn get_inbox_messages(account: Account) -> Result<Vec<MessageHeader>, String> {
+pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Result<Vec<MessageHeader>, String> {
     let email = account.email.clone();
     let access_token = account.access_token.clone();
+    let app_handle_clone = app_handle.clone();
 
     let handle = tokio::task::spawn_blocking(move || {
         let domain = "imap.gmail.com";
@@ -47,7 +50,8 @@ pub async fn get_inbox_messages(account: Account) -> Result<Vec<MessageHeader>, 
             .map_err(|(e, _)| format!("IMAP Authentication Failed: {}", e))?;
 
         let result = (|| -> Result<Vec<MessageHeader>, String> {
-            session.select("INBOX").map_err(|e| format!("IMAP Select Error: {}", e))?;
+            let mailbox = session.select("INBOX").map_err(|e| format!("IMAP Select Error: {}", e))?;
+            let uid_validity = mailbox.uid_validity.unwrap_or(0);
 
             let mut uids: Vec<u32> = session.uid_search("ALL")
                 .map_err(|e| format!("IMAP UID Search Error: {}", e))?
@@ -102,6 +106,7 @@ pub async fn get_inbox_messages(account: Account) -> Result<Vec<MessageHeader>, 
 
                     messages.push(MessageHeader {
                         uid: actual_uid,
+                        uid_validity,
                         subject,
                         from,
                         date,
@@ -122,6 +127,11 @@ pub async fn get_inbox_messages(account: Account) -> Result<Vec<MessageHeader>, 
             }
 
             messages.sort_by(|a, b| b.uid.cmp(&a.uid));
+            
+            // Save to local cache
+            if let Err(e) = crate::mail::database::insert_or_update_messages(&app_handle_clone, &messages) {
+                log::warn!("Failed to insert messages into DB cache: {}", e);
+            }
 
             Ok(messages)
         })();

@@ -27,6 +27,9 @@ pub fn run() {
             .build(),
         )?;
       }
+
+      crate::mail::database::init_db(app.handle())?;
+
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -36,7 +39,8 @@ pub fn run() {
       logout_user,
       bootstrap_accounts,
       get_mailboxes,
-      get_inbox_messages
+      get_inbox_messages,
+      get_cached_messages
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
