@@ -4,14 +4,31 @@ use crate::mail::database;
 use mailparse::parse_mail;
 use native_tls::TlsConnector;
 use tauri::AppHandle;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static SYNC_RUNNING: AtomicBool = AtomicBool::new(false);
 
 pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32, String> {
+    if SYNC_RUNNING.swap(true, Ordering::SeqCst) {
+        log::info!("Sync already running, skipping.");
+        return Ok(0);
+    }
+
     let email = account.email.clone();
     let access_token = account.access_token.clone();
     let app_handle_clone = app_handle.clone();
 
     let new_messages_count = tokio::task::spawn_blocking(move || {
-        let last_uid = database::get_highest_uid(&app_handle_clone).unwrap_or(0);
+        // Use a drop guard to ensure SYNC_RUNNING is always reset
+        struct SyncGuard;
+        impl Drop for SyncGuard {
+            fn drop(&mut self) {
+                SYNC_RUNNING.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = SyncGuard;
+
+        let mut last_uid = database::get_highest_uid(&app_handle_clone).unwrap_or(0);
         let stored_validity = database::get_mailbox_validity(&app_handle_clone, "INBOX").unwrap_or(None);
 
         let domain = "imap.gmail.com";
@@ -52,89 +69,38 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
                 log::info!("UIDVALIDITY changed ({} -> {}). Clearing cache.", stored_validity.unwrap_or(0), server_validity);
                 database::clear_messages(&app_handle_clone)?;
                 database::update_mailbox_validity(&app_handle_clone, "INBOX", server_validity)?;
-
-                // Perform full fetch (up to 25 latest for simplicity in this milestone)
-                let mut uids: Vec<u32> = session.uid_search("ALL")
-                    .map_err(|e| format!("IMAP UID Search Error: {}", e))?
-                    .into_iter()
-                    .collect();
-
-                if uids.is_empty() {
-                    return Ok(0);
-                }
-
-                uids.sort();
-                let recent_uids: Vec<_> = uids.into_iter().rev().take(25).collect();
-                let sequence_set = recent_uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-
-                let fetch_results = session.uid_fetch(
-                    &sequence_set,
-                    "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])"
-                ).map_err(|e| format!("IMAP Fetch Error: {}", e))?;
-
-                let mut messages = Vec::new();
-                for msg in fetch_results.iter() {
-                    if let (Some(actual_uid), Some(body)) = (msg.uid, msg.header()) {
-                        let seen = msg.flags().iter().any(|f| match f {
-                            imap::types::Flag::Seen => true,
-                            _ => false,
-                        });
-                        let flagged = msg.flags().iter().any(|f| match f {
-                            imap::types::Flag::Flagged => true,
-                            _ => false,
-                        });
-
-                        let parsed = parse_mail(body).map_err(|e| format!("Header Parse Error: {}", e))?;
-                        
-                        let mut subject = String::new();
-                        let mut from = String::new();
-                        let mut date = String::new();
-
-                        for header in parsed.get_headers() {
-                            let key = header.get_key().to_lowercase();
-                            let val = header.get_value();
-
-                            match key.as_str() {
-                                "subject" => subject = val,
-                                "from" => from = val,
-                                "date" => date = val,
-                                _ => {}
-                            }
-                        }
-
-                        messages.push(MessageHeader {
-                            uid: actual_uid,
-                            uid_validity: server_validity,
-                            subject,
-                            from,
-                            date,
-                            seen,
-                            flagged,
-                        });
-                    }
-                }
-
-                messages.sort_by(|a, b| b.uid.cmp(&a.uid));
-                database::insert_or_update_messages(&app_handle_clone, &messages)?;
-                
-                return Ok(messages.len() as u32);
+                last_uid = 0;
             }
 
             // 2. Fast Exit Check
             if uid_next <= last_uid + 1 {
-                log::info!("No new messages. (uid_next {}, last_uid {})", uid_next, last_uid);
+                log::info!("Inbox already up to date.");
                 return Ok(0);
             }
 
             // 3. Exact Sequence Range Fetch
-            let end_uid = uid_next.saturating_sub(1);
-            if last_uid >= end_uid {
-                log::info!("No new messages (last >= end_uid).");
+            let (start_uid, end_uid, is_bootstrap) = if last_uid == 0 {
+                let bootstrap_window: u32 = 200;
+                let end = uid_next.saturating_sub(1);
+                let start = end.saturating_sub(bootstrap_window).max(1);
+                (start, end, true)
+            } else {
+                let end = uid_next.saturating_sub(1);
+                (last_uid + 1, end, false)
+            };
+
+            if start_uid > end_uid {
+                log::info!("No new messages (start_uid > end_uid).");
                 return Ok(0);
             }
 
-            let range = format!("{}:{}", last_uid + 1, end_uid);
-            log::info!("Fetching interval: {}", range);
+            let range = format!("{}:{}", start_uid, end_uid);
+            
+            if is_bootstrap {
+                log::info!("Bootstrap sync interval: {}", range);
+            } else {
+                log::info!("Fetching interval: {}", range);
+            }
 
             let fetch_results = session.uid_fetch(
                 &range,

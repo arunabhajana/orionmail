@@ -22,6 +22,7 @@ export default function MainLayout() {
     const [isBootstrapping, setIsBootstrapping] = useState(true);
 
     const layoutRef = useRef<HTMLDivElement>(null);
+    const hasSyncedRef = useRef(false);
 
     // --- Derived State ---
 
@@ -93,10 +94,13 @@ export default function MainLayout() {
             await fetchCache();
             setIsBootstrapping(false);
 
-            // Delay background sync to prevent layout jank
-            setTimeout(() => {
-                handleSync(true);
-            }, 500);
+            if (!hasSyncedRef.current) {
+                hasSyncedRef.current = true;
+                // Delay background sync to prevent layout jank
+                setTimeout(() => {
+                    handleSync(true);
+                }, 500);
+            }
         };
 
         loadCache();
