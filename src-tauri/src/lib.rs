@@ -35,7 +35,8 @@ pub fn run() {
       list_accounts,
       logout_user,
       bootstrap_accounts,
-      get_mailboxes
+      get_mailboxes,
+      get_inbox_messages
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

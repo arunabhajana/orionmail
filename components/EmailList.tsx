@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo } from 'react';
-import { Search, Star } from 'lucide-react';
+import { Search, Star, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/data';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -14,6 +14,8 @@ interface EmailListProps {
     selectedEmailId: string | null;
     onSelectEmail: (id: string) => void;
     onToggleStar?: (emailId: string) => void;
+    onSync?: () => void;
+    isSyncing?: boolean;
 }
 
 // --- Constants ---
@@ -134,7 +136,9 @@ const EmailList: React.FC<EmailListProps> = ({
     emails,
     selectedEmailId,
     onSelectEmail,
-    onToggleStar
+    onToggleStar,
+    onSync,
+    isSyncing
 }) => {
     return (
         <main
@@ -146,7 +150,22 @@ const EmailList: React.FC<EmailListProps> = ({
         >
             {/* 1. Header Area with Search & Filter */}
             <div className="p-4 space-y-4 shrink-0 z-10">
-                <SearchBar />
+                <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                        <SearchBar />
+                    </div>
+                    <button
+                        onClick={onSync}
+                        disabled={isSyncing}
+                        className={cn(
+                            "p-2 rounded-lg bg-white/50 border border-white/20 hover:bg-white/80 transition-colors flex items-center justify-center",
+                            isSyncing && "opacity-70 cursor-not-allowed"
+                        )}
+                        title="Sync Emails"
+                    >
+                        <RefreshCw className={cn("w-4 h-4 text-muted-foreground", isSyncing && "animate-spin text-primary")} />
+                    </button>
+                </div>
                 <FilterTabs />
             </div>
 

@@ -40,3 +40,11 @@ pub async fn get_mailboxes(app_handle: AppHandle) -> Result<Vec<crate::mail::ima
     
     crate::mail::imap_client::get_mailboxes(account).await
 }
+
+#[command]
+pub async fn get_inbox_messages(app_handle: AppHandle) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
+    let account = session::get_active_account(&app_handle)
+        .ok_or_else(|| "No active account".to_string())?;
+    
+    crate::mail::message_list::get_inbox_messages(account).await
+}
