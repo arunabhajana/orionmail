@@ -10,6 +10,9 @@ import { AnimatePresence } from 'framer-motion';
 import ComposeModal from '@/components/ComposeModal';
 import gsap from 'gsap';
 import { invoke } from '@tauri-apps/api/core';
+import DOMPurify from 'isomorphic-dompurify';
+import { useSync } from '@/components/SyncContext';
+import LogoSpinner from '@/components/LogoSpinner';
 
 export default function MainLayout() {
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
@@ -18,7 +21,7 @@ export default function MainLayout() {
     // --- New State for Folders & Stars ---
     const [currentFolder, setCurrentFolder] = useState<string>("inbox");
     const [emails, setEmails] = useState<Email[]>([]);
-    const [isSyncing, setIsSyncing] = useState(false);
+    const { isSyncing, setIsSyncing } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
 
     const layoutRef = useRef<HTMLDivElement>(null);
@@ -52,7 +55,7 @@ export default function MainLayout() {
                     sender: msg.from.split('<')[0].trim() || msg.from,
                     senderEmail: msg.from,
                     subject: msg.subject || '(No Subject)',
-                    preview: 'Message body not fetched.',
+                    preview: msg.snippet ? DOMPurify.sanitize(msg.snippet, { ALLOWED_TAGS: [] }).replace(/\s+/g, ' ').substring(0, 100) : 'Message body not fetched.',
                     avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.from.split('<')[0].trim() || msg.from)}&background=random`,
                     time: new Date(msg.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                     date: msg.date,
@@ -60,7 +63,7 @@ export default function MainLayout() {
                     folder: "inbox" as const,
                     tags: [],
                     starred: msg.flagged,
-                    body: '<p>Message body not fetched in this milestone.</p>',
+                    body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
                 }));
                 setEmails(formattedEmails);
             }
@@ -138,7 +141,11 @@ export default function MainLayout() {
     }, [isBootstrapping]);
 
     if (isBootstrapping) {
-        return <div className="flex h-full w-full items-center justify-center bg-white/40"><p className="text-muted-foreground animate-pulse">Loading Inbox...</p></div>;
+        return (
+            <div className="flex h-full w-full items-center justify-center bg-slate-50/50 backdrop-blur-sm">
+                <LogoSpinner />
+            </div>
+        );
     }
 
     return (

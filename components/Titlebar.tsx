@@ -5,6 +5,7 @@ import { Window as TauriWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X, RefreshCw } from "lucide-react";
 import { useEffect, useState, memo } from "react";
 import { cn } from "@/lib/utils";
+import { useSync } from "@/components/SyncContext";
 
 // --- Types & Interfaces ---
 
@@ -56,13 +57,7 @@ WindowControl.displayName = "WindowControl";
  * Cycles between 'Online' and 'Syncing' states.
  */
 function SyncIndicator() {
-    const [isSyncing, setIsSyncing] = useState(false);
-
-    useEffect(() => {
-        // Simulate sync cycle every 5 seconds
-        const interval = setInterval(() => setIsSyncing(prev => !prev), 5000);
-        return () => clearInterval(interval);
-    }, []);
+    const { isSyncing } = useSync();
 
     return (
         <div

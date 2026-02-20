@@ -1,6 +1,7 @@
 use crate::auth::account::Account;
 use crate::mail::message_list::MessageHeader;
 use crate::mail::database;
+use crate::mail::message_body::prefetch_recent_bodies;
 use mailparse::parse_mail;
 use native_tls::TlsConnector;
 use tauri::AppHandle;
@@ -145,6 +146,7 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
                         date,
                         seen,
                         flagged,
+                        snippet: None,
                     });
                 }
             }
@@ -161,6 +163,12 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?;
+
+    // Fire and forget prefetching of bodies without blocking UI
+    let prefetch_handle = app_handle.clone();
+    tokio::spawn(async move {
+        prefetch_recent_bodies(prefetch_handle, account).await;
+    });
 
     new_messages_count
 }

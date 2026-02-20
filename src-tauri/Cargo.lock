@@ -87,6 +87,7 @@ dependencies = [
  "mailparse",
  "native-tls",
  "oauth2",
+ "once_cell",
  "open",
  "reqwest 0.13.2",
  "rusqlite",

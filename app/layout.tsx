@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import TitlebarWrapper from "@/components/TitlebarWrapper"; // Wrapper handles client-side only import
 import { AuthProvider } from "@/components/AuthContext";
+import { SyncProvider } from "@/components/SyncContext";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -28,12 +29,14 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <AuthProvider>
-          <div className="app-window">
-            <TitlebarWrapper />
-            <div className="pt-[30px] h-full w-full">
-              {children}
+          <SyncProvider>
+            <div className="app-window">
+              <TitlebarWrapper />
+              <div className="pt-[30px] h-full w-full">
+                {children}
+              </div>
             </div>
-          </div>
+          </SyncProvider>
         </AuthProvider>
       </body>
     </html>

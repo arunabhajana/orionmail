@@ -14,6 +14,8 @@ import {
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/data';
 import { motion, AnimatePresence } from 'framer-motion';
+import { invoke } from '@tauri-apps/api/core';
+import DOMPurify from 'isomorphic-dompurify';
 
 // --- Types ---
 
@@ -140,6 +142,42 @@ AttachmentCard.displayName = "AttachmentCard";
 // --- Main Component ---
 
 const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar }) => {
+    const [bodyContent, setBodyContent] = React.useState<string>("");
+    const [isLoadingBody, setIsLoadingBody] = React.useState<boolean>(false);
+
+    React.useEffect(() => {
+        let isMounted = true;
+        if (!email?.id) {
+            setBodyContent("");
+            return;
+        }
+
+        const fetchBody = async () => {
+            setIsLoadingBody(true);
+            try {
+                const fetchedBody: string = await invoke('get_message_body', { uid: Number(email.id) });
+                if (isMounted) {
+                    setBodyContent(fetchedBody || "<p>Message has no content.</p>");
+                }
+            } catch (err) {
+                console.error("Failed to load message body:", err);
+                if (isMounted) {
+                    setBodyContent(`<p class="text-red-500">Error loading message body: ${err}</p>`);
+                }
+            } finally {
+                if (isMounted) {
+                    setIsLoadingBody(false);
+                }
+            }
+        };
+
+        fetchBody();
+
+        return () => {
+            isMounted = false;
+        };
+    }, [email?.id]);
+
     if (!email) {
         return (
             <section className={cn(
@@ -183,10 +221,17 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                     >
                         <MessageHeader email={email} />
 
-                        <article
-                            className="prose prose-slate max-w-none"
-                            dangerouslySetInnerHTML={{ __html: email.body }}
-                        />
+                        {isLoadingBody ? (
+                            <div className="flex h-32 items-center justify-center">
+                                <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary"></div>
+                                <span className="ml-3 text-sm text-muted-foreground animate-pulse">Fetching message body...</span>
+                            </div>
+                        ) : (
+                            <article
+                                className="prose prose-slate max-w-none"
+                                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodyContent, { FORBID_TAGS: ['style', 'script', 'link', 'meta'] }) }}
+                            />
+                        )}
 
                         {email.attachments?.map((att, i) => (
                             <AttachmentCard key={i} attachment={att} />

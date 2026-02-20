@@ -13,6 +13,7 @@ pub struct MessageHeader {
     pub date: String,
     pub seen: bool,
     pub flagged: bool,
+    pub snippet: Option<String>,
 }
 
 pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Result<Vec<MessageHeader>, String> {
@@ -112,6 +113,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                         date,
                         seen,
                         flagged,
+                        snippet: None,
                     });
                 }
             }

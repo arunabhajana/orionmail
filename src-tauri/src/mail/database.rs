@@ -13,7 +13,6 @@ pub fn get_db_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
 pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     let db_path = get_db_path(app_handle)?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
             uid INTEGER NOT NULL,
@@ -23,10 +22,19 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             date TEXT,
             seen INTEGER,
             flagged INTEGER,
+            body TEXT,
+            body_fetched INTEGER DEFAULT 0,
             PRIMARY KEY(uid, uid_validity)
         )",
         (),
     ).map_err(|e| e.to_string())?;
+
+    // Graceful schema migrations for existing local databases
+    let _ = conn.execute("ALTER TABLE messages ADD COLUMN body TEXT", ());
+    let _ = conn.execute("ALTER TABLE messages ADD COLUMN body_fetched INTEGER DEFAULT 0", ());
+
+    // Performance Index
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_uid ON messages(uid DESC)", ()).map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS mailbox_state (
@@ -91,8 +99,14 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
         let mut stmt = tx.prepare(
-            "INSERT OR REPLACE INTO messages (uid, uid_validity, subject, sender, date, seen, flagged)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+            "INSERT INTO messages (uid, uid_validity, subject, sender, date, seen, flagged)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(uid, uid_validity) DO UPDATE SET
+                subject = excluded.subject,
+                sender = excluded.sender,
+                date = excluded.date,
+                seen = excluded.seen,
+                flagged = excluded.flagged"
         ).map_err(|e| e.to_string())?;
 
         for msg in messages {
@@ -117,7 +131,7 @@ pub fn load_cached_messages(app_handle: &AppHandle, limit: usize) -> Result<Vec<
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     let mut stmt = conn.prepare(
-        "SELECT uid, uid_validity, subject, sender, date, seen, flagged 
+        "SELECT uid, uid_validity, subject, sender, date, seen, flagged, substr(body, 1, 150)
          FROM messages 
          ORDER BY uid DESC 
          LIMIT ?"
@@ -132,6 +146,7 @@ pub fn load_cached_messages(app_handle: &AppHandle, limit: usize) -> Result<Vec<
             date: row.get(4)?,
             seen: row.get::<_, i32>(5)? != 0,
             flagged: row.get::<_, i32>(6)? != 0,
+            snippet: row.get(7).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -141,4 +156,48 @@ pub fn load_cached_messages(app_handle: &AppHandle, limit: usize) -> Result<Vec<
     }
 
     Ok(messages)
+}
+
+pub fn get_message_body_cache(app_handle: &AppHandle, uid: u32, uid_validity: u32) -> Result<Option<String>, String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare("SELECT body FROM messages WHERE uid = ?1 AND uid_validity = ?2 AND body_fetched = 1").unwrap();
+    let body: Option<String> = stmt.query_row([uid, uid_validity], |row| row.get(0)).ok();
+
+    Ok(body)
+}
+
+pub fn update_message_body(app_handle: &AppHandle, uid: u32, uid_validity: u32, body: &str) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE messages SET body = ?1, body_fetched = 1 WHERE uid = ?2 AND uid_validity = ?3",
+        rusqlite::params![body, uid, uid_validity],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn get_unfetched_recent_uids(app_handle: &AppHandle, limit: u32) -> Result<Vec<(u32, u32)>, String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT uid, uid_validity FROM messages 
+         WHERE body_fetched = 0 AND uid > (SELECT MAX(uid) - 200 FROM messages) 
+         ORDER BY uid DESC LIMIT ?"
+    ).unwrap();
+
+    let uid_iter = stmt.query_map([limit as i64], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    }).map_err(|e| e.to_string())?;
+
+    let mut uids = Vec::new();
+    for u in uid_iter {
+        uids.push(u.map_err(|e| e.to_string())?);
+    }
+
+    Ok(uids)
 }
