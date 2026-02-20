@@ -142,8 +142,18 @@ AttachmentCard.displayName = "AttachmentCard";
 const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar }) => {
     if (!email) {
         return (
-            <section className={cn("flex flex-col h-full bg-white items-center justify-center text-muted-foreground", className)}>
-                <p>Select an email to view</p>
+            <section className={cn(
+                "flex flex-col h-full items-center justify-center text-muted-foreground gap-4",
+                "bg-white/40 backdrop-blur-3xl", // Glass effect
+                className
+            )}>
+                <div className="w-16 h-16 rounded-2xl bg-black/5 dark:bg-white/10 flex items-center justify-center">
+                    <File className="w-8 h-8 opacity-50" />
+                </div>
+                <div className="text-center">
+                    <h3 className="font-semibold text-foreground text-lg">No Message Selected</h3>
+                    <p className="text-sm opacity-70">Select an email to view its details</p>
+                </div>
             </section>
         );
     }

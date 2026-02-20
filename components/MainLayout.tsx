@@ -11,7 +11,7 @@ import ComposeModal from '@/components/ComposeModal';
 import gsap from 'gsap';
 
 export default function MainLayout() {
-    const [selectedEmailId, setSelectedEmailId] = useState<string | null>(MOCK_EMAILS[0].id);
+    const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
     const [isComposeOpen, setIsComposeOpen] = useState(false);
 
     // --- New State for Folders & Stars ---
