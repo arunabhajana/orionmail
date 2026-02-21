@@ -9,7 +9,7 @@ pub struct ImapSession {
     pub last_used: Instant,
 }
 
-pub static GLOBAL_SESSION: Lazy<Mutex<Option<ImapSession>>> = Lazy::new(|| Mutex::new(None));
+pub static GLOBAL_SESSION: Lazy<Mutex<Vec<ImapSession>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 pub struct SessionGuard {
     pub session: Option<ImapSession>,
@@ -22,9 +22,16 @@ impl Drop for SessionGuard {
             return; // Poisoned/Dead session; do not restore to global pool.
         }
 
-        if let Some(session) = self.session.take() {
+        if let Some(mut session) = self.session.take() {
             if let Ok(mut lock) = GLOBAL_SESSION.lock() {
-                *lock = Some(session);
+                // Limit the pool size to a maximum of 3 concurrent idle connections
+                // to prevent connection leaks or holding too many sockets.
+                if lock.len() < 3 {
+                    lock.push(session);
+                } else {
+                    log::info!("IMAP Session pool full. Dropping excess session.");
+                    let _ = session.session.logout();
+                }
             }
         }
     }
@@ -74,20 +81,21 @@ pub fn execute_with_session<F, R>(account: &Account, mut f: F) -> Result<R, Stri
 where
     F: FnMut(&mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>) -> Result<R, String>,
 {
-    // Try to pop the session from the global pool.
-    let mut session_opt = {
+    // Try to pop a valid session from the global pool.
+    let mut session_opt = None;
+    
+    {
         let mut lock = GLOBAL_SESSION.lock().map_err(|_| "Failed to lock global session")?;
-        lock.take() // Extract session, freeing the lock immediately for other threads.
-    };
-
-    // Lazy cleanup: If it exists but is older than 30s, drop it and force recreation.
-    if let Some(mut s) = session_opt.take() {
-        if s.last_used.elapsed().as_secs() > 30 {
-            log::info!("Session idle > 30s, destroying.");
-            let _ = s.session.logout(); // Best effort clean close
-            // session_opt is already None
-        } else {
-            session_opt = Some(s);
+        
+        while let Some(mut s) = lock.pop() {
+            if s.last_used.elapsed().as_secs() > 30 {
+                log::info!("Session idle > 30s, destroying.");
+                let _ = s.session.logout(); // Best effort clean close
+                // Keep looping to find a fresh one
+            } else {
+                session_opt = Some(s);
+                break; // Found a good one!
+            }
         }
     }
 

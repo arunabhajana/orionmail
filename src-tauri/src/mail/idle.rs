@@ -159,6 +159,7 @@ async fn run_idle_loop(
         // IDLE Loop
         // ===============================
         loop {
+            log::info!("IMAP IDLE: Waiting for changes...");
             let outcome = session
                 .idle()
                 .map_err(|e| format!("IDLE Start Error: {}", e))?
@@ -167,36 +168,43 @@ async fn run_idle_loop(
 
             match outcome {
                 imap::extensions::idle::WaitOutcome::MailboxChanged => {
-
+                    log::info!("IMAP IDLE: MailboxChanged event received.");
+                    
                     loop {
                         match session.unsolicited_responses.try_recv() {
                             Ok(response) => {
+                                log::debug!("IMAP IDLE: Unsolicited response: {:?}", response);
                                 match response {
-                                    imap::types::UnsolicitedResponse::Exists(count)
-                                    | imap::types::UnsolicitedResponse::Recent(count) => {
-
+                                    imap::types::UnsolicitedResponse::Exists(count) => {
                                         if count > last_exists {
-                                            log::info!(
-                                                "IMAP IDLE: New mail detected ({} > {}).",
-                                                count,
-                                                last_exists
-                                            );
-
-                                            let _ = tx.blocking_send(count);
+                                            log::info!("IMAP IDLE: New mail detected (EXISTS {} > {}).", count, last_exists);
+                                        } else if count < last_exists {
+                                            log::info!("IMAP IDLE: Mail removed (EXISTS {} < {}).", count, last_exists);
                                         }
-
                                         last_exists = count;
+                                    }
+                                    imap::types::UnsolicitedResponse::Recent(count) => {
+                                        log::info!("IMAP IDLE: RECENT count is now {}.", count);
+                                    }
+                                    imap::types::UnsolicitedResponse::Expunge(id) => {
+                                        log::info!("IMAP IDLE: EXPUNGE received for ID {}.", id);
+                                        last_exists = last_exists.saturating_sub(1);
                                     }
                                     _ => {}
                                 }
                             }
-                            Err(_) => break,
+                            Err(_) => break, // No more responses queued
                         }
                     }
+
+                    // Always notify coordinator of a change just to be safe.
+                    // The coordinator limits rapid-fire syncs and delegates to `sync_inbox`.
+                    log::info!("IMAP IDLE: Signalling UI/Backend sync.");
+                    let _ = tx.blocking_send(last_exists);
                 }
 
                 imap::extensions::idle::WaitOutcome::TimedOut => {
-                    log::info!("IMAP IDLE: 15-minute refresh reached.");
+                    log::info!("IMAP IDLE: 15-minute refresh timeout reached. Renewing IDLE.");
                 }
             }
         }
