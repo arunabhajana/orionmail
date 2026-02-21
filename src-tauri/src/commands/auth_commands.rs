@@ -30,7 +30,7 @@ pub fn logout_user(app_handle: AppHandle, account_id: String) -> Result<(), Stri
 
 #[command]
 pub async fn bootstrap_accounts(app_handle: AppHandle) -> Result<crate::auth::bootstrap::BootstrapResult, String> {
-    Ok(crate::auth::bootstrap::bootstrap_accounts(&app_handle))
+    Ok(crate::auth::bootstrap::bootstrap_accounts(&app_handle).await)
 }
 
 #[command]

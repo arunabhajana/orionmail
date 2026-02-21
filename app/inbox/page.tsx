@@ -11,7 +11,7 @@ interface Mailbox {
 }
 
 export default function InboxPage() {
-  const { user, loading, mailboxLoading, setMailboxLoading, needsRefresh } = useAuth();
+  const { user, loading, mailboxLoading, setMailboxLoading, needsRefresh, isBootstrappingInbox } = useAuth();
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,6 +55,18 @@ export default function InboxPage() {
         <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
           <div className="text-slate-500 font-medium animate-pulse">Connecting to mailbox...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // If initial inbox sync is running after first login
+  if (isBootstrappingInbox) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+          <div className="text-slate-500 font-medium animate-pulse">Initializing your Inbox...</div>
         </div>
       </div>
     );

@@ -23,6 +23,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             seen INTEGER,
             flagged INTEGER,
             body TEXT,
+            preview TEXT,
             body_fetched INTEGER DEFAULT 0,
             PRIMARY KEY(uid, uid_validity)
         )",
@@ -31,6 +32,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
 
     // Graceful schema migrations for existing local databases
     let _ = conn.execute("ALTER TABLE messages ADD COLUMN body TEXT", ());
+    let _ = conn.execute("ALTER TABLE messages ADD COLUMN preview TEXT", ());
     let _ = conn.execute("ALTER TABLE messages ADD COLUMN body_fetched INTEGER DEFAULT 0", ());
 
     // Performance Index
@@ -131,7 +133,7 @@ pub fn load_cached_messages(app_handle: &AppHandle, limit: usize) -> Result<Vec<
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     let mut stmt = conn.prepare(
-        "SELECT uid, uid_validity, subject, sender, date, seen, flagged, substr(body, 1, 150)
+        "SELECT uid, uid_validity, subject, sender, date, seen, flagged, preview
          FROM messages 
          ORDER BY uid DESC 
          LIMIT ?"
@@ -168,13 +170,13 @@ pub fn get_message_body_cache(app_handle: &AppHandle, uid: u32, uid_validity: u3
     Ok(body)
 }
 
-pub fn update_message_body(app_handle: &AppHandle, uid: u32, uid_validity: u32, body: &str) -> Result<(), String> {
+pub fn update_message_body(app_handle: &AppHandle, uid: u32, uid_validity: u32, body: &str, preview: &str) -> Result<(), String> {
     let db_path = get_db_path(app_handle)?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     conn.execute(
-        "UPDATE messages SET body = ?1, body_fetched = 1 WHERE uid = ?2 AND uid_validity = ?3",
-        rusqlite::params![body, uid, uid_validity],
+        "UPDATE messages SET body = ?1, preview = ?2, body_fetched = 1 WHERE uid = ?3 AND uid_validity = ?4",
+        rusqlite::params![body, preview, uid, uid_validity],
     ).map_err(|e| e.to_string())?;
 
     Ok(())

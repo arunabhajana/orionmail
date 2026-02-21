@@ -16,6 +16,8 @@ interface AuthContextType {
     loading: boolean;
     mailboxLoading: boolean;
     setMailboxLoading: (loading: boolean) => void;
+    isBootstrappingInbox: boolean;
+    setBootstrappingInbox: (bootstrap: boolean) => void;
     needsRefresh: boolean;
     isAuthenticated: boolean;
     loginWithGoogle: () => Promise<void>;
@@ -33,6 +35,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [loading, setLoading] = useState(true);
     const [needsRefresh, setNeedsRefresh] = useState(false);
     const [mailboxLoading, setMailboxLoading] = useState(false);
+    const [isBootstrappingInbox, setBootstrappingInbox] = useState(false);
     const router = useRouter();
 
     useEffect(() => {
@@ -72,7 +75,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             const profile = await invoke<User>("login_google");
             setUser(profile);
             localStorage.setItem("orion_user", JSON.stringify(profile));
+
+            // First login loading sequence
+            setBootstrappingInbox(true);
             router.push("/inbox");
+
+            // Kick off sync
+            invoke("sync_inbox").catch(console.error);
+
+            // Poll for local database population
+            const pollInterval = setInterval(async () => {
+                try {
+                    const messages = await invoke<any[]>("get_cached_messages");
+                    if (messages && messages.length > 0) {
+                        setBootstrappingInbox(false);
+                        clearInterval(pollInterval);
+                    }
+                } catch (err) {
+                    // Safe to ignore, probably DB not fully ready
+                }
+            }, 500);
+
+            // Safety timeout (2 minutes max)
+            setTimeout(() => {
+                setBootstrappingInbox(false);
+                clearInterval(pollInterval);
+            }, 120000);
+
         } catch (error) {
             console.error("Auth: Google login failed", error);
         } finally {
@@ -101,6 +130,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 loading,
                 mailboxLoading,
                 setMailboxLoading,
+                isBootstrappingInbox,
+                setBootstrappingInbox,
                 needsRefresh,
                 isAuthenticated: !!user,
                 loginWithGoogle,

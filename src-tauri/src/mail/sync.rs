@@ -164,11 +164,19 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
     .await
     .map_err(|e| format!("Task failed: {}", e))?;
 
-    // Fire and forget prefetching of bodies without blocking UI
+    // For initial bootstraps (where we pull 200 messages), aggressively block the UI 
+    // loading screen until the first 10 bodies have also been successfully fetched and cached.
+    let is_bootstrap = *new_messages_count.as_ref().unwrap_or(&0) >= 50;
     let prefetch_handle = app_handle.clone();
-    tokio::spawn(async move {
+    
+    if is_bootstrap {
+        log::info!("Blocking UI for Bootstrap Body Prefetch...");
         prefetch_recent_bodies(prefetch_handle, account).await;
-    });
+    } else {
+        tokio::spawn(async move {
+            prefetch_recent_bodies(prefetch_handle, account).await;
+        });
+    }
 
     new_messages_count
 }

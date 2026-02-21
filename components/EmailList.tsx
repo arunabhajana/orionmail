@@ -5,6 +5,11 @@ import { Search, Star, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/data';
 import { motion, AnimatePresence } from 'framer-motion';
+import { invoke } from '@tauri-apps/api/core';
+
+// Global cache to prevent duplicate fetches across remounts and concurrent requests
+const fetchedPreviewUIDs = new Set<string>();
+const fetchingUIDs = new Set<string>();
 
 // --- Types ---
 
@@ -64,69 +69,127 @@ const EmailListItem = memo(({
     isSelected: boolean;
     onSelect?: (id: string) => void;
     onToggleStar?: (id: string) => void;
-}) => (
-    <motion.div
-        layoutId={`email-${email.id}`}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        whileHover={{ scale: 1.01, backgroundColor: "rgba(255,255,255,0.4)" }}
-        onClick={() => onSelect?.(email.id)}
-        className={cn(
-            "px-4 py-4 cursor-pointer transition-all duration-200 border-b border-black/5",
-            isSelected
-                ? "bg-primary/10 border-l-4 border-l-primary" // Selected
-                : "border-l-4 border-transparent" // Regular
-        )}
-    >
-        <div className="flex justify-between items-start mb-1">
-            <div className="flex items-center gap-2">
-                <button
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleStar?.(email.id);
-                    }}
-                    className="group/star p-1 -ml-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-                >
-                    <Star
-                        className={cn(
-                            "w-4 h-4 transition-all duration-200",
-                            email.starred
-                                ? "fill-yellow-400 text-yellow-400 scale-110"
-                                : "text-muted-foreground/40 group-hover/star:text-muted-foreground group-hover/star:scale-110"
-                        )}
-                    />
-                </button>
-                {email.unread && !isSelected && (
-                    <span className="w-2 h-2 rounded-full bg-primary shrink-0 animate-pulse" />
-                )}
+}) => {
+    const [previewText, setPreviewText] = React.useState(email.preview || "");
+    const itemRef = React.useRef<HTMLDivElement>(null);
+
+    React.useEffect(() => {
+        // If we already fetched it globally, we don't need to observe
+        if (fetchedPreviewUIDs.has(email.id)) return;
+
+        let debounceTimer: NodeJS.Timeout;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                const [entry] = entries;
+                if (entry.isIntersecting) {
+                    debounceTimer = setTimeout(async () => {
+                        if (fetchedPreviewUIDs.has(email.id) || fetchingUIDs.has(email.id)) return;
+
+                        fetchingUIDs.add(email.id);
+                        try {
+                            const body: string = await invoke("get_message_body", { uid: Number(email.id) });
+                            if (body) {
+                                // Strip hidden items, strip HTML, and normalize whitespace
+                                const stripped = body
+                                    .replace(/<[^>]*display\s*:\s*none[^>]*>[\s\S]*?<\/[^>]+>/gi, ' ')
+                                    .replace(/<[^>]+>/g, ' ')
+                                    .replace(/\s+/g, ' ')
+                                    .trim();
+                                const newPreview = stripped.length > 160 ? stripped.substring(0, 160) + '...' : stripped;
+                                if (newPreview) {
+                                    setPreviewText(newPreview);
+                                }
+                                fetchedPreviewUIDs.add(email.id);
+                            }
+                        } catch (err) {
+                            console.error("Failed to hydrate preview for UID", email.id, err);
+                        } finally {
+                            fetchingUIDs.delete(email.id);
+                        }
+                    }, 150); // Debounce to allow fast scrolling without firing
+                } else {
+                    clearTimeout(debounceTimer);
+                }
+            },
+            { threshold: 0.1, rootMargin: '100px' }
+        );
+
+        if (itemRef.current) {
+            observer.observe(itemRef.current);
+        }
+
+        return () => {
+            clearTimeout(debounceTimer);
+            observer.disconnect();
+        };
+    }, [email.id]);
+
+    return (
+        <motion.div
+            ref={itemRef}
+            layoutId={`email-${email.id}`}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            whileHover={{ scale: 1.01, backgroundColor: "rgba(255,255,255,0.4)" }}
+            onClick={() => onSelect?.(email.id)}
+            className={cn(
+                "px-4 py-4 cursor-pointer transition-all duration-200 border-b border-black/5",
+                isSelected
+                    ? "bg-primary/10 border-l-4 border-l-primary" // Selected
+                    : "border-l-4 border-transparent" // Regular
+            )}
+        >
+            <div className="flex justify-between items-start mb-1">
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleStar?.(email.id);
+                        }}
+                        className="group/star p-1 -ml-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                    >
+                        <Star
+                            className={cn(
+                                "w-4 h-4 transition-all duration-200",
+                                email.starred
+                                    ? "fill-yellow-400 text-yellow-400 scale-110"
+                                    : "text-muted-foreground/40 group-hover/star:text-muted-foreground group-hover/star:scale-110"
+                            )}
+                        />
+                    </button>
+                    {email.unread && !isSelected && (
+                        <span className="w-2 h-2 rounded-full bg-primary shrink-0 animate-pulse" />
+                    )}
+                    <span className={cn(
+                        "text-sm truncate max-w-[160px]",
+                        isSelected || email.unread
+                            ? "font-semibold text-foreground"
+                            : "font-medium text-foreground/80"
+                    )}>
+                        {email.sender}
+                    </span>
+                </div>
                 <span className={cn(
-                    "text-sm truncate max-w-[160px]",
-                    isSelected || email.unread
-                        ? "font-semibold text-foreground"
-                        : "font-medium text-foreground/80"
+                    "text-[11px] font-medium whitespace-nowrap",
+                    isSelected ? "text-primary" : "text-muted-foreground"
                 )}>
-                    {email.sender}
+                    {email.time}
                 </span>
             </div>
-            <span className={cn(
-                "text-[11px] font-medium whitespace-nowrap",
-                isSelected ? "text-primary" : "text-muted-foreground"
+            <h4 className={cn(
+                "text-sm mb-1 truncate pr-2",
+                isSelected ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"
             )}>
-                {email.time}
-            </span>
-        </div>
-        <h4 className={cn(
-            "text-sm mb-1 truncate pr-2",
-            isSelected ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"
-        )}>
-            {email.subject}
-        </h4>
-        <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-            {email.preview}
-        </p>
-    </motion.div >
-));
+                {email.subject}
+            </h4>
+            <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                {previewText}
+            </p>
+        </motion.div>
+    );
+});
 EmailListItem.displayName = "EmailListItem";
 
 // --- Main Component ---

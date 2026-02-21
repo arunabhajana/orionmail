@@ -66,9 +66,12 @@ export default function MainLayout() {
                     body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
                 }));
                 setEmails(formattedEmails);
+                return true;
             }
+            return false;
         } catch (error) {
             console.error("Failed to load cache", error);
+            return false;
         }
     };
 
@@ -92,17 +95,56 @@ export default function MainLayout() {
         }
     };
 
+    const blockForInitialSync = async () => {
+        // Since AuthContext (or another component) might have already triggered `sync_inbox`,
+        // the Rust mutex might be locked. If the database is completely empty, 
+        // we must literally wait and poll the cache until the background sync thread finishes 
+        // pumping the first batch of SQLite messages to disk.
+        return new Promise<void>((resolve) => {
+            const pollInterval = setInterval(async () => {
+                try {
+                    const hasMessages = await fetchCache();
+                    if (hasMessages) {
+                        clearInterval(pollInterval);
+                        resolve();
+                    }
+                } catch (err) {
+                    // Ignore transient load errors
+                }
+            }, 500);
+
+            // Safety timeout
+            setTimeout(() => {
+                clearInterval(pollInterval);
+                resolve();
+            }, 120000); // 2 min max wait
+        });
+    };
+
     useEffect(() => {
         const loadCache = async () => {
-            await fetchCache();
+            const hasCache = await fetchCache();
+
+            if (!hasCache) {
+                // DB is empty, sync is likely already running in the background. Block and poll.
+                // If this is a fresh launch (not after login), we trigger sync ourselves.
+                handleSync(false).catch(console.error);
+                await blockForInitialSync();
+            }
+
+            // Drop bootstrap loader only after emails are available
             setIsBootstrapping(false);
 
             if (!hasSyncedRef.current) {
                 hasSyncedRef.current = true;
-                // Delay background sync to prevent layout jank
-                setTimeout(() => {
-                    handleSync(true);
-                }, 500);
+
+                // If we already had a cache, we just spun up instantly. 
+                // Delay a background sync to grab new items to prevent layout jank.
+                if (hasCache) {
+                    setTimeout(() => {
+                        handleSync(true);
+                    }, 500);
+                }
             }
         };
 

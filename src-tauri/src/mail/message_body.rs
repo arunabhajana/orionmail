@@ -161,6 +161,23 @@ fn extract_displayable_body(app_handle: &AppHandle, uid: u32, raw_email: &[u8]) 
     Ok(final_html)
 }
 
+fn generate_preview(html: &str) -> String {
+    let re_hidden = Regex::new(r"(?si)<[^>]*display\s*:\s*none[^>]*>.*?</[^>]+>").unwrap();
+    let re_tags = Regex::new(r"(?i)<[^>]+>").unwrap();
+    let re_space = Regex::new(r"\s+").unwrap();
+
+    let stripped = re_hidden.replace_all(html, " ").to_string();
+    let stripped = re_tags.replace_all(&stripped, " ").to_string();
+    let stripped = re_space.replace_all(&stripped, " ").to_string();
+    let stripped = stripped.trim();
+
+    if stripped.chars().count() > 160 {
+        format!("{}...", stripped.chars().take(160).collect::<String>())
+    } else {
+        stripped.to_string()
+    }
+}
+
 pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32) -> Result<String, String> {
     let app_handle_clone = app_handle.clone();
     let account_clone = account.clone();
@@ -196,7 +213,8 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
                 if let Some(body_bytes) = body_bytes_opt {
                     match extract_displayable_body(&app_handle_clone, uid, body_bytes) {
                         Ok(parsed_body) => {
-                            let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &parsed_body);
+                            let preview = generate_preview(&parsed_body);
+                            let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &parsed_body, &preview);
                             crate::mail::body_cache::insert_cached_body(uid, parsed_body.clone());
                             return Ok(parsed_body);
                         }
@@ -204,7 +222,8 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
                             let fallback = String::from_utf8_lossy(body_bytes).to_string();
                             let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
                             let formatted_fallback = format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped);
-                            let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &formatted_fallback);
+                            let preview = generate_preview(&formatted_fallback);
+                            let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &formatted_fallback, &preview);
                             crate::mail::body_cache::insert_cached_body(uid, formatted_fallback.clone());
                             return Ok(formatted_fallback);
                         }
