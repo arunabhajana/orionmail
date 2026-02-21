@@ -1,70 +1,88 @@
 use crate::auth::account::Account;
-use crate::mail::sync::is_sync_running;
+use crate::mail::sync::{is_sync_running, sync_inbox};
 use crate::auth::bootstrap::bootstrap_accounts;
 use tauri::AppHandle;
+
 use std::sync::Mutex;
 use std::time::Duration;
 use once_cell::sync::Lazy;
+
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc;
+
 use native_tls::TlsConnector;
 
+static IDLE_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> =
+    Lazy::new(|| Mutex::new(None));
 
-static IDLE_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
-static COORDINATOR_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
+static COORDINATOR_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> =
+    Lazy::new(|| Mutex::new(None));
 
 pub fn start_idle_listener(app_handle: AppHandle, account: Account) {
     let mut idle_lock = IDLE_TASK.lock().unwrap();
+
     if idle_lock.is_some() {
-        log::info!("IMAP IDLE: Listener already running (idempotent skip).");
+        log::info!("IMAP IDLE: Listener already running.");
         return;
     }
 
     let (tx, mut rx) = mpsc::channel::<u32>(32);
-    let app_handle_clone = app_handle.clone();
+
+    let app_clone = app_handle.clone();
     let account_clone = account.clone();
 
-    // 1. COORDINATOR TASK: Listens for signals and triggers sync
+    // ==========================================
+    // COORDINATOR TASK
+    // ==========================================
     let coordinator = tokio::spawn(async move {
         log::info!("IMAP IDLE: Coordinator started.");
+
         while let Some(_) = rx.recv().await {
-            // BACKPRESSURE: Drain the channel to collapse rapid-fire EXISTS events
+            // Collapse rapid-fire EXISTS signals
             while rx.try_recv().is_ok() {}
 
             if is_sync_running() {
-                log::info!("IMAP IDLE: Sync already in progress, ignoring signal.");
+                log::info!("IMAP IDLE: Sync already running. Skipping.");
                 continue;
             }
 
-            log::info!("IMAP IDLE: New mail signal received. Triggering sync...");
-            let res = crate::mail::sync::sync_inbox(&app_handle_clone, account_clone.clone()).await;
-            if let Err(e) = res {
+            log::info!("IMAP IDLE: Triggering auto-sync...");
+
+            if let Err(e) = sync_inbox(&app_clone, account_clone.clone()).await {
                 log::error!("IMAP IDLE: Auto-sync failed: {}", e);
             }
         }
+
         log::info!("IMAP IDLE: Coordinator exiting.");
     });
+
     *COORDINATOR_TASK.lock().unwrap() = Some(coordinator);
 
-    // 2. IDLE LISTENER TASK: Blocking IMAP loop
-    let app_handle_idle = app_handle.clone();
+    // ==========================================
+    // IDLE LISTENER TASK
+    // ==========================================
+    let app_idle = app_handle.clone();
     let account_idle = account.clone();
-    
+
     let idle_handle = tokio::spawn(async move {
-        log::info!("IMAP IDLE: Listener task spawned.");
-        let mut last_exists = 0;
-        let mut backoff = 2;
+        log::info!("IMAP IDLE: Listener spawned.");
+
+        let mut last_exists: u32 = 0;
+        let mut backoff: u64 = 2;
 
         loop {
-            let res = run_idle_loop(&app_handle_idle, &account_idle, tx.clone(), last_exists).await;
-            
-            match res {
-                Ok(new_count) => {
-                    last_exists = new_count;
+            match run_idle_loop(&app_idle, &account_idle, tx.clone(), last_exists).await {
+                Ok(updated_count) => {
+                    last_exists = updated_count;
                     backoff = 2;
                 }
                 Err(e) => {
-                    log::error!("IMAP IDLE: Loop error: {}. Reconnecting in {}s...", e, backoff);
+                    log::error!(
+                        "IMAP IDLE error: {}. Reconnecting in {} seconds...",
+                        e,
+                        backoff
+                    );
+
                     tokio::time::sleep(Duration::from_secs(backoff)).await;
                     backoff = (backoff * 2).min(60);
                 }
@@ -81,92 +99,120 @@ async fn run_idle_loop(
     tx: mpsc::Sender<u32>,
     mut last_exists: u32,
 ) -> Result<u32, String> {
-    // 1. Ensure valid token before connect
-    let mut current_account = account.clone();
-    let bootstrap = bootstrap_accounts(app_handle).await;
-    if let Some(_) = bootstrap.user {
-        // We need the full Account object, but bootstrap returns UserProfile.
-        // Let's reload from session to get tokens.
-        if let Some(acc) = crate::auth::session::get_active_account(app_handle) {
-            current_account = acc;
-        }
-    }
 
-    let email = current_account.email.clone();
-    let access_token = current_account.access_token.clone();
+    // Refresh tokens if needed
+    bootstrap_accounts(app_handle).await;
+
+    let current_account = crate::auth::session::get_active_account(app_handle)
+        .ok_or("No active account found")?;
+
+    let email = current_account.email;
+    let access_token = current_account.access_token;
 
     tokio::task::spawn_blocking(move || {
-        let domain = "imap.gmail.com";
-        let port = 993;
 
+        // ===============================
+        // Connect
+        // ===============================
         let tls = TlsConnector::builder()
-            .danger_accept_invalid_certs(true)
             .build()
             .map_err(|e| format!("TLS Error: {}", e))?;
 
-        let client = imap::connect((domain, port), domain, &tls)
+        let client = imap::connect(("imap.gmail.com", 993), "imap.gmail.com", &tls)
             .map_err(|e| format!("Connect Error: {}", e))?;
 
         let auth_raw = format!("user={}\x01auth=Bearer {}\x01\x01", email, access_token);
-        struct XoAuth2 { auth_string: String }
+
+        struct XoAuth2 {
+            auth_string: String,
+        }
+
         impl imap::Authenticator for XoAuth2 {
             type Response = String;
-            fn process(&self, _: &[u8]) -> Self::Response { self.auth_string.clone() }
+
+            fn process(&self, _: &[u8]) -> Self::Response {
+                self.auth_string.clone()
+            }
         }
+
         let auth = XoAuth2 { auth_string: auth_raw };
 
         let mut session = client
             .authenticate("XOAUTH2", &auth)
-            .map_err(|(e, _)| format!("Auth Failed: {}", e))?;
+            .map_err(|(e, _)| format!("Auth Error: {}", e))?;
 
-        // 2. Select INBOX (Required after connect)
-        let mailbox = session.select("INBOX").map_err(|e| format!("Select Error: {}", e))?;
-        last_exists = mailbox.exists;
+        let mailbox = session
+            .select("INBOX")
+            .map_err(|e| format!("Select Error: {}", e))?;
 
-        log::info!("IMAP IDLE: Initialized. Last exists count: {}", last_exists);
+        // Only initialize once
+        if last_exists == 0 {
+            last_exists = mailbox.exists;
+        }
 
-        // 3. Main IDLE loop with 15-min refresh
+        log::info!(
+            "IMAP IDLE: Initialized. Current EXISTS count: {}",
+            last_exists
+        );
+
+        // ===============================
+        // IDLE Loop
+        // ===============================
         loop {
-            let wait_res = {
-                let idle_handle = session.idle().map_err(|e| format!("IDLE Start Error: {}", e))?;
-                
-                // Wait for events or timeout (15 mins)
-                // sleep/wake fix: we treat "no response" as a break-and-reconnect trigger after 20m if needed,
-                // but the imap crate's wait_with_timeout handles the network block.
-                idle_handle.wait_with_timeout(Duration::from_secs(15 * 60))
-                // idle_handle is dropped here, sending DONE to the server
-            };
+            let outcome = session
+                .idle()
+                .map_err(|e| format!("IDLE Start Error: {}", e))?
+                .wait_with_timeout(Duration::from_secs(15 * 60))
+                .map_err(|e| format!("IDLE Wait Error: {}", e))?;
 
-            match wait_res {
-                Ok(imap::extensions::idle::WaitOutcome::MailboxChanged) => {
-                    // Collect responses from the session's unsolicited_responses channel
-                    while let Ok(response) = session.unsolicited_responses.try_recv() {
-                        if let imap::types::UnsolicitedResponse::Exists(count) = response {
-                            if count > last_exists {
-                                log::info!("IMAP IDLE: EXISTS received ({} > {}). Signaling sync.", count, last_exists);
-                                let _ = tx.blocking_send(count);
+            match outcome {
+                imap::extensions::idle::WaitOutcome::MailboxChanged => {
+
+                    loop {
+                        match session.unsolicited_responses.try_recv() {
+                            Ok(response) => {
+                                match response {
+                                    imap::types::UnsolicitedResponse::Exists(count)
+                                    | imap::types::UnsolicitedResponse::Recent(count) => {
+
+                                        if count > last_exists {
+                                            log::info!(
+                                                "IMAP IDLE: New mail detected ({} > {}).",
+                                                count,
+                                                last_exists
+                                            );
+
+                                            let _ = tx.blocking_send(count);
+                                        }
+
+                                        last_exists = count;
+                                    }
+                                    _ => {}
+                                }
                             }
-                            last_exists = count;
+                            Err(_) => break,
                         }
                     }
                 }
-                Ok(imap::extensions::idle::WaitOutcome::TimedOut) => {
-                    log::info!("IMAP IDLE: 15-min refresh interval reached. Recycling session...");
-                    // Just continue the loop to re-issue IDLE
+
+                imap::extensions::idle::WaitOutcome::TimedOut => {
+                    log::info!("IMAP IDLE: 15-minute refresh reached.");
                 }
-                Err(e) => return Err(format!("IDLE Wait Error: {}", e)),
             }
         }
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub fn stop_idle_listener() {
     if let Some(handle) = IDLE_TASK.lock().unwrap().take() {
-        log::info!("IMAP IDLE: Dropping listener task.");
+        log::info!("IMAP IDLE: Stopping listener task.");
         handle.abort();
     }
+
     if let Some(handle) = COORDINATOR_TASK.lock().unwrap().take() {
-        log::info!("IMAP IDLE: Dropping coordinator task.");
+        log::info!("IMAP IDLE: Stopping coordinator task.");
         handle.abort();
     }
 }
