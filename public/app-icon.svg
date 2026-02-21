@@ -1,0 +1,19 @@
+<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="512" height="512">
+    <defs>
+        <linearGradient id="spinner-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#2563eb" />
+            <stop offset="50%" stop-color="#7c3aed" />
+            <stop offset="100%" stop-color="#db2777" />
+        </linearGradient>
+    </defs>
+    <path
+        d="M3 7.5L12 13L21 7.5V16.5C21 17.3284 20.3284 18 19.5 18H4.5C3.67157 18 3 17.3284 3 16.5V7.5Z"
+        fill="url(#spinner-grad)"
+        opacity="0.9"
+    />
+    <path
+        d="M3 7.5L12 13L21 7.5L12 2L3 7.5Z"
+        fill="url(#spinner-grad)"
+        opacity="0.8"
+    />
+</svg>
