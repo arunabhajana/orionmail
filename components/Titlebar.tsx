@@ -2,10 +2,11 @@
 
 
 import { Window as TauriWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, RefreshCw } from "lucide-react";
+import { Minus, Square, X, RefreshCw, CheckCircle2 } from "lucide-react";
 import { useEffect, useState, memo } from "react";
 import { cn } from "@/lib/utils";
 import { useSync } from "@/components/SyncContext";
+import { motion, AnimatePresence } from "framer-motion";
 
 // --- Types & Interfaces ---
 
@@ -57,31 +58,61 @@ WindowControl.displayName = "WindowControl";
  * Cycles between 'Online' and 'Syncing' states.
  */
 function SyncIndicator() {
-    const { isSyncing } = useSync();
+    const { isSyncing, syncMessage } = useSync();
 
     return (
         <div
             className={cn(
-                "flex items-center gap-2 px-2 py-0.5 rounded-full select-none transition-all duration-300",
-                "bg-transparent"
+                "flex items-center px-2 py-0.5 rounded-full select-none transition-all duration-300",
+                "bg-transparent relative h-6 w-28 overflow-hidden"
             )}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-            {isSyncing ? (
-                <>
-                    <RefreshCw size={12} className="text-muted-foreground animate-spin" />
-                    <span className="text-[10px] font-medium text-muted-foreground tracking-tight">
-                        Syncing...
-                    </span>
-                </>
-            ) : (
-                <>
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.4)]" />
-                    <span className="text-[10px] font-medium text-foreground/70 tracking-tight">
-                        Online
-                    </span>
-                </>
-            )}
+            <AnimatePresence mode="wait">
+                {isSyncing ? (
+                    <motion.div
+                        key="syncing"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.2 }}
+                        className="absolute inset-0 flex items-center gap-2 pl-2"
+                    >
+                        <RefreshCw size={12} className="text-muted-foreground animate-spin" />
+                        <span className="text-[10px] font-medium text-muted-foreground tracking-tight">
+                            Syncing...
+                        </span>
+                    </motion.div>
+                ) : syncMessage ? (
+                    <motion.div
+                        key="message"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.2 }}
+                        className="absolute inset-0 flex items-center gap-1.5 pl-2"
+                    >
+                        <CheckCircle2 size={12} className="text-emerald-500" />
+                        <span className="text-[10px] font-medium text-foreground tracking-tight whitespace-nowrap">
+                            {syncMessage}
+                        </span>
+                    </motion.div>
+                ) : (
+                    <motion.div
+                        key="online"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.2 }}
+                        className="absolute inset-0 flex items-center gap-2 pl-2"
+                    >
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.4)]" />
+                        <span className="text-[10px] font-medium text-foreground/70 tracking-tight">
+                            Online
+                        </span>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

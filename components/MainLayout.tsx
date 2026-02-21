@@ -6,7 +6,7 @@ import EmailList from '@/components/EmailList';
 import EmailDetail from '@/components/EmailDetail';
 import { Email } from '@/lib/data';
 
-import { AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import ComposeModal from '@/components/ComposeModal';
 import gsap from 'gsap';
 import { invoke } from '@tauri-apps/api/core';
@@ -21,8 +21,9 @@ export default function MainLayout() {
     // --- New State for Folders & Stars ---
     const [currentFolder, setCurrentFolder] = useState<string>("inbox");
     const [emails, setEmails] = useState<Email[]>([]);
-    const { isSyncing, setIsSyncing } = useSync();
+    const { isSyncing, setIsSyncing, setSyncMessage } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
+    const [syncError, setSyncError] = useState<string | null>(null);
 
     const layoutRef = useRef<HTMLDivElement>(null);
     const hasSyncedRef = useRef(false);
@@ -75,24 +76,37 @@ export default function MainLayout() {
         }
     };
 
-    const handleSync = async (isBackground = false) => {
-        if (isSyncing) return;
+    const handleSync = (isBackground = false) => {
+        if (isSyncing) return Promise.resolve();
         setIsSyncing(true);
-        try {
-            const newMessages: number = await invoke('sync_inbox');
-            console.log(`Synced: ${newMessages} new emails`);
+        setSyncError(null);
 
-            // Reload cache seamlessly after sync completes
-            await fetchCache();
+        return invoke('sync_inbox')
+            .then((newMessages: unknown) => {
+                const count = Number(newMessages);
+                console.log(`Synced: ${count} new emails`);
 
-        } catch (e) {
-            console.error("Failed to sync messages:", e);
-            if (!isBackground) {
-                alert("Failed to sync messages: " + (e as any).toString());
-            }
-        } finally {
-            setIsSyncing(false);
-        }
+                if (!isBackground) {
+                    if (count > 0) {
+                        setSyncMessage(`${count} new email${count !== 1 ? 's' : ''}`);
+                    } else {
+                        setSyncMessage("No new emails");
+                    }
+                    setTimeout(() => setSyncMessage(null), 3000);
+                }
+
+                return fetchCache();
+            })
+            .catch((e) => {
+                console.error("Failed to sync messages:", e);
+                if (!isBackground) {
+                    setSyncError("Failed to sync messages. Please try again.");
+                    setTimeout(() => setSyncError(null), 3000);
+                }
+            })
+            .finally(() => {
+                setIsSyncing(false);
+            });
     };
 
     const blockForInitialSync = async () => {
@@ -128,7 +142,7 @@ export default function MainLayout() {
             if (!hasCache) {
                 // DB is empty, sync is likely already running in the background. Block and poll.
                 // If this is a fresh launch (not after login), we trigger sync ourselves.
-                handleSync(false).catch(console.error);
+                handleSync(false);
                 await blockForInitialSync();
             }
 
@@ -192,7 +206,21 @@ export default function MainLayout() {
 
     return (
         /* Main Dashboard Container - Full Window Fill */
-        <div ref={layoutRef} className="flex h-full w-full overflow-hidden bg-white/40">
+        <div ref={layoutRef} className="flex h-full w-full overflow-hidden bg-white/40 relative">
+            {/* Sync Error Toast */}
+            <AnimatePresence>
+                {syncError && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 20 }}
+                        className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 bg-red-500/90 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-medium backdrop-blur-md"
+                    >
+                        {syncError}
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* Column 1: Sidebar */}
             <Sidebar
                 className="sidebar-anim w-64 flex flex-col shrink-0"
