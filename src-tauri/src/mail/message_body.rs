@@ -171,8 +171,14 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
             .unwrap_or(None)
             .ok_or_else(|| "No stored mailbox validity. Resync required.".to_string())?;
 
-        // 2. Check Cache
+        // 1.5 Check Memory Cache Primary
+        if let Some(mem_body) = crate::mail::body_cache::get_cached_body(uid) {
+            return Ok(mem_body);
+        }
+
+        // 2. Check SQLite Cache Secondary
         if let Ok(Some(cached_body)) = database::get_message_body_cache(&app_handle_clone, uid, stored_validity) {
+            crate::mail::body_cache::insert_cached_body(uid, cached_body.clone());
             return Ok(cached_body);
         }
 
@@ -190,14 +196,16 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
                 if let Some(body_bytes) = body_bytes_opt {
                     match extract_displayable_body(&app_handle_clone, uid, body_bytes) {
                         Ok(parsed_body) => {
-                            database::update_message_body(&app_handle_clone, uid, stored_validity, &parsed_body)?;
+                            let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &parsed_body);
+                            crate::mail::body_cache::insert_cached_body(uid, parsed_body.clone());
                             return Ok(parsed_body);
                         }
                         Err(_) => {
                             let fallback = String::from_utf8_lossy(body_bytes).to_string();
                             let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
                             let formatted_fallback = format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped);
-                            database::update_message_body(&app_handle_clone, uid, stored_validity, &formatted_fallback)?;
+                            let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &formatted_fallback);
+                            crate::mail::body_cache::insert_cached_body(uid, formatted_fallback.clone());
                             return Ok(formatted_fallback);
                         }
                     }
