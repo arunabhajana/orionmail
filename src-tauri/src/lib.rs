@@ -20,8 +20,9 @@ pub fn run() {
           
           window.on_window_event(|event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-              log::info!("App closing: Stopping IMAP IDLE listener...");
+              log::info!("App closing: Stopping IMAP IDLE and Polling listeners...");
               crate::mail::idle::stop_idle_listener();
+              crate::mail::poll::stop_polling();
             }
           });
         }

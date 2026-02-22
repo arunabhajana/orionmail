@@ -1,5 +1,5 @@
 use crate::auth::account::Account;
-use crate::mail::sync::{is_sync_running, sync_inbox};
+use crate::mail::sync::sync_inbox;
 use crate::auth::bootstrap::bootstrap_accounts;
 use tauri::AppHandle;
 
@@ -41,10 +41,12 @@ pub fn start_idle_listener(app_handle: AppHandle, account: Account) {
             // Collapse rapid-fire EXISTS signals
             while rx.try_recv().is_ok() {}
 
-            if is_sync_running() {
-                log::info!("IMAP IDLE: Sync already running. Skipping.");
+            let guard = crate::mail::sync::SYNC_LOCK.try_lock();
+            if guard.is_err() {
+                log::info!("IMAP IDLE: Sync already running. Skipping auto-sync.");
                 continue;
             }
+            let _sync_guard = guard.unwrap();
 
             log::info!("IMAP IDLE: Triggering auto-sync...");
 

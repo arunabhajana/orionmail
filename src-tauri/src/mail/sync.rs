@@ -6,33 +6,18 @@ use mailparse::parse_mail;
 use native_tls::TlsConnector;
 use tauri::AppHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::Mutex as AsyncMutex;
+use once_cell::sync::Lazy;
 
-static SYNC_RUNNING: AtomicBool = AtomicBool::new(false);
-
-pub fn is_sync_running() -> bool {
-    SYNC_RUNNING.load(Ordering::SeqCst)
-}
+pub static SYNC_LOCK: Lazy<AsyncMutex<()>> = Lazy::new(|| AsyncMutex::new(()));
 
 pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32, String> {
-    if SYNC_RUNNING.swap(true, Ordering::SeqCst) {
-        log::info!("Sync already running, skipping.");
-        return Ok(0);
-    }
 
     let email = account.email.clone();
     let access_token = account.access_token.clone();
     let app_handle_clone = app_handle.clone();
 
     let new_messages_count = tokio::task::spawn_blocking(move || {
-        // Use a drop guard to ensure SYNC_RUNNING is always reset
-        struct SyncGuard;
-        impl Drop for SyncGuard {
-            fn drop(&mut self) {
-                SYNC_RUNNING.store(false, Ordering::SeqCst);
-            }
-        }
-        let _guard = SyncGuard;
-
         let mut last_uid = database::get_highest_uid(&app_handle_clone).unwrap_or(0);
         let stored_validity = database::get_mailbox_validity(&app_handle_clone, "INBOX").unwrap_or(None);
 

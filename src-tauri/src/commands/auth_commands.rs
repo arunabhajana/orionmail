@@ -7,7 +7,18 @@ use tauri::{AppHandle, command};
 pub async fn login_google(app_handle: AppHandle) -> Result<UserProfile, String> {
     let account = oauth::start_google_login().await?;
     session::save_account(&app_handle, account.clone(), true)?;
+    
+    // Initial sync
+    if let Ok(_guard) = crate::mail::sync::SYNC_LOCK.try_lock() {
+        let _ = crate::mail::sync::sync_inbox(&app_handle, account.clone()).await;
+    }
+    
+    // Start IDLE
     crate::mail::idle::start_idle_listener(app_handle.clone(), account.clone());
+    
+    // Start Polling
+    crate::mail::poll::start_polling(app_handle.clone(), account.clone());
+    
     Ok(UserProfile::from(account))
 }
 
@@ -34,7 +45,8 @@ pub async fn bootstrap_accounts(app_handle: AppHandle) -> Result<crate::auth::bo
     let res = crate::auth::bootstrap::bootstrap_accounts(&app_handle).await;
     if res.user.is_some() {
         if let Some(account) = session::get_active_account(&app_handle) {
-            crate::mail::idle::start_idle_listener(app_handle.clone(), account);
+            crate::mail::idle::start_idle_listener(app_handle.clone(), account.clone());
+            crate::mail::poll::start_polling(app_handle.clone(), account);
         }
     }
     Ok(res)
@@ -60,6 +72,14 @@ pub async fn get_inbox_messages(app_handle: AppHandle) -> Result<Vec<crate::mail
 pub async fn sync_inbox(app_handle: AppHandle) -> Result<u32, String> {
     let account = session::get_active_account(&app_handle)
         .ok_or_else(|| "No active account".to_string())?;
+
+    let _guard = match crate::mail::sync::SYNC_LOCK.try_lock() {
+        Ok(g) => g,
+        Err(_) => {
+            log::info!("Manual refresh: Sync already running.");
+            return Ok(0);
+        }
+    };
 
     crate::mail::sync::sync_inbox(&app_handle, account).await
 }
