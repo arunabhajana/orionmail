@@ -92,6 +92,12 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
                 log::info!("Fetching interval: {}", range);
             }
 
+            // --- DEFENSIVE RE-SELECT ---
+            // Explicitly re-selecting INBOX immediately prior to fetch.
+            // Even if the session was recently selected, forcing a re-select right before fetching
+            // refreshes mailbox state and clears any potential IMAP protocol staleness or zombie caching.
+            let _ = session.select("INBOX").map_err(|e| format!("IMAP Re-Select Error: {}", e))?;
+
             let fetch_results = session.uid_fetch(
                 &range,
                 "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])"
@@ -105,6 +111,18 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
             }
 
             let num_new = messages.len() as u32;
+
+            // --- SUSPICIOUS ZERO-SYNC DETECTION ---
+            // If the server reported a higher UIDNEXT but our exact sequence range fetch returned 0 messages,
+            // we treat this as a stale state indicator. Returning an error forces system recovery/reconnect.
+            if num_new == 0 && (last_uid + 1) < uid_next {
+                log::warn!(
+                    "Suspicious zero-sync detected! Expected messages in range {}, but got 0. Forcing session discard.",
+                    range
+                );
+                return Err("Suspicious zero-sync detected".to_string());
+            }
+
             log::info!("Grabbed {} new messages!", num_new);
             database::insert_or_update_messages(&app_handle_clone, &messages)?;
 

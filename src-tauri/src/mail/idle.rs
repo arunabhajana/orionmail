@@ -161,11 +161,18 @@ async fn run_idle_loop(
         // IDLE Loop
         // ===============================
         loop {
+            // Explicitly test connection health before blocking
+            if let Err(e) = session.noop() {
+                log::warn!("IMAP IDLE pre-check failed. Connection likely dead: {}", e);
+                return Err("IDLE Pre-check NOOP failed".to_string());
+            }
+
             log::info!("IMAP IDLE: Waiting for changes...");
+            // Reduced timeout from 15 mins to 5 mins to quickly detect silent network drops
             let outcome = session
                 .idle()
                 .map_err(|e| format!("IDLE Start Error: {}", e))?
-                .wait_with_timeout(Duration::from_secs(15 * 60))
+                .wait_with_timeout(Duration::from_secs(5 * 60))
                 .map_err(|e| format!("IDLE Wait Error: {}", e))?;
 
             match outcome {
@@ -206,7 +213,7 @@ async fn run_idle_loop(
                 }
 
                 imap::extensions::idle::WaitOutcome::TimedOut => {
-                    log::info!("IMAP IDLE: 15-minute refresh timeout reached. Renewing IDLE.");
+                    log::info!("IMAP IDLE: 5-minute refresh timeout reached. Renewing IDLE state.");
                 }
             }
         }

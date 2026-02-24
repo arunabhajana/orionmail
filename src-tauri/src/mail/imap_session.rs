@@ -102,9 +102,21 @@ where
         
         while let Some(mut s) = lock.pop() {
             if s.last_used.elapsed().as_secs() > 30 {
-                log::info!("Session idle > 30s, destroying.");
-                let _ = s.session.logout(); // Best effort clean close
-                // Keep looping to find a fresh one
+                log::info!("Session idle > 30s, validating health...");
+                // 1. Send NOOP to verify TCP connection is alive
+                // 2. Send SELECT INBOX to guarantee mailbox context is valid and not reclaimed
+                let is_healthy = s.session.noop().is_ok() && s.session.select("INBOX").is_ok();
+                
+                if is_healthy {
+                    log::info!("Session health validation passed. Reusing session.");
+                    s.last_used = Instant::now();
+                    session_opt = Some(s);
+                    break;
+                } else {
+                    log::info!("Session health validation failed. Destroying stale session.");
+                    let _ = s.session.logout(); // Best effort clean close
+                    // Keep looping to find a fresh one
+                }
             } else {
                 session_opt = Some(s);
                 break; // Found a good one!
