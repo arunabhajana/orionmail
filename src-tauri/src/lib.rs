@@ -57,6 +57,7 @@ pub fn run() {
       get_cached_messages,
       sync_inbox,
       get_message_body,
+      get_messages_page,
       mark_as_read,
       toggle_star,
       delete_message

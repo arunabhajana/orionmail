@@ -26,6 +26,15 @@ export default function MainLayout() {
     const [isBootstrapping, setIsBootstrapping] = useState(true);
     const [syncError, setSyncError] = useState<string | null>(null);
 
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
+    const emailListContainerRef = useRef<HTMLDivElement>(null);
+    const emailsRef = useRef<Email[]>([]);
+
+    useEffect(() => {
+        emailsRef.current = emails;
+    }, [emails]);
+
     const layoutRef = useRef<HTMLDivElement>(null);
     const hasSyncedRef = useRef(false);
 
@@ -102,7 +111,7 @@ export default function MainLayout() {
 
     const fetchCache = async () => {
         try {
-            const cached: any[] = await invoke('get_cached_messages');
+            const cached: any[] = await invoke('get_messages_page', { beforeUid: null, limit: 50 });
             if (cached && cached.length > 0) {
                 const formattedEmails = cached.map((msg, index) => ({
                     id: msg.uid.toString(),
@@ -120,12 +129,108 @@ export default function MainLayout() {
                     body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
                 }));
                 setEmails(formattedEmails);
+                setHasMore(cached.length === 50);
                 return true;
             }
+            setHasMore(false);
             return false;
         } catch (error) {
             console.error("Failed to load cache", error);
             return false;
+        }
+    };
+
+    const refreshNewEmails = async () => {
+        try {
+            const cached: any[] = await invoke('get_messages_page', { beforeUid: null, limit: 50 });
+            if (!cached || cached.length === 0) return;
+
+            const existingEmails = emailsRef.current;
+            if (existingEmails.length === 0) {
+                await fetchCache();
+                return;
+            }
+
+            const firstUid = parseInt(existingEmails[0].id, 10);
+            const newMessages = cached.filter(msg => msg.uid > firstUid);
+
+            if (newMessages.length > 0) {
+                const formattedEmails = newMessages.map(msg => ({
+                    id: msg.uid.toString(),
+                    sender: msg.from.split('<')[0].trim() || msg.from,
+                    senderEmail: msg.from,
+                    subject: msg.subject || '(No Subject)',
+                    preview: msg.snippet?.trim() || msg.subject?.substring(0, 100) || 'No preview available',
+                    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.from.split('<')[0].trim() || msg.from)}&background=random`,
+                    time: new Date(msg.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    date: msg.date,
+                    unread: !msg.seen,
+                    folder: "inbox" as const,
+                    tags: [],
+                    starred: msg.flagged,
+                    body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
+                }));
+
+                const previousHeight = emailListContainerRef.current?.scrollHeight || 0;
+
+                setEmails(prev => {
+                    const existingIds = new Set(prev.map(p => p.id));
+                    const uniqueNew = formattedEmails.filter(n => !existingIds.has(n.id));
+                    return [...uniqueNew, ...prev];
+                });
+
+                requestAnimationFrame(() => {
+                    if (emailListContainerRef.current) {
+                        const newHeight = emailListContainerRef.current.scrollHeight;
+                        emailListContainerRef.current.scrollTop += (newHeight - previousHeight);
+                    }
+                });
+            }
+        } catch (error) {
+            console.error("Failed to refresh new emails", error);
+        }
+    };
+
+    const loadMoreEmails = async () => {
+        const currentEmails = emailsRef.current;
+        if (isLoadingMore || !hasMore || currentEmails.length === 0) return;
+        setIsLoadingMore(true);
+        try {
+            const lastEmail = currentEmails[currentEmails.length - 1];
+            const beforeUid = parseInt(lastEmail.id, 10);
+
+            const nextBatch: any[] = await invoke('get_messages_page', { beforeUid, limit: 50 });
+            if (nextBatch.length === 0) {
+                setHasMore(false);
+            } else {
+                const formattedEmails = nextBatch.map(msg => ({
+                    id: msg.uid.toString(),
+                    sender: msg.from.split('<')[0].trim() || msg.from,
+                    senderEmail: msg.from,
+                    subject: msg.subject || '(No Subject)',
+                    preview: msg.snippet?.trim() || msg.subject?.substring(0, 100) || 'No preview available',
+                    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.from.split('<')[0].trim() || msg.from)}&background=random`,
+                    time: new Date(msg.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    date: msg.date,
+                    unread: !msg.seen,
+                    folder: "inbox" as const,
+                    tags: [],
+                    starred: msg.flagged,
+                    body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
+                }));
+                setEmails(prev => {
+                    const existingIds = new Set(prev.map(p => p.id));
+                    const uniqueNew = formattedEmails.filter(n => !existingIds.has(n.id));
+                    return [...prev, ...uniqueNew];
+                });
+                if (nextBatch.length < 50) {
+                    setHasMore(false);
+                }
+            }
+        } catch (err) {
+            console.error("Failed to load more emails", err);
+        } finally {
+            setIsLoadingMore(false);
         }
     };
 
@@ -135,7 +240,7 @@ export default function MainLayout() {
         setSyncError(null);
 
         return invoke('sync_inbox')
-            .then((newMessages: unknown) => {
+            .then(async (newMessages: unknown) => {
                 const count = Number(newMessages);
                 console.log(`Synced: ${count} new emails`);
 
@@ -148,7 +253,11 @@ export default function MainLayout() {
                     setTimeout(() => setSyncMessage(null), 3000);
                 }
 
-                return fetchCache();
+                if (emailsRef.current.length === 0) {
+                    await fetchCache();
+                } else if (count > 0) {
+                    await refreshNewEmails();
+                }
             })
             .catch((e) => {
                 console.error("Failed to sync messages:", e);
@@ -225,7 +334,11 @@ export default function MainLayout() {
         const setupListener = async () => {
             unlisten = await listen('mail:updated', async () => {
                 console.log("mail:updated event received, refreshing cache.");
-                await fetchCache();
+                if (emailsRef.current.length === 0) {
+                    await fetchCache();
+                } else {
+                    await refreshNewEmails();
+                }
             });
         };
 
@@ -310,6 +423,10 @@ export default function MainLayout() {
                 onDeleteMessage={deleteMessage}
                 onSync={handleSync}
                 isSyncing={isSyncing}
+                onLoadMore={loadMoreEmails}
+                hasMore={hasMore}
+                isLoadingMore={isLoadingMore}
+                listRef={emailListContainerRef}
             />
 
             {/* Column 3: Reading Pane */}

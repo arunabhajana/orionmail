@@ -110,3 +110,17 @@ pub async fn delete_message(app_handle: AppHandle, uid: u32) -> Result<(), Strin
 
     Ok(())
 }
+
+#[tauri::command]
+pub async fn get_messages_page(
+    app_handle: AppHandle,
+    before_uid: Option<u32>,
+    limit: u32,
+) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
+    let safe_limit = limit.min(100);
+    tokio::task::spawn_blocking(move || {
+        database::load_messages_page(&app_handle, before_uid, safe_limit)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

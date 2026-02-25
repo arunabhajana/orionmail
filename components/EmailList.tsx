@@ -22,6 +22,10 @@ interface EmailListProps {
     onDeleteMessage?: (emailId: string) => void;
     onSync?: () => void;
     isSyncing?: boolean;
+    onLoadMore?: () => void;
+    hasMore?: boolean;
+    isLoadingMore?: boolean;
+    listRef?: React.Ref<HTMLDivElement>;
 }
 
 // --- Constants ---
@@ -210,10 +214,40 @@ const EmailList: React.FC<EmailListProps> = ({
     selectedEmailId,
     onSelectEmail,
     onToggleStar,
-    onDeleteMessage,
     onSync,
-    isSyncing
+    isSyncing,
+    onLoadMore,
+    hasMore,
+    isLoadingMore,
+    listRef
 }) => {
+    const bottomRef = React.useRef<HTMLDivElement>(null);
+    const loadingRef = React.useRef(false);
+
+    React.useEffect(() => {
+        if (!onLoadMore) return;
+
+        const observer = new IntersectionObserver((entries) => {
+            const [entry] = entries;
+            if (entry.isIntersecting) {
+                if (isLoadingMore || !hasMore || loadingRef.current) return;
+
+                loadingRef.current = true;
+                onLoadMore();
+
+                setTimeout(() => {
+                    loadingRef.current = false;
+                }, 500);
+            }
+        }, { rootMargin: '200px' });
+
+        if (bottomRef.current) {
+            observer.observe(bottomRef.current);
+        }
+
+        return () => observer.disconnect();
+    }, [onLoadMore, isLoadingMore, hasMore]);
+
     return (
         <main
             className={cn(
@@ -244,7 +278,7 @@ const EmailList: React.FC<EmailListProps> = ({
             </div>
 
             {/* 2. Scrollable List */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
+            <div ref={listRef} className="flex-1 overflow-y-auto custom-scrollbar">
                 <AnimatePresence>
                     {emails.map((email) => (
                         <EmailListItem
@@ -256,6 +290,14 @@ const EmailList: React.FC<EmailListProps> = ({
                         />
                     ))}
                 </AnimatePresence>
+                {/* Sentinel for infinite scroll */}
+                {hasMore && (
+                    <div ref={bottomRef} className="h-8 w-full flex justify-center items-center shrink-0">
+                        {isLoadingMore && (
+                            <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                        )}
+                    </div>
+                )}
             </div>
         </main>
     );

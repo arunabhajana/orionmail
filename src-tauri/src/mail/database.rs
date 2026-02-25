@@ -166,6 +166,56 @@ pub fn load_cached_messages(app_handle: &AppHandle, limit: usize) -> Result<Vec<
     Ok(messages)
 }
 
+pub fn load_messages_page(app_handle: &AppHandle, before_uid: Option<u32>, limit: u32) -> Result<Vec<MessageHeader>, String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let parse_row = |row: &rusqlite::Row| -> rusqlite::Result<MessageHeader> {
+        Ok(MessageHeader {
+            uid: row.get(0)?,
+            uid_validity: row.get(1)?,
+            subject: row.get(2)?,
+            from: row.get(3)?,
+            date: row.get(4)?,
+            seen: row.get::<_, i32>(5)? != 0,
+            flagged: row.get::<_, i32>(6)? != 0,
+            snippet: row.get(7).unwrap_or(None),
+        })
+    };
+
+    let mut messages = Vec::new();
+
+    if let Some(uid) = before_uid {
+        let mut stmt = conn.prepare(
+            "SELECT uid, uid_validity, subject, sender, date, seen, flagged, preview
+             FROM messages 
+             WHERE uid < ?1
+             ORDER BY uid DESC 
+             LIMIT ?2"
+        ).map_err(|e| e.to_string())?;
+
+        let msg_iter = stmt.query_map(rusqlite::params![uid, limit], parse_row).map_err(|e| e.to_string())?;
+        for msg in msg_iter {
+            messages.push(msg.map_err(|e| e.to_string())?);
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT uid, uid_validity, subject, sender, date, seen, flagged, preview
+             FROM messages 
+             ORDER BY uid DESC 
+             LIMIT ?1"
+        ).map_err(|e| e.to_string())?;
+
+        let msg_iter = stmt.query_map(rusqlite::params![limit], parse_row).map_err(|e| e.to_string())?;
+        for msg in msg_iter {
+            messages.push(msg.map_err(|e| e.to_string())?);
+        }
+    }
+
+    Ok(messages)
+}
+
+
 pub fn get_message_body_cache(app_handle: &AppHandle, uid: u32, uid_validity: u32) -> Result<Option<String>, String> {
     let db_path = get_db_path(app_handle)?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
