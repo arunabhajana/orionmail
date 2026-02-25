@@ -237,7 +237,7 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
         }
 
         // 2. Check SQLite Cache Secondary
-        if let Ok(Some(cached_body)) = database::get_message_body_cache(&app_handle_clone, uid, stored_validity) {
+        if let Ok(Some(cached_body)) = database::get_message_body_cache(&app_handle_clone, "INBOX", uid) {
             crate::mail::body_cache::insert_cached_body(uid, cached_body.clone());
             return Ok((Some(cached_body), stored_validity));
         }
@@ -269,7 +269,7 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
                 match extract_displayable_body(&app_handle_clone, uid, body_bytes) {
                     Ok(parsed_body) => {
                         let preview = generate_preview(&parsed_body);
-                        let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &parsed_body, &preview);
+                        let _ = database::update_message_body(&app_handle_clone, "INBOX", uid, &parsed_body, &preview);
                         crate::mail::body_cache::insert_cached_body(uid, parsed_body.clone());
                         return Ok(parsed_body);
                     }
@@ -278,7 +278,7 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
                         let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
                         let formatted_fallback = format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped);
                         let preview = generate_preview(&formatted_fallback);
-                        let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &formatted_fallback, &preview);
+                        let _ = database::update_message_body(&app_handle_clone, "INBOX", uid, &formatted_fallback, &preview);
                         crate::mail::body_cache::insert_cached_body(uid, formatted_fallback.clone());
                         return Ok(formatted_fallback);
                     }
@@ -304,7 +304,7 @@ pub async fn prefetch_recent_bodies(app_handle: AppHandle, account: Account) {
     }
     let _guard = PrefetchGuard;
 
-    let uids = match database::get_unfetched_recent_uids(&app_handle, 10) {
+    let uids = match database::get_unfetched_recent_uids(&app_handle, "INBOX", 10) {
         Ok(res) => res,
         Err(e) => {
             log::warn!("Prefetch query failed: {}", e);
@@ -325,9 +325,9 @@ pub async fn prefetch_recent_bodies(app_handle: AppHandle, account: Account) {
         uids.len()
     );
 
-    for (uid, uid_validity) in uids {
+    for uid in uids {
         // Double check cache in case user clicked it
-        if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, uid, uid_validity) {
+        if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, "INBOX", uid) {
             continue;
         }
 

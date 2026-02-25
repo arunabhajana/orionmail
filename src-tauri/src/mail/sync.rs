@@ -18,7 +18,7 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
     let app_handle_clone = app_handle.clone();
 
     let new_messages_count = tokio::task::spawn_blocking(move || {
-        let mut last_uid = database::get_highest_uid(&app_handle_clone).unwrap_or(0);
+        let mut last_uid = database::get_highest_uid(&app_handle_clone, "INBOX").unwrap_or(0);
         let stored_validity = database::get_mailbox_validity(&app_handle_clone, "INBOX").unwrap_or(None);
 
         let domain = "imap.gmail.com";
@@ -57,7 +57,7 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
             // 1. UIDVALIDITY Check
             if stored_validity != Some(server_validity) {
                 log::info!("UIDVALIDITY changed ({} -> {}). Clearing cache.", stored_validity.unwrap_or(0), server_validity);
-                database::clear_messages(&app_handle_clone)?;
+                database::clear_messages(&app_handle_clone, "INBOX")?;
                 database::update_mailbox_validity(&app_handle_clone, "INBOX", server_validity)?;
                 last_uid = 0;
             }
@@ -70,10 +70,10 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
 
             // 3. Exact Sequence Range Fetch
             let (start_uid, end_uid, is_bootstrap) = if last_uid == 0 {
-                let bootstrap_window: u32 = 200;
+                // To support true infinite scrolling across the entire mailbox,
+                // we must fetch all message headers locally instead of just 200.
                 let end = uid_next.saturating_sub(1);
-                let start = end.saturating_sub(bootstrap_window).max(1);
-                (start, end, true)
+                (1, end, true)
             } else {
                 let end = uid_next.saturating_sub(1);
                 (last_uid + 1, end, false)
@@ -185,14 +185,39 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32) -> Op
         }
     }
 
+    let timestamp = chrono::DateTime::parse_from_rfc2822(&date)
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+
+    // Minimal text parsing overhead on sync fetch
+    let mut plain_body = String::new();
+    if let Ok(parsed_full) = parse_mail(body) {
+        plain_body = parsed_full.get_body().unwrap_or_default();
+    }
+
+    let snippet = if !plain_body.is_empty() {
+        let clean: String = plain_body
+            .replace('\n', " ")
+            .replace('\r', "")
+            .chars()
+            .take(180)
+            .collect();
+        Some(clean)
+    } else {
+        None
+    };
+
     Some(MessageHeader {
+        folder: "INBOX".to_string(),
         uid: actual_uid,
         uid_validity: server_validity,
         subject,
         from,
-        date,
+        date: timestamp,
         seen,
         flagged,
-        snippet: None,
+        has_attachments: false,
+        thread_id: None,
+        snippet,
     })
 }

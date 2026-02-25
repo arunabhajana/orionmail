@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { Email } from '@/lib/data';
 import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 // Global cache to prevent duplicate fetches across remounts and concurrent requests
 const fetchedPreviewUIDs = new Set<string>();
@@ -221,32 +222,42 @@ const EmailList: React.FC<EmailListProps> = ({
     isLoadingMore,
     listRef
 }) => {
-    const bottomRef = React.useRef<HTMLDivElement>(null);
+    const parentRef = React.useRef<HTMLDivElement>(null);
     const loadingRef = React.useRef(false);
 
+    // Share the ref if passed
     React.useEffect(() => {
-        if (!onLoadMore) return;
-
-        const observer = new IntersectionObserver((entries) => {
-            const [entry] = entries;
-            if (entry.isIntersecting) {
-                if (isLoadingMore || !hasMore || loadingRef.current) return;
-
-                loadingRef.current = true;
-                onLoadMore();
-
-                setTimeout(() => {
-                    loadingRef.current = false;
-                }, 500);
-            }
-        }, { rootMargin: '200px' });
-
-        if (bottomRef.current) {
-            observer.observe(bottomRef.current);
+        if (!listRef) return;
+        if (typeof listRef === 'function') {
+            listRef(parentRef.current);
+        } else {
+            (listRef as React.MutableRefObject<HTMLDivElement | null>).current = parentRef.current;
         }
+    }, [listRef]);
 
-        return () => observer.disconnect();
-    }, [onLoadMore, isLoadingMore, hasMore]);
+    const rowVirtualizer = useVirtualizer({
+        count: emails.length,
+        getScrollElement: () => parentRef.current,
+        estimateSize: () => 72,
+        overscan: 8,
+    });
+
+    const virtualItems = rowVirtualizer.getVirtualItems();
+
+    React.useEffect(() => {
+        if (!onLoadMore || !hasMore || isLoadingMore || loadingRef.current) return;
+
+        const lastItem = virtualItems[virtualItems.length - 1];
+        if (!lastItem) return;
+
+        if (lastItem.index >= emails.length - 5) {
+            loadingRef.current = true;
+            onLoadMore();
+            setTimeout(() => {
+                loadingRef.current = false;
+            }, 500);
+        }
+    }, [virtualItems, hasMore, isLoadingMore, emails.length, onLoadMore]);
 
     return (
         <main
@@ -278,24 +289,39 @@ const EmailList: React.FC<EmailListProps> = ({
             </div>
 
             {/* 2. Scrollable List */}
-            <div ref={listRef} className="flex-1 overflow-y-auto custom-scrollbar">
-                <AnimatePresence>
-                    {emails.map((email) => (
-                        <EmailListItem
-                            key={email.id}
-                            email={email}
-                            isSelected={selectedEmailId === email.id}
-                            onSelect={onSelectEmail}
-                            onToggleStar={onToggleStar}
-                        />
-                    ))}
-                </AnimatePresence>
-                {/* Sentinel for infinite scroll */}
-                {hasMore && (
-                    <div ref={bottomRef} className="h-8 w-full flex justify-center items-center shrink-0">
-                        {isLoadingMore && (
-                            <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                        )}
+            <div ref={parentRef} className="flex-1 overflow-y-auto custom-scrollbar relative">
+                <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                    <AnimatePresence>
+                        {virtualItems.map((virtualRow) => {
+                            const email = emails[virtualRow.index];
+                            return (
+                                <div
+                                    key={`${email.folder}-${email.id}`}
+                                    data-index={virtualRow.index}
+                                    ref={rowVirtualizer.measureElement}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        transform: `translateY(${virtualRow.start}px)`,
+                                    }}
+                                >
+                                    <EmailListItem
+                                        email={email}
+                                        isSelected={selectedEmailId === email.id}
+                                        onSelect={onSelectEmail}
+                                        onToggleStar={onToggleStar}
+                                    />
+                                </div>
+                            );
+                        })}
+                    </AnimatePresence>
+                </div>
+                {/* Loader showing below the items if loading more */}
+                {hasMore && isLoadingMore && (
+                    <div className="h-8 w-full flex justify-center items-center shrink-0">
+                        <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                     </div>
                 )}
             </div>

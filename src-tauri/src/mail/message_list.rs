@@ -6,13 +6,16 @@ use tauri::AppHandle;
 
 #[derive(Debug, serde::Serialize)]
 pub struct MessageHeader {
+    pub folder: String,
     pub uid: u32,
     pub uid_validity: u32,
     pub subject: String,
     pub from: String,
-    pub date: String,
+    pub date: i64,
     pub seen: bool,
     pub flagged: bool,
+    pub has_attachments: bool,
+    pub thread_id: Option<String>,
     pub snippet: Option<String>,
 }
 
@@ -92,6 +95,8 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                         }
                     }
 
+                    let mut plain_body = String::new();
+
                     if let Ok(parsed) = parse_mail(body) {
                         for header in parsed.get_headers() {
                             let key = header.get_key().to_lowercase();
@@ -103,17 +108,38 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                                 _ => {}
                             }
                         }
+                        // Attempt to extract raw text content for snippet extraction locally
+                        plain_body = parsed.get_body().unwrap_or_default();
                     }
 
+                    let timestamp = chrono::DateTime::parse_from_rfc2822(&date)
+                        .map(|dt| dt.timestamp())
+                        .unwrap_or(0);
+
+                    let snippet = if !plain_body.is_empty() {
+                        let clean: String = plain_body
+                            .replace('\n', " ")
+                            .replace('\r', "")
+                            .chars()
+                            .take(180)
+                            .collect();
+                        Some(clean)
+                    } else {
+                        None
+                    };
+
                     messages.push(MessageHeader {
+                        folder: "INBOX".to_string(),
                         uid: actual_uid,
                         uid_validity,
                         subject,
                         from,
-                        date,
+                        date: timestamp,
                         seen,
                         flagged,
-                        snippet: None,
+                        has_attachments: false, // For future IMAP multi-part traversal implementation
+                        thread_id: None,        // For future IMAP THREAD correlation
+                        snippet,
                     });
                 }
             }
