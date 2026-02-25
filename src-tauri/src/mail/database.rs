@@ -209,3 +209,49 @@ pub fn get_unfetched_recent_uids(app_handle: &AppHandle, limit: u32) -> Result<V
 
     Ok(uids)
 }
+
+pub fn is_message_seen(app_handle: &AppHandle, uid: u32, uid_validity: u32) -> Result<bool, String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare("SELECT seen FROM messages WHERE uid = ?1 AND uid_validity = ?2").unwrap();
+    let seen: Option<i32> = stmt.query_row([uid, uid_validity], |row| row.get(0)).ok();
+
+    Ok(seen.unwrap_or(0) != 0)
+}
+
+pub fn set_message_seen(app_handle: &AppHandle, uid: u32, uid_validity: u32, seen: bool) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE messages SET seen = ?1 WHERE uid = ?2 AND uid_validity = ?3",
+        rusqlite::params![if seen { 1 } else { 0 }, uid, uid_validity],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn set_message_flagged(app_handle: &AppHandle, uid: u32, uid_validity: u32, flagged: bool) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE messages SET flagged = ?1 WHERE uid = ?2 AND uid_validity = ?3",
+        rusqlite::params![if flagged { 1 } else { 0 }, uid, uid_validity],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn delete_message_local(app_handle: &AppHandle, uid: u32, uid_validity: u32) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "DELETE FROM messages WHERE uid = ?1 AND uid_validity = ?2",
+        rusqlite::params![uid, uid_validity],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}

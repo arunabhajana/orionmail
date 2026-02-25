@@ -3,6 +3,7 @@ mod commands;
 mod mail;
 
 use crate::commands::auth_commands::*;
+use crate::commands::message_commands::*;
 use tauri::Manager;
 
 #[cfg(target_os = "windows")]
@@ -55,7 +56,10 @@ pub fn run() {
       get_inbox_messages,
       get_cached_messages,
       sync_inbox,
-      get_message_body
+      get_message_body,
+      mark_as_read,
+      toggle_star,
+      delete_message
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

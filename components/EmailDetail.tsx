@@ -24,6 +24,8 @@ interface EmailDetailProps {
     className?: string;
     email?: Email | null;
     onToggleStar?: (emailId: string) => void;
+    onDeleteMessage?: (emailId: string) => void;
+    onMarkAsRead?: (emailId: string) => void;
 }
 
 // --- Sub-Components ---
@@ -50,12 +52,12 @@ const ToolbarButton = memo(({
 ));
 ToolbarButton.displayName = "ToolbarButton";
 
-const DetailToolbar = memo(({ isStarred, onToggleStar }: { isStarred?: boolean; onToggleStar?: () => void }) => (
+const DetailToolbar = memo(({ isStarred, onToggleStar, onDelete }: { isStarred?: boolean; onToggleStar?: () => void; onDelete?: () => void }) => (
     <div className="h-16 px-6 flex items-center justify-between border-b border-border/60 shrink-0 bg-background/50 backdrop-blur-sm">
         <div className="flex items-center gap-2">
             <ToolbarButton icon={Archive} />
             <ToolbarButton icon={AlertOctagon} />
-            <ToolbarButton icon={Trash2} />
+            <ToolbarButton icon={Trash2} onClick={onDelete} />
             <div className="w-px h-6 bg-border mx-2" />
             <button
                 onClick={onToggleStar}
@@ -142,7 +144,7 @@ AttachmentCard.displayName = "AttachmentCard";
 
 // --- Main Component ---
 
-const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar }) => {
+const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onMarkAsRead }) => {
     const [bodyContent, setBodyContent] = React.useState<string>("");
     const [isLoadingBody, setIsLoadingBody] = React.useState<boolean>(false);
     const [iframeHeight, setIframeHeight] = React.useState<number>(400);
@@ -176,10 +178,15 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
 
         fetchBody();
 
+        // Trigger optimistic "mark as read" if the email is unread
+        if (email.unread && onMarkAsRead) {
+            onMarkAsRead(email.id);
+        }
+
         return () => {
             isMounted = false;
         };
-    }, [email?.id]);
+    }, [email?.id, email?.unread, onMarkAsRead]);
 
     React.useEffect(() => {
         const handleMessage = (event: MessageEvent) => {
@@ -220,6 +227,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
             <DetailToolbar
                 isStarred={email?.starred}
                 onToggleStar={() => email && onToggleStar?.(email.id)}
+                onDelete={() => email && onDeleteMessage?.(email.id)}
             />
 
             {/* Content Scroll Area */}

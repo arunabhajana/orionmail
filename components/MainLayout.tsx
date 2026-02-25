@@ -42,10 +42,62 @@ export default function MainLayout() {
 
     // --- Handlers ---
 
-    const toggleStar = (emailId: string) => {
+    const toggleStar = async (emailId: string) => {
+        const target = emails.find(e => e.id === emailId);
+        if (!target) return;
+
+        const newStarredState = !target.starred;
+
+        // Optimistic Update
         setEmails(prev => prev.map(email =>
-            email.id === emailId ? { ...email, starred: !email.starred } : email
+            email.id === emailId ? { ...email, starred: newStarredState } : email
         ));
+
+        try {
+            await invoke('toggle_star', { uid: Number(emailId), shouldStar: newStarredState });
+        } catch (err) {
+            console.error("Failed to toggle star", err);
+            // Rollback
+            setEmails(prev => prev.map(email =>
+                email.id === emailId ? { ...email, starred: !newStarredState } : email
+            ));
+        }
+    };
+
+    const markAsRead = async (emailId: string) => {
+        const target = emails.find(e => e.id === emailId);
+        if (!target || !target.unread) return;
+
+        // Optimistic Update
+        setEmails(prev => prev.map(email =>
+            email.id === emailId ? { ...email, unread: false } : email
+        ));
+
+        try {
+            await invoke('mark_as_read', { uid: Number(emailId) });
+        } catch (err) {
+            console.error("Failed to mark as read", err);
+            // Rollback
+            setEmails(prev => prev.map(email =>
+                email.id === emailId ? { ...email, unread: true } : email
+            ));
+        }
+    };
+
+    const deleteMessage = async (emailId: string) => {
+        // Optimistic Update
+        setEmails(prev => prev.filter(email => email.id !== emailId));
+        if (selectedEmailId === emailId) {
+            setSelectedEmailId(null);
+        }
+
+        try {
+            await invoke('delete_message', { uid: Number(emailId) });
+        } catch (err) {
+            console.error("Failed to delete message", err);
+            // Rollback via DB fetch since array splicing is tricky to reverse
+            await fetchCache();
+        }
     };
 
     const fetchCache = async () => {
@@ -254,6 +306,7 @@ export default function MainLayout() {
                 selectedEmailId={selectedEmailId}
                 onSelectEmail={(id) => setSelectedEmailId(id)}
                 onToggleStar={toggleStar}
+                onDeleteMessage={deleteMessage}
                 onSync={handleSync}
                 isSyncing={isSyncing}
             />
@@ -263,6 +316,8 @@ export default function MainLayout() {
                 className="detail-anim flex-1 flex flex-col"
                 email={selectedEmail}
                 onToggleStar={toggleStar}
+                onDeleteMessage={deleteMessage}
+                onMarkAsRead={markAsRead}
             />
 
             {/* Compose Modal Overlay */}

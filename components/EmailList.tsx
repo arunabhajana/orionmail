@@ -19,6 +19,7 @@ interface EmailListProps {
     selectedEmailId: string | null;
     onSelectEmail: (id: string) => void;
     onToggleStar?: (emailId: string) => void;
+    onDeleteMessage?: (emailId: string) => void;
     onSync?: () => void;
     isSyncing?: boolean;
 }
@@ -209,6 +210,7 @@ const EmailList: React.FC<EmailListProps> = ({
     selectedEmailId,
     onSelectEmail,
     onToggleStar,
+    onDeleteMessage,
     onSync,
     isSyncing
 }) => {
