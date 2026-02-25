@@ -23,6 +23,7 @@ interface SidebarProps {
     onCompose: () => void;
     currentFolder?: string;
     onFolderSelect?: (folder: string) => void;
+    unreadCount?: number;
 }
 
 interface NavItemConfig {
@@ -43,7 +44,7 @@ import { useAuth } from "./AuthContext";
 // --- Constants ---
 
 const NAV_ITEMS: NavItemConfig[] = [
-    { icon: Inbox, label: "Inbox", id: "inbox", badge: 12 },
+    { icon: Inbox, label: "Inbox", id: "inbox" },
     { icon: Star, label: "Starred", id: "starred" },
     { icon: Send, label: "Sent", id: "sent" },
     { icon: File, label: "Drafts", id: "drafts" },
@@ -202,7 +203,7 @@ TagItem.displayName = "TagItem";
 
 // --- Main Component ---
 
-const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, currentFolder, onFolderSelect }) => {
+const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, currentFolder, onFolderSelect, unreadCount }) => {
     return (
         <aside
             className={cn(
@@ -222,6 +223,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, currentFolder, 
                         <NavItem
                             key={item.id}
                             {...item}
+                            badge={item.id === "inbox" && unreadCount && unreadCount > 0 ? unreadCount : item.badge}
                             highlight={currentFolder === item.id}
                             onClick={() => onFolderSelect?.(item.id)}
                         />

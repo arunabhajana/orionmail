@@ -297,6 +297,7 @@ export default function MainLayout() {
                 onCompose={() => setIsComposeOpen(true)}
                 currentFolder={currentFolder}
                 onFolderSelect={setCurrentFolder}
+                unreadCount={emails.filter(e => e.unread && e.folder === "inbox").length}
             />
 
             {/* Column 2: Message List */}
