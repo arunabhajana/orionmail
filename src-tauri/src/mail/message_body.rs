@@ -5,8 +5,12 @@ use tauri::{AppHandle, Manager};
 use mailparse::{parse_mail, ParsedMail};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use tokio::sync::Semaphore;
+use std::sync::Arc;
+use once_cell::sync::Lazy;
 
 static PREFETCH_RUNNING: AtomicBool = AtomicBool::new(false);
+static PREFETCH_LIMIT: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(2)));
 
 use std::collections::HashSet;
 use std::fs;
@@ -220,7 +224,8 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
     let app_handle_clone = app_handle.clone();
     let account_clone = account.clone();
 
-    tokio::task::spawn_blocking(move || {
+    // 1. Check caches in a blocking task
+    let cache_result = tokio::task::spawn_blocking(move || {
         // 1. Get the current mailbox validity to query cache properly
         let stored_validity = database::get_mailbox_validity(&app_handle_clone, "INBOX")
             .unwrap_or_default()
@@ -228,52 +233,61 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
 
         // 1.5 Check Memory Cache Primary
         if let Some(mem_body) = crate::mail::body_cache::get_cached_body(uid) {
-            return Ok(mem_body);
+            return Ok((Some(mem_body), stored_validity));
         }
 
         // 2. Check SQLite Cache Secondary
         if let Ok(Some(cached_body)) = database::get_message_body_cache(&app_handle_clone, uid, stored_validity) {
             crate::mail::body_cache::insert_cached_body(uid, cached_body.clone());
-            return Ok(cached_body);
+            return Ok((Some(cached_body), stored_validity));
         }
 
-        // 3. Connect to IMAP
-        imap_session::execute_with_session(&account_clone, |session| {
-            // 4. CRITICAL: Fetch the full message
-            let fetch_results = session.uid_fetch(
-                uid.to_string(),
-                "(BODY.PEEK[])"
-            ).map_err(|e| format!("IMAP Body Fetch Error: {}", e))?;
+        Ok::<_, String>((None, stored_validity))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))??;
 
-            if let Some(msg) = fetch_results.iter().next() {
-                let body_bytes_opt = msg.body().or_else(|| msg.text());
-                
-                if let Some(body_bytes) = body_bytes_opt {
-                    match extract_displayable_body(&app_handle_clone, uid, body_bytes) {
-                        Ok(parsed_body) => {
-                            let preview = generate_preview(&parsed_body);
-                            let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &parsed_body, &preview);
-                            crate::mail::body_cache::insert_cached_body(uid, parsed_body.clone());
-                            return Ok(parsed_body);
-                        }
-                        Err(_) => {
-                            let fallback = String::from_utf8_lossy(body_bytes).to_string();
-                            let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-                            let formatted_fallback = format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped);
-                            let preview = generate_preview(&formatted_fallback);
-                            let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &formatted_fallback, &preview);
-                            crate::mail::body_cache::insert_cached_body(uid, formatted_fallback.clone());
-                            return Ok(formatted_fallback);
-                        }
+    let (cached_opt, stored_validity) = cache_result;
+    if let Some(body) = cached_opt {
+        return Ok(body);
+    }
+
+    // 3. Connect to IMAP and execute fetch asynchronously (it handles its own spawn_blocking)
+    let app_handle_clone = app_handle.clone();
+    
+    imap_session::execute_with_session(&account_clone, imap_session::SessionKind::Prefetch, move |session| {
+        // 4. CRITICAL: Fetch the full message
+        let fetch_results = session.uid_fetch(
+            uid.to_string(),
+            "(BODY.PEEK[])"
+        ).map_err(|e| format!("IMAP Body Fetch Error: {}", e))?;
+
+        if let Some(msg) = fetch_results.iter().next() {
+            let body_bytes_opt = msg.body().or_else(|| msg.text());
+            
+            if let Some(body_bytes) = body_bytes_opt {
+                match extract_displayable_body(&app_handle_clone, uid, body_bytes) {
+                    Ok(parsed_body) => {
+                        let preview = generate_preview(&parsed_body);
+                        let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &parsed_body, &preview);
+                        crate::mail::body_cache::insert_cached_body(uid, parsed_body.clone());
+                        return Ok(parsed_body);
+                    }
+                    Err(_) => {
+                        let fallback = String::from_utf8_lossy(body_bytes).to_string();
+                        let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+                        let formatted_fallback = format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped);
+                        let preview = generate_preview(&formatted_fallback);
+                        let _ = database::update_message_body(&app_handle_clone, uid, stored_validity, &formatted_fallback, &preview);
+                        crate::mail::body_cache::insert_cached_body(uid, formatted_fallback.clone());
+                        return Ok(formatted_fallback);
                     }
                 }
             }
+        }
 
-            Err("Could not retrieve message body.".to_string())
-        })
-    })
-    .await
-    .map_err(|e| format!("Task failed: {}", e))?
+        Err("Could not retrieve message body.".to_string())
+    }).await
 }
 
 pub async fn prefetch_recent_bodies(app_handle: AppHandle, account: Account) {
@@ -302,7 +316,14 @@ pub async fn prefetch_recent_bodies(app_handle: AppHandle, account: Account) {
         return;
     }
 
-    log::info!("Starting background prefetch for {} emails.", uids.len());
+    log::info!(
+        "Starting background prefetch for {} emails. Production Architecture Note: \
+        IMAP servers aggressively terminate unbounded parallel connections. We specifically use a Tokio \
+        Semaphore to limit prefetch concurrency to exactly 2 active background tasks. This ensures 1-2 concurrent \
+        body fetches, which is fast enough for background Sync while preventing IMAP Session pool starvation, \
+        safeguarding the primary IDLE connection, and maintaining connection stability naturally.",
+        uids.len()
+    );
 
     for (uid, uid_validity) in uids {
         // Double check cache in case user clicked it
@@ -310,13 +331,29 @@ pub async fn prefetch_recent_bodies(app_handle: AppHandle, account: Account) {
             continue;
         }
 
-        log::info!("Prefetching body UID {}", uid);
+        log::info!("Prefetch queueing body UID {}", uid);
         
-        let _ = get_message_body(&app_handle, account.clone(), uid).await;
+        let permit = match PREFETCH_LIMIT.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!("Prefetch semaphore closed: {}", e);
+                break;
+            }
+        };
+
+        let app_handle_clone = app_handle.clone();
+        let account_clone = account.clone();
+
+        tokio::spawn(async move {
+            let _permit = permit;
+            log::info!("Prefetch actively fetching body UID {}", uid);
+            let _ = get_message_body(&app_handle_clone, account_clone, uid).await;
+        });
         
-        // Let other tokio tasks run and avoid IMAP blasting throttle limits
+        // Yield to allow other tasks (including the spawned fetch) to progress
         tokio::task::yield_now().await;
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        // Minor pacing to avoid hammering the disk or Tokio executor locally
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     log::info!("Finished background prefetch.");

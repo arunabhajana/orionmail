@@ -1,41 +1,29 @@
 use crate::auth::account::Account;
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use std::sync::Mutex as StdMutex;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex as AsyncMutex;
 use std::time::Instant;
 use native_tls::TlsConnector;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SessionKind {
+    Primary,
+    Prefetch,
+}
 
 pub struct ImapSession {
     pub session: imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
     pub last_used: Instant,
 }
 
-pub static GLOBAL_SESSION: Lazy<Mutex<Vec<ImapSession>>> = Lazy::new(|| Mutex::new(Vec::new()));
-
-pub struct SessionGuard {
-    pub session: Option<ImapSession>,
-    pub discard: bool,
+pub struct ManagedSession {
+    pub session: Arc<AsyncMutex<Option<ImapSession>>>,
 }
 
-impl Drop for SessionGuard {
-    fn drop(&mut self) {
-        if self.discard {
-            return; // Poisoned/Dead session; do not restore to global pool.
-        }
-
-        if let Some(mut session) = self.session.take() {
-            if let Ok(mut lock) = GLOBAL_SESSION.lock() {
-                // Limit the pool size to a maximum of 3 concurrent idle connections
-                // to prevent connection leaks or holding too many sockets.
-                if lock.len() < 3 {
-                    lock.push(session);
-                } else {
-                    log::info!("IMAP Session pool full. Dropping excess session.");
-                    let _ = session.session.logout();
-                }
-            }
-        }
-    }
-}
+pub static SESSION_MANAGER: Lazy<StdMutex<HashMap<(String, SessionKind), Arc<ManagedSession>>>> = 
+    Lazy::new(|| StdMutex::new(HashMap::new()));
 
 pub fn create_session(account: &Account) -> Result<ImapSession, String> {
     let mut session = connect_and_authenticate(account)?;
@@ -90,92 +78,84 @@ fn connect_and_authenticate(
     Ok(session)
 }
 
-pub fn execute_with_session<F, R>(account: &Account, mut f: F) -> Result<R, String>
+pub async fn execute_with_session<F, R>(account: &Account, kind: SessionKind, mut f: F) -> Result<R, String>
 where
-    F: FnMut(&mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>) -> Result<R, String>,
+    F: FnMut(&mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>) -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
 {
-    // Try to pop a valid session from the global pool.
-    let mut session_opt = None;
-    
-    {
-        let mut lock = GLOBAL_SESSION.lock().map_err(|_| "Failed to lock global session")?;
+    // 1. Get or create the ManagedSession for this Account+Kind
+    let session_arc = {
+        let mut pools = SESSION_MANAGER.lock().unwrap();
+        let key = (account.email.clone(), kind);
+        let managed = pools.entry(key).or_insert_with(|| Arc::new(ManagedSession {
+            session: Arc::new(AsyncMutex::new(None)),
+        }));
+        managed.session.clone()
+    };
+
+    // 2. Asynchronously acquire the lock token for the session.
+    // If another task is using the Prefetch session, this task safely yields without blocking an OS thread.
+    let mut owned_guard = session_arc.lock_owned().await;
+
+    let account_clone = account.clone();
+
+    // 3. Move the owned guard into the blocking task to perform IMAP network I/O
+    tokio::task::spawn_blocking(move || {
+        // We now have exclusive mutable access to the Option<ImapSession>
         
-        while let Some(mut s) = lock.pop() {
+        let mut is_healthy = false;
+        if let Some(s) = owned_guard.as_mut() {
             if s.last_used.elapsed().as_secs() > 30 {
                 log::info!("Session idle > 30s, validating health...");
                 // 1. Send NOOP to verify TCP connection is alive
                 // 2. Send SELECT INBOX to guarantee mailbox context is valid and not reclaimed
-                let is_healthy = s.session.noop().is_ok() && s.session.select("INBOX").is_ok();
-                
-                if is_healthy {
-                    log::info!("Session health validation passed. Reusing session.");
+                if s.session.noop().is_ok() && s.session.select("INBOX").is_ok() {
+                    is_healthy = true;
                     s.last_used = Instant::now();
-                    session_opt = Some(s);
-                    break;
+                    log::info!("Session health validation passed. Reusing session.");
                 } else {
                     log::info!("Session health validation failed. Destroying stale session.");
-                    let _ = s.session.logout(); // Best effort clean close
-                    // Keep looping to find a fresh one
+                    let _ = s.session.logout();
                 }
             } else {
-                session_opt = Some(s);
-                break; // Found a good one!
+                is_healthy = true;
             }
         }
-    }
 
-    // Provision new session if we didn't get a valid one from the pool.
-    let session = match session_opt {
-        Some(s) => s,
-        None => create_session(account)?,
-    };
+        if !is_healthy {
+            // Overwrite with a fresh session
+            *owned_guard = Some(create_session(&account_clone)?);
+        }
 
-    // Wrap in our RAII guard
-    let mut guard = SessionGuard {
-        session: Some(session),
-        discard: false,
-    };
+        let imap_session_wrapper = owned_guard.as_mut().unwrap();
 
-    // Execute payload
-    let result = match f(&mut guard.session.as_mut().unwrap().session) {
-        Ok(res) => Ok(res),
-        Err(e) => {
-            log::warn!("Session operation failed: {}. Attemping auto-recovery...", e);
+        // 4. Execute the closure
+        let result = f(&mut imap_session_wrapper.session);
+
+        if result.is_err() {
+            log::warn!("Session operation failed. Attempting auto-recovery...");
+            let _ = imap_session_wrapper.session.logout(); // poison
+            *owned_guard = None; // discard
             
-            // 1. Poison the broken session. It will drop and NOT restore.
-            guard.discard = true;
-
-            // 2. Drop the guard explicitly now (it won't restore) and shadow it.
-            drop(guard);
-
-            // 3. Create a fresh session (includes SELECT INBOX).
-            let new_session = create_session(account)?;
-
-            // 4. Wrap again.
-            let mut new_guard = SessionGuard {
-                session: Some(new_session),
-                discard: false,
+            // Recreate
+            let mut new_session = match create_session(&account_clone) {
+                Ok(s) => s,
+                Err(e) => return Err(e),
             };
 
-            // 5. Retry EXACTLY ONCE.
-            let retry_result = f(&mut new_guard.session.as_mut().unwrap().session);
-            
-            if retry_result.is_err() {
-                new_guard.discard = true; // Still broken? Discard this one too.
+            let retry_result = f(&mut new_session.session);
+            if retry_result.is_ok() {
+                new_session.last_used = Instant::now();
+                *owned_guard = Some(new_session);
             }
-
-            // Return whatever the retry resulted in.
-            // Heartbeat update is handled below before the guard natively drops.
-            guard = new_guard;
-            retry_result
+            // If retry fails, owned_guard remains None.
+            return retry_result;
         }
-    };
 
-    // If initial (or retry) attempt succeeded, update heartbeat (ordering matters!).
-    if result.is_ok() && !guard.discard {
-        guard.session.as_mut().unwrap().last_used = Instant::now();
-    }
-
-    // guard drops here organically (or via early returns), restoring valid sessions safely.
-    result
+        // Heartbeat update
+        imap_session_wrapper.last_used = Instant::now();
+        result
+        
+        // owned_guard drops here, releasing the tokio async mutex naturally!
+    }).await.map_err(|e| format!("Spawn blocking error: {}", e))?
 }
