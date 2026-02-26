@@ -1,4 +1,4 @@
-# OrionMail
+# OrionMail - A Modern, High-Performance Email Client
 
 OrionMail is a modern, high-performance email client built with Next.js, Tauri, and Tailwind CSS. It features a sleek, glassmorphic user interface inspired by macOS design principles, offering a premium experience with smooth animations and a refined aesthetic focus.
 
