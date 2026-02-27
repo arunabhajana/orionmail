@@ -17,7 +17,7 @@ OrionMail is a modern, high-performance email client built with Next.js, Tauri, 
 *   **Styling**: Tailwind CSS v4
 *   **Desktop Framework**: Tauri v2 (Rust)
 *   **Iconography**: Lucide React
-*   **Animation Engine**: Framer Motion
+*   **Animation Engine**: Framer Motion & GSAP
 
 ## Getting Started
 
