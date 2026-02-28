@@ -22,7 +22,7 @@ export default function MainLayout() {
     // --- New State for Folders & Stars ---
     const [currentFolder, setCurrentFolder] = useState<string>("inbox");
     const [emails, setEmails] = useState<Email[]>([]);
-    const { isSyncing, setIsSyncing, setSyncMessage } = useSync();
+    const { isSyncing, setIsSyncing, setSyncMessage, setUnreadCount } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
     const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -48,6 +48,12 @@ export default function MainLayout() {
     });
 
     const selectedEmail = emails.find(e => e.id === selectedEmailId);
+
+    // --- Global State Sync ---
+    useEffect(() => {
+        const count = emails.filter(e => e.unread).length;
+        setUnreadCount(count);
+    }, [emails, setUnreadCount]);
 
     // --- Handlers ---
 

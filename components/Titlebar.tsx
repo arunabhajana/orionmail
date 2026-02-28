@@ -58,18 +58,46 @@ WindowControl.displayName = "WindowControl";
  * Cycles between 'Online' and 'Syncing' states.
  */
 function SyncIndicator() {
-    const { isSyncing, syncMessage } = useSync();
+    const { isSyncing, syncMessage, unreadCount } = useSync();
+    const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+    useEffect(() => {
+        const handleOnline = () => setIsOnline(true);
+        const handleOffline = () => setIsOnline(false);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
 
     return (
         <div
             className={cn(
                 "flex items-center px-2 py-0.5 rounded-full select-none transition-all duration-300",
-                "bg-transparent relative h-6 w-28 overflow-hidden"
+                "bg-transparent relative h-6 w-32 overflow-hidden"
             )}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
             <AnimatePresence mode="wait">
-                {isSyncing ? (
+                {!isOnline ? (
+                    <motion.div
+                        key="offline"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.2 }}
+                        className="absolute inset-0 flex items-center gap-2 pl-2"
+                    >
+                        <div className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.4)]" />
+                        <span className="text-[10px] font-medium text-red-500/80 tracking-tight">
+                            Offline
+                        </span>
+                    </motion.div>
+                ) : isSyncing ? (
                     <motion.div
                         key="syncing"
                         initial={{ opacity: 0, y: 10 }}
@@ -78,32 +106,32 @@ function SyncIndicator() {
                         transition={{ duration: 0.2 }}
                         className="absolute inset-0 flex items-center gap-2 pl-2"
                     >
-                        <RefreshCw size={12} className="text-muted-foreground animate-spin" />
-                        <span className="text-[10px] font-medium text-muted-foreground tracking-tight">
+                        <RefreshCw size={12} className="text-orange-500 animate-spin" />
+                        <span className="text-[10px] font-semibold text-orange-500/90 tracking-tight uppercase">
                             Syncing...
                         </span>
                     </motion.div>
-                ) : syncMessage ? (
+                ) : unreadCount > 0 ? (
                     <motion.div
-                        key="message"
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ duration: 0.2 }}
-                        className="absolute inset-0 flex items-center gap-1.5 pl-2"
+                        key="unread"
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 1.1 }}
+                        className="absolute inset-0 flex items-center gap-2 pl-2"
                     >
-                        <CheckCircle2 size={12} className="text-emerald-500" />
-                        <span className="text-[10px] font-medium text-foreground tracking-tight whitespace-nowrap">
-                            {syncMessage}
+                        <div className="flex items-center justify-center bg-blue-500 text-white text-[9px] font-bold h-4 min-w-[16px] px-1 rounded-full shadow-sm ring-1 ring-white/20">
+                            {unreadCount}
+                        </div>
+                        <span className="text-[10px] font-medium text-foreground/70 tracking-tight">
+                            Unread
                         </span>
                     </motion.div>
                 ) : (
                     <motion.div
                         key="online"
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ duration: 0.2 }}
+                        initial={{ opacity: 0, x: -5 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 5 }}
                         className="absolute inset-0 flex items-center gap-2 pl-2"
                     >
                         <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.4)]" />
