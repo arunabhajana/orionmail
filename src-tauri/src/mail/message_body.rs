@@ -1,16 +1,14 @@
 use crate::auth::account::Account;
 use crate::mail::database;
 use crate::mail::imap_session;
+use imap_proto::types::BodyStructure;
+
 use tauri::{AppHandle, Manager};
 use mailparse::{parse_mail, ParsedMail};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use tokio::sync::Semaphore;
 use std::sync::Arc;
 use once_cell::sync::Lazy;
-
-static PREFETCH_RUNNING: AtomicBool = AtomicBool::new(false);
-static PREFETCH_LIMIT: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(2)));
+pub static CONCURRENT_FETCH_LIMIT: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(3)));
 
 use std::collections::HashSet;
 use std::fs;
@@ -163,27 +161,59 @@ fn rewrite_cid_images(
 }
 
 fn extract_displayable_body(app_handle: &AppHandle, uid: u32, raw_email: &[u8]) -> Result<String, String> {
-    let parsed = parse_mail(raw_email)
-        .map_err(|e| format!("Parsing error: {}", e))?;
-
-    let mut parts = MimeParts::new();
-    parts.traverse(&parsed);
-
-    // 1. Determine best viewing payload
-    let base_html = if let Some(html) = parts.best_html.clone() {
-        html
-    } else if let Some(text) = parts.best_text.clone() {
-        let escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-        format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped)
+    // If it's a full email or section with MIME prepended, parse_mail works.
+    let parsed_res = parse_mail(raw_email);
+    
+    let base_html = if let Ok(parsed) = parsed_res {
+        let mut parts = MimeParts::new();
+        parts.traverse(&parsed);
+        
+        let mut html_content = if let Some(html) = parts.best_html.clone() {
+            html
+        } else if let Some(text) = parts.best_text.clone() {
+            let escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+            format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped)
+        } else {
+            let fallback = parsed.get_body().unwrap_or_else(|_| String::from_utf8_lossy(raw_email).to_string());
+            let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+            format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped)
+        };
+        rewrite_cid_images(app_handle, uid, html_content, &parts)
     } else {
-        let fallback = parsed.get_body().unwrap_or_else(|_| String::from_utf8_lossy(raw_email).to_string());
-        let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-        format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped)
+        String::from_utf8_lossy(raw_email).to_string()
     };
 
-    // 2. Extensively parse and replace inline CID images
-    Ok(rewrite_cid_images(app_handle, uid, base_html, &parts))
+    Ok(base_html)
 }
+
+fn find_best_part<'a>(bs: &'a BodyStructure<'a>, prefix: &str) -> Option<String> {
+    match bs {
+        BodyStructure::Text { common, .. } => {
+            let subtype_str = format!("{:?}", common).to_lowercase();
+            if subtype_str.contains("html") || subtype_str.contains("plain") {
+                Some(prefix.to_string())
+            } else {
+                None
+            }
+        },
+        BodyStructure::Multipart { bodies, .. } => {
+            let mut best: Option<String> = None;
+            for (i, part) in bodies.iter().enumerate() {
+                let part_id = if prefix.is_empty() {
+                    format!("{}", i + 1)
+                } else {
+                    format!("{}.{}", prefix, i + 1)
+                };
+                if let Some(res) = find_best_part(part, &part_id) {
+                    best = Some(res); // Will end up capturing the last HTML/plain part, which matches multipart/alternative precedence
+                }
+            }
+            best
+        },
+        _ => None,
+    }
+}
+
 
 fn generate_preview(html: &str) -> String {
     let re_style = Regex::new(r"(?si)<style[^>]*>.*?</style>").unwrap();
@@ -220,24 +250,20 @@ fn generate_preview(html: &str) -> String {
     }
 }
 
-pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32) -> Result<String, String> {
-    let app_handle_clone = app_handle.clone();
-    let account_clone = account.clone();
-
+pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Account, uid: u32) -> Result<String, String> {
+    let app_handle_cache = app_handle.clone();
+    
     // 1. Check caches in a blocking task
     let cache_result = tokio::task::spawn_blocking(move || {
-        // 1. Get the current mailbox validity to query cache properly
-        let stored_validity = database::get_mailbox_validity(&app_handle_clone, "INBOX")
+        let stored_validity = database::get_mailbox_validity(&app_handle_cache, "INBOX")
             .unwrap_or_default()
             .ok_or_else(|| "No stored mailbox validity. Resync required.".to_string())?;
 
-        // 1.5 Check Memory Cache Primary
         if let Some(mem_body) = crate::mail::body_cache::get_cached_body(uid) {
             return Ok((Some(mem_body), stored_validity));
         }
 
-        // 2. Check SQLite Cache Secondary
-        if let Ok(Some(cached_body)) = database::get_message_body_cache(&app_handle_clone, "INBOX", uid) {
+        if let Ok(Some(cached_body)) = database::get_message_body_cache(&app_handle_cache, "INBOX", uid) {
             crate::mail::body_cache::insert_cached_body(uid, cached_body.clone());
             return Ok((Some(cached_body), stored_validity));
         }
@@ -247,114 +273,100 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32
     .await
     .map_err(|e| format!("Task failed: {}", e))??;
 
-    let (cached_opt, stored_validity) = cache_result;
+    let (cached_opt, _stored_validity) = cache_result;
     if let Some(body) = cached_opt {
         return Ok(body);
     }
 
-    // 3. Connect to IMAP and execute fetch asynchronously (it handles its own spawn_blocking)
-    let app_handle_clone = app_handle.clone();
-    
-    imap_session::execute_with_session(&account_clone, imap_session::SessionKind::Prefetch, move |session| {
-        // 4. CRITICAL: Fetch the full message
-        let fetch_results = session.uid_fetch(
-            uid.to_string(),
-            "(BODY.PEEK[])"
-        ).map_err(|e| format!("IMAP Body Fetch Error: {}", e))?;
+    // Prepare variables for the raw fetch payload
+    let mut fetched_target_part = String::new();
+    let mut fetched_full_payload: Vec<u8> = Vec::new();
 
-        if let Some(msg) = fetch_results.iter().next() {
-            let body_bytes_opt = msg.body().or_else(|| msg.text());
-            
-            if let Some(body_bytes) = body_bytes_opt {
-                match extract_displayable_body(&app_handle_clone, uid, body_bytes) {
-                    Ok(parsed_body) => {
-                        let preview = generate_preview(&parsed_body);
-                        let _ = database::update_message_body(&app_handle_clone, "INBOX", uid, &parsed_body, &preview);
-                        crate::mail::body_cache::insert_cached_body(uid, parsed_body.clone());
-                        return Ok(parsed_body);
-                    }
-                    Err(_) => {
-                        let fallback = String::from_utf8_lossy(body_bytes).to_string();
-                        let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-                        let formatted_fallback = format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped);
-                        let preview = generate_preview(&formatted_fallback);
-                        let _ = database::update_message_body(&app_handle_clone, "INBOX", uid, &formatted_fallback, &preview);
-                        crate::mail::body_cache::insert_cached_body(uid, formatted_fallback.clone());
-                        return Ok(formatted_fallback);
-                    }
+    // -- SEMAPHORE ACQUIRE (NETWORK BOUNDARY) --
+    let _permit = CONCURRENT_FETCH_LIMIT.clone().acquire_owned().await.map_err(|e| e.to_string())?;
+    log::debug!("IMAP fetch start: uid={}, active_permits={}", uid, 3 - CONCURRENT_FETCH_LIMIT.available_permits());
+    
+    let imap_result = imap_session::execute_with_session(&account, imap_session::SessionKind::Prefetch, move |session| {
+        let mut target_part = String::new();
+        let mut full_payload: Vec<u8> = Vec::new();
+        
+        let fetch_bs = session.uid_fetch(uid.to_string(), "(BODYSTRUCTURE)")
+            .map_err(|e| format!("IMAP fetch_bs error: {}", e))?;
+
+        if let Some(msg) = fetch_bs.iter().next() {
+            if let Some(bs) = msg.bodystructure() {
+                if let Some(part_id) = find_best_part(bs, "") {
+                    target_part = part_id;
                 }
             }
         }
 
-        Err("Could not retrieve message body.".to_string())
-    }).await
-}
-
-pub async fn prefetch_recent_bodies(app_handle: AppHandle, account: Account) {
-    if PREFETCH_RUNNING.swap(true, Ordering::SeqCst) {
-        log::info!("Prefetch already running, skipping.");
-        return;
-    }
-
-    struct PrefetchGuard;
-    impl Drop for PrefetchGuard {
-        fn drop(&mut self) {
-            PREFETCH_RUNNING.store(false, Ordering::SeqCst);
-        }
-    }
-    let _guard = PrefetchGuard;
-
-    let uids = match database::get_unfetched_recent_uids(&app_handle, "INBOX", 10) {
-        Ok(res) => res,
-        Err(e) => {
-            log::warn!("Prefetch query failed: {}", e);
-            return;
-        }
-    };
-
-    if uids.is_empty() {
-        return;
-    }
-
-    log::info!(
-        "Starting background prefetch for {} emails. Production Architecture Note: \
-        IMAP servers aggressively terminate unbounded parallel connections. We specifically use a Tokio \
-        Semaphore to limit prefetch concurrency to exactly 2 active background tasks. This ensures 1-2 concurrent \
-        body fetches, which is fast enough for background Sync while preventing IMAP Session pool starvation, \
-        safeguarding the primary IDLE connection, and maintaining connection stability naturally.",
-        uids.len()
-    );
-
-    for uid in uids {
-        // Double check cache in case user clicked it
-        if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, "INBOX", uid) {
-            continue;
-        }
-
-        log::info!("Prefetch queueing body UID {}", uid);
-        
-        let permit = match PREFETCH_LIMIT.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(e) => {
-                log::warn!("Prefetch semaphore closed: {}", e);
-                break;
-            }
+        let fetch_query = if target_part.is_empty() {
+            "(BODY.PEEK[TEXT] BODY.PEEK[HEADER])".to_string()
+        } else {
+            format!("(BODY.PEEK[{}.MIME] BODY.PEEK[{}])", target_part, target_part)
         };
 
-        let app_handle_clone = app_handle.clone();
-        let account_clone = account.clone();
+        log::debug!("Fetching with IMAP Query: UID {}, {}", uid, fetch_query);
+        let fetch_results = session.uid_fetch(uid.to_string(), &fetch_query)
+            .map_err(|e| format!("IMAP fetch payload error: {}", e))?;
 
-        tokio::spawn(async move {
-            let _permit = permit;
-            log::info!("Prefetch actively fetching body UID {}", uid);
-            let _ = get_message_body(&app_handle_clone, account_clone, uid).await;
-        });
-        
-        // Yield to allow other tasks (including the spawned fetch) to progress
-        tokio::task::yield_now().await;
-        // Minor pacing to avoid hammering the disk or Tokio executor locally
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Some(msg) = fetch_results.iter().next() {
+            if target_part.is_empty() {
+                if let Some(h) = msg.header() { full_payload.extend_from_slice(h); }
+                if let Some(t) = msg.text() { full_payload.extend_from_slice(t); }
+            } else {
+                let parts: Vec<u32> = target_part.split('.').filter_map(|s| s.parse().ok()).collect();
+                let section_path = imap_proto::types::SectionPath::Part(parts.clone(), None);
+                let mime_path = imap_proto::types::SectionPath::Part(parts, Some(imap_proto::types::MessageSection::Mime));
+                
+                if let Some(b) = msg.section(&mime_path) { full_payload.extend_from_slice(b); }
+                if let Some(b) = msg.section(&section_path) { full_payload.extend_from_slice(b); }
+                if let Some(t) = msg.text() { full_payload.extend_from_slice(t); }
+            };
+
+            if full_payload.is_empty() {
+                if let Some(b) = msg.body().or_else(|| msg.text()) {
+                    full_payload.extend_from_slice(b);
+                }
+            }
+        }
+        Ok::<_, String>((target_part, full_payload))
+    }).await;
+    
+    let (fetched_target_part, fetched_full_payload) = match imap_result {
+        Ok(data) => data,
+        Err(e) => return Err(format!("IMAP Execution Error: {:?}", e)),
+    };
+
+    // -- SEMAPHORE DROP (NETWORK COMPLETE) --
+    drop(_permit);
+    log::debug!("IMAP fetch complete: uid={}", uid);
+
+    // -- CPU BOUNDARY (HTML PARSING & DB STORAGE) --
+    if !fetched_full_payload.is_empty() {
+        match extract_displayable_body(app_handle, uid, &fetched_full_payload) {
+            Ok(parsed_body) => {
+                let preview = generate_preview(&parsed_body);
+                let _ = database::update_message_body(app_handle, "INBOX", uid, &parsed_body, &preview);
+                crate::mail::body_cache::insert_cached_body(uid, parsed_body.clone());
+                return Ok(parsed_body);
+            }
+            Err(_) => {
+                let fallback = String::from_utf8_lossy(&fetched_full_payload).to_string();
+                let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+                let formatted_fallback = format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped);
+                let preview = generate_preview(&formatted_fallback);
+                let _ = database::update_message_body(app_handle, "INBOX", uid, &formatted_fallback, &preview);
+                crate::mail::body_cache::insert_cached_body(uid, formatted_fallback.clone());
+                return Ok(formatted_fallback);
+            }
+        }
     }
 
-    log::info!("Finished background prefetch.");
+    Err("Could not retrieve message body.".to_string())
+}
+
+pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32) -> Result<String, String> {
+    fetch_and_cache_body_internal(app_handle, &account, uid).await
 }

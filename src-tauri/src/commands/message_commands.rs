@@ -93,9 +93,28 @@ pub async fn get_messages_page(
     limit: u32,
 ) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
     let safe_limit = limit.min(100);
-    tokio::task::spawn_blocking(move || {
-        database::load_messages_page(&app_handle, "INBOX", before_uid, safe_limit)
+    
+    let app_handle_clone = app_handle.clone();
+    let pages = tokio::task::spawn_blocking(move || {
+        database::load_messages_page(&app_handle_clone, "INBOX", before_uid, safe_limit)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    if let Some(account) = get_active_account(&app_handle) {
+        let uids_to_prefetch = pages.iter().take(8).map(|m| m.uid).collect::<Vec<_>>();
+        let app_handle_pf = app_handle.clone();
+        
+        // Fire-and-forget background prefetch enqueue
+        tokio::spawn(async move {
+            // Cancel stale prefetch requests before enqueuing new ones
+            crate::mail::prefetch::clear_prefetch_queue().await;
+            
+            for uid in uids_to_prefetch {
+                crate::mail::prefetch::enqueue_prefetch(app_handle_pf.clone(), account.clone(), uid).await;
+            }
+        });
+    }
+
+    Ok(pages)
 }

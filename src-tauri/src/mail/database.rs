@@ -35,10 +35,33 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             has_attachments INTEGER DEFAULT 0,
             thread_id TEXT,
             body_fetched INTEGER DEFAULT 0,
+            processed_html TEXT,
             PRIMARY KEY (folder, uid)
         )",
         (),
     ).map_err(|e| e.to_string())?;
+
+    // Safe Schema Migration for existing databases
+    let mut stmt = conn.prepare("PRAGMA table_info(messages)").unwrap();
+    let mut has_processed_html = false;
+    let rows = stmt.query_map([], |row| {
+        let name: String = row.get(1)?;
+        Ok(name)
+    }).unwrap();
+
+    for name in rows {
+        if let Ok(col_name) = name {
+            if col_name == "processed_html" {
+                has_processed_html = true;
+                break;
+            }
+        }
+    }
+
+    if !has_processed_html {
+        conn.execute("ALTER TABLE messages ADD COLUMN processed_html TEXT", ()).map_err(|e| e.to_string())?;
+    }
+
 
     // Performance Indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_folder_uid_desc ON messages(folder, uid DESC)", ()).map_err(|e| e.to_string())?;
@@ -222,7 +245,7 @@ pub fn get_message_body_cache(app_handle: &AppHandle, folder: &str, uid: u32) ->
     let db_path = get_db_path(app_handle)?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT body FROM messages WHERE folder = ?1 AND uid = ?2 AND body_fetched = 1").unwrap();
+    let mut stmt = conn.prepare("SELECT processed_html FROM messages WHERE folder = ?1 AND uid = ?2 AND body_fetched = 1 AND processed_html IS NOT NULL").unwrap();
     let body: Option<String> = stmt.query_row(rusqlite::params![folder, uid], |row| row.get(0)).ok();
 
     Ok(body)
@@ -233,7 +256,7 @@ pub fn update_message_body(app_handle: &AppHandle, folder: &str, uid: u32, body:
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     conn.execute(
-        "UPDATE messages SET body = ?1, snippet = ?2, body_fetched = 1 WHERE folder = ?3 AND uid = ?4",
+        "UPDATE messages SET processed_html = ?1, snippet = ?2, body_fetched = 1 WHERE folder = ?3 AND uid = ?4",
         rusqlite::params![body, snippet, folder, uid],
     ).map_err(|e| e.to_string())?;
 

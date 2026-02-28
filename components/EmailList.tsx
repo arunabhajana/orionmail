@@ -119,6 +119,10 @@ const EmailListItem = memo(({
                             }
                         } catch (err) {
                             console.error("Failed to hydrate preview for UID", email.id, err);
+                            if (String(err).includes("No active account")) {
+                                localStorage.removeItem("orion_user");
+                                window.location.href = "/";
+                            }
                         } finally {
                             fetchingUIDs.delete(email.id);
                         }

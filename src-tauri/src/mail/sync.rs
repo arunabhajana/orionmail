@@ -1,7 +1,7 @@
 use crate::auth::account::Account;
 use crate::mail::message_list::MessageHeader;
 use crate::mail::database;
-use crate::mail::message_body::prefetch_recent_bodies;
+use crate::mail::prefetch;
 use mailparse::parse_mail;
 use native_tls::TlsConnector;
 use tauri::AppHandle;
@@ -143,17 +143,14 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
     .await
     .map_err(|e| format!("Task failed: {}", e))?;
 
-    // For initial bootstraps (where we pull 200 messages), aggressively block the UI 
-    // loading screen until the first 10 bodies have also been successfully fetched and cached.
-    let is_bootstrap = *new_messages_count.as_ref().unwrap_or(&0) >= 50;
-    let prefetch_handle = app_handle.clone();
+    // Enqueue top 10 most recent UIDs for prefetching immediately after sync
+    let uids = database::get_unfetched_recent_uids(app_handle, "INBOX", 10).unwrap_or_default();
     
-    if is_bootstrap {
-        log::info!("Blocking UI for Bootstrap Body Prefetch...");
-        prefetch_recent_bodies(prefetch_handle, account).await;
-    } else {
+    for uid in uids {
+        let pf_app = app_handle.clone();
+        let pf_acc = account.clone();
         tokio::spawn(async move {
-            prefetch_recent_bodies(prefetch_handle, account).await;
+            prefetch::enqueue_prefetch(pf_app, pf_acc, uid).await;
         });
     }
 

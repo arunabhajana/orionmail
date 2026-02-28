@@ -66,6 +66,11 @@ export default function MainLayout() {
             await invoke('toggle_star', { uid: Number(emailId), shouldStar: newStarredState });
         } catch (err) {
             console.error("Failed to toggle star", err);
+            if (String(err).includes("No active account")) {
+                localStorage.removeItem("orion_user");
+                window.location.href = "/";
+                return;
+            }
             // Rollback
             setEmails(prev => prev.map(email =>
                 email.id === emailId ? { ...email, starred: !newStarredState } : email
@@ -86,6 +91,11 @@ export default function MainLayout() {
             await invoke('mark_as_read', { uid: Number(emailId) });
         } catch (err) {
             console.error("Failed to mark as read", err);
+            if (String(err).includes("No active account")) {
+                localStorage.removeItem("orion_user");
+                window.location.href = "/";
+                return;
+            }
             // Rollback
             setEmails(prev => prev.map(email =>
                 email.id === emailId ? { ...email, unread: true } : email
@@ -104,6 +114,11 @@ export default function MainLayout() {
             await invoke('delete_message', { uid: Number(emailId) });
         } catch (err) {
             console.error("Failed to delete message", err);
+            if (String(err).includes("No active account")) {
+                localStorage.removeItem("orion_user");
+                window.location.href = "/";
+                return;
+            }
             // Rollback via DB fetch since array splicing is tricky to reverse
             await fetchCache();
         }
@@ -136,6 +151,10 @@ export default function MainLayout() {
             return false;
         } catch (error) {
             console.error("Failed to load cache", error);
+            if (String(error).includes("No active account")) {
+                localStorage.removeItem("orion_user");
+                window.location.href = "/";
+            }
             return false;
         }
     };
@@ -188,6 +207,10 @@ export default function MainLayout() {
             }
         } catch (error) {
             console.error("Failed to refresh new emails", error);
+            if (String(error).includes("No active account")) {
+                localStorage.removeItem("orion_user");
+                window.location.href = "/";
+            }
         }
     };
 
@@ -229,6 +252,9 @@ export default function MainLayout() {
             }
         } catch (err) {
             console.error("Failed to load more emails", err);
+            if (String(err).includes("No active account")) {
+                window.location.href = "/";
+            }
         } finally {
             setIsLoadingMore(false);
         }
@@ -261,6 +287,11 @@ export default function MainLayout() {
             })
             .catch((e) => {
                 console.error("Failed to sync messages:", e);
+                if (String(e).includes("No active account")) {
+                    localStorage.removeItem("orion_user");
+                    window.location.href = "/";
+                    return;
+                }
                 if (!isBackground) {
                     setSyncError("Failed to sync messages. Please try again.");
                     setTimeout(() => setSyncError(null), 3000);

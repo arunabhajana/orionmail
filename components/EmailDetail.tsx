@@ -166,6 +166,11 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                 }
             } catch (err) {
                 console.error("Failed to load message body:", err);
+                if (String(err).includes("No active account")) {
+                    localStorage.removeItem("orion_user");
+                    window.location.href = "/";
+                    return;
+                }
                 if (isMounted) {
                     setBodyContent(`<p class="text-red-500">Error loading message body: ${err}</p>`);
                 }

@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use std::time::Instant;
 
 const MAX_CACHE_SIZE: usize = 50;
@@ -9,15 +9,10 @@ struct CachedBody {
     last_access: Instant,
 }
 
-static CACHE: OnceLock<Mutex<HashMap<u32, CachedBody>>> = OnceLock::new();
-
-fn get_cache() -> &'static Mutex<HashMap<u32, CachedBody>> {
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static CACHE: Lazy<DashMap<u32, CachedBody>> = Lazy::new(|| DashMap::new());
 
 pub fn get_cached_body(uid: u32) -> Option<String> {
-    let mut cache = get_cache().lock().unwrap();
-    if let Some(entry) = cache.get_mut(&uid) {
+    if let Some(mut entry) = CACHE.get_mut(&uid) {
         entry.last_access = Instant::now();
         Some(entry.html.clone())
     } else {
@@ -26,20 +21,21 @@ pub fn get_cached_body(uid: u32) -> Option<String> {
 }
 
 pub fn insert_cached_body(uid: u32, html: String) {
-    let mut cache = get_cache().lock().unwrap();
-
     // Check if we need to evict LRU
-    if cache.len() >= MAX_CACHE_SIZE && !cache.contains_key(&uid) {
-        if let Some(lru_key) = cache
-            .iter()
-            .min_by_key(|(_, entry)| entry.last_access)
-            .map(|(k, _)| *k)
-        {
-            cache.remove(&lru_key);
+    if CACHE.len() >= MAX_CACHE_SIZE && !CACHE.contains_key(&uid) {
+        let lru_key = {
+            CACHE
+                .iter()
+                .min_by_key(|entry| entry.last_access)
+                .map(|entry| *entry.key())
+        };
+
+        if let Some(key) = lru_key {
+            CACHE.remove(&key);
         }
     }
 
-    cache.insert(
+    CACHE.insert(
         uid,
         CachedBody {
             html,
