@@ -8,9 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
-// Global cache to prevent duplicate fetches across remounts and concurrent requests
-const fetchedPreviewUIDs = new Set<string>();
-const fetchingUIDs = new Set<string>();
+// Global cache states removed as predictive prefetch happens in Rust backend now
 
 // --- Types ---
 
@@ -80,69 +78,10 @@ const EmailListItem = memo(({
     const itemRef = React.useRef<HTMLDivElement>(null);
 
     React.useEffect(() => {
-        // If we already fetched it globally, we don't need to observe
-        if (fetchedPreviewUIDs.has(email.id)) return;
-
-        let debounceTimer: NodeJS.Timeout;
-
-        const observer = new IntersectionObserver(
-            (entries) => {
-                const [entry] = entries;
-                if (entry.isIntersecting) {
-                    debounceTimer = setTimeout(async () => {
-                        if (fetchedPreviewUIDs.has(email.id) || fetchingUIDs.has(email.id)) return;
-
-                        fetchingUIDs.add(email.id);
-                        try {
-                            const body: string = await invoke("get_message_body", { uid: Number(email.id) });
-                            if (body) {
-                                // Strip hidden items, styles, scripts, strip HTML, convert entities, and normalize whitespace
-                                const stripped = body
-                                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
-                                    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-                                    .replace(/<[^>]*display\s*:\s*none[^>]*>[\s\S]*?<\/[^>]+>/gi, ' ')
-                                    .replace(/<[^>]+>/g, ' ')
-                                    .replace(/&nbsp;/g, ' ')
-                                    .replace(/&amp;/g, '&')
-                                    .replace(/&lt;/g, '<')
-                                    .replace(/&gt;/g, '>')
-                                    .replace(/&quot;/g, '"')
-                                    .replace(/&#39;/g, "'")
-                                    .replace(/(\b)(unsubscribe|subscribe|view in browser|click here)(\b)/gi, '')
-                                    .replace(/\s+/g, ' ')
-                                    .trim();
-
-                                const finalPreview = stripped || email.subject || "No preview available";
-                                const newPreview = finalPreview.length > 160 ? finalPreview.substring(0, 160) + '...' : finalPreview;
-                                setPreviewText(newPreview);
-                                fetchedPreviewUIDs.add(email.id);
-                            }
-                        } catch (err) {
-                            console.error("Failed to hydrate preview for UID", email.id, err);
-                            if (String(err).includes("No active account")) {
-                                localStorage.removeItem("orion_user");
-                                window.location.href = "/";
-                            }
-                        } finally {
-                            fetchingUIDs.delete(email.id);
-                        }
-                    }, 150); // Debounce to allow fast scrolling without firing
-                } else {
-                    clearTimeout(debounceTimer);
-                }
-            },
-            { threshold: 0.1, rootMargin: '100px' }
-        );
-
-        if (itemRef.current) {
-            observer.observe(itemRef.current);
-        }
-
-        return () => {
-            clearTimeout(debounceTimer);
-            observer.disconnect();
-        };
-    }, [email.id]);
+        // We now rely solely on the background prefetcher (Rust) and the sqlite cache 
+        // to populate the snippet without clogging the IPC command channel.
+        setPreviewText(email.preview || "No preview available");
+    }, [email.preview]);
 
     return (
         <motion.div
