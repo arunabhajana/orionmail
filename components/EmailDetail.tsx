@@ -43,7 +43,7 @@ const ToolbarButton = memo(({
         onClick={onClick}
         className={cn(
             "p-2 rounded-lg transition-colors",
-            "text-muted-foreground hover:bg-muted hover:text-foreground",
+            "text-muted-foreground dark:text-white/60 hover:bg-muted dark:hover:bg-white/10 hover:text-foreground dark:hover:text-white/90",
             className
         )}
     >
@@ -61,7 +61,7 @@ const DetailToolbar = memo(({ isStarred, onToggleStar, onDelete }: { isStarred?:
             <div className="w-px h-6 bg-border mx-2" />
             <button
                 onClick={onToggleStar}
-                className="p-2 rounded-lg transition-colors text-muted-foreground hover:bg-muted hover:text-foreground group"
+                className="p-2 rounded-lg transition-colors text-muted-foreground dark:text-white/60 hover:bg-muted dark:hover:bg-white/10 hover:text-foreground dark:hover:text-white/90 group"
             >
                 <Star className={cn(
                     "w-5 h-5 transition-all",
@@ -73,7 +73,7 @@ const DetailToolbar = memo(({ isStarred, onToggleStar, onDelete }: { isStarred?:
             <button
                 className={cn(
                     "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                    "border border-border text-foreground hover:bg-muted"
+                    "border border-border dark:border-white/10 text-foreground dark:text-white/90 hover:bg-muted dark:hover:bg-white/10"
                 )}
             >
                 <Reply className="w-[18px] h-[18px]" />
@@ -90,7 +90,7 @@ const MessageHeader = memo(({ email }: { email: Email }) => (
         <motion.h1
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-2xl font-bold text-foreground mb-6 leading-tight"
+            className="text-2xl font-bold tracking-tight text-foreground dark:text-white/90 mb-6 leading-tight"
         >
             {email.subject}
         </motion.h1>
@@ -102,16 +102,16 @@ const MessageHeader = memo(({ email }: { email: Email }) => (
                 />
                 <div>
                     <div className="flex items-center gap-2">
-                        <span className="font-bold text-foreground">{email.sender}</span>
-                        <span className="text-muted-foreground text-sm">&lt;{email.senderEmail}&gt;</span>
+                        <span className="font-bold tracking-tight text-foreground dark:text-white/90">{email.sender}</span>
+                        <span className="text-muted-foreground dark:text-white/50 text-sm">&lt;{email.senderEmail}&gt;</span>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-sm text-muted-foreground">To:</span>
-                        <span className="text-sm font-medium text-foreground/80">Arunabha Jana</span>
+                        <span className="text-sm text-muted-foreground dark:text-white/50">To:</span>
+                        <span className="text-sm font-medium text-foreground/80 dark:text-white/70">Arunabha Jana</span>
                     </div>
                 </div>
             </div>
-            <span className="text-sm font-medium text-muted-foreground">
+            <span className="text-sm font-medium text-muted-foreground dark:text-white/50">
                 {email.date}
             </span>
         </div>
@@ -207,8 +207,8 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     if (!email) {
         return (
             <section className={cn(
-                "flex flex-col h-full items-center justify-center text-muted-foreground gap-4",
-                "bg-white/40 backdrop-blur-3xl", // Glass effect
+                "flex flex-col h-full items-center justify-center text-muted-foreground gap-4 transition-colors",
+                "bg-white/40 dark:bg-black/20 backdrop-blur-3xl", // Glass effect
                 className
             )}>
                 <div className="w-16 h-16 rounded-2xl bg-black/5 dark:bg-white/10 flex items-center justify-center">
@@ -225,7 +225,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     return (
         <section
             className={cn(
-                "flex flex-col h-full bg-white", // Explicit white
+                "flex flex-col h-full bg-white dark:bg-[#111111] transition-colors",
                 className
             )}
         >

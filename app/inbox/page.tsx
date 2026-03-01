@@ -40,7 +40,7 @@ export default function InboxPage() {
   // If still performing initial auth bootstrap
   if (loading) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 backdrop-blur-xl">
+      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
         <LogoSpinner message="Verifying Session..." />
       </div>
     );
@@ -49,7 +49,7 @@ export default function InboxPage() {
   // If connecting to IMAP
   if (mailboxLoading) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 backdrop-blur-xl">
+      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
         <LogoSpinner message="Connecting to mailbox..." />
       </div>
     );
@@ -58,7 +58,7 @@ export default function InboxPage() {
   // If initial inbox sync is running after first login
   if (isBootstrappingInbox) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 backdrop-blur-xl">
+      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
         <LogoSpinner message="Initializing your Inbox..." />
       </div>
     );

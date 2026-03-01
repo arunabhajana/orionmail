@@ -38,7 +38,7 @@ export const AccountSection = memo(() => {
             className="space-y-8"
         >
             {/* Profile Card */}
-            <div className="p-8 rounded-3xl bg-secondary/30 border border-white/20 backdrop-blur-md">
+            <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
                 <div className="flex items-start gap-6">
                     {user?.picture ? (
                         <div
@@ -46,7 +46,7 @@ export const AccountSection = memo(() => {
                             style={{ backgroundImage: `url('${user.picture}')` }}
                         />
                     ) : (
-                        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary to-primary/60 border-4 border-white/20 shadow-xl flex items-center justify-center shrink-0">
+                        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary to-primary/60 border-4 border-white/20 dark:border-white/10 shadow-xl flex items-center justify-center shrink-0">
                             <span className="text-3xl font-bold text-white shadow-sm">{initials}</span>
                         </div>
                     )}
@@ -59,7 +59,7 @@ export const AccountSection = memo(() => {
                             <span>Pro Plan Member</span>
                         </div>
                         <div className="flex gap-3">
-                            <button className="px-4 py-2 bg-white text-black font-medium rounded-lg shadow-sm hover:bg-white/90 transition-colors text-sm">
+                            <button className="px-4 py-2 bg-white dark:bg-black/40 text-black dark:text-white dark:border dark:border-white/10 font-medium rounded-lg shadow-sm hover:bg-white/90 dark:hover:bg-black/60 transition-colors text-sm">
                                 Change Photo
                             </button>
                             <button className="px-4 py-2 bg-red-500/10 text-red-600 font-medium rounded-lg hover:bg-red-500/20 transition-colors text-sm">
@@ -75,7 +75,7 @@ export const AccountSection = memo(() => {
                         <input
                             type="text"
                             defaultValue={userName}
-                            className="w-full px-4 py-3 rounded-xl bg-white/50 border border-white/20 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground"
+                            className="w-full px-4 py-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground placeholder:text-muted-foreground/50"
                         />
                     </div>
                     <div className="space-y-2">
@@ -84,7 +84,7 @@ export const AccountSection = memo(() => {
                             type="email"
                             defaultValue={userEmail}
                             readOnly
-                            className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/10 outline-none opacity-70 cursor-not-allowed select-none transition-all text-foreground"
+                            className="w-full px-4 py-3 rounded-xl bg-white/10 dark:bg-black/40 border border-white/10 dark:border-white/5 outline-none opacity-70 cursor-not-allowed select-none transition-all text-foreground"
                         />
                     </div>
                 </div>

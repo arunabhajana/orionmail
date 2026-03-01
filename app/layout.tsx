@@ -4,6 +4,7 @@ import "./globals.css";
 import TitlebarWrapper from "@/components/TitlebarWrapper"; // Wrapper handles client-side only import
 import { AuthProvider } from "@/components/AuthContext";
 import { SyncProvider } from "@/components/SyncContext";
+import { ThemeProvider } from "@/components/ThemeProvider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -23,21 +24,28 @@ export default function RootLayout({
 }>) {
   // Adding comment to force recompile
   return (
-    <html lang="en" className="light" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${inter.variable} font-sans antialiased`}
         suppressHydrationWarning
       >
-        <AuthProvider>
-          <SyncProvider>
-            <div className="app-window">
-              <TitlebarWrapper />
-              <div className="pt-[30px] h-full w-full">
-                {children}
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <AuthProvider>
+            <SyncProvider>
+              <div className="app-window">
+                <TitlebarWrapper />
+                <div className="pt-[30px] h-full w-full">
+                  {children}
+                </div>
               </div>
-            </div>
-          </SyncProvider>
-        </AuthProvider>
+            </SyncProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

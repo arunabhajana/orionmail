@@ -38,7 +38,7 @@ const SearchBar = memo(() => (
         <input
             className={cn(
                 "w-full rounded-lg py-2 pl-9 pr-4 text-sm outline-none transition-all",
-                "bg-white/50 border border-white/20 placeholder:text-muted-foreground/70",
+                "bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 placeholder:text-muted-foreground/70",
                 "focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
             )}
             placeholder="Search messages..."
@@ -49,14 +49,14 @@ const SearchBar = memo(() => (
 SearchBar.displayName = "SearchBar";
 
 const FilterTabs = memo(() => (
-    <div className="flex gap-4 border-b border-black/5 pb-1">
-        <button className="text-foreground border-b-2 border-primary pb-2 text-sm font-semibold">
+    <div className="flex gap-4 border-b border-black/5 dark:border-white/10 pb-1">
+        <button className="text-foreground dark:text-white/90 border-b-2 border-primary pb-2 text-sm font-semibold">
             All
         </button>
-        <button className="text-muted-foreground pb-2 text-sm font-medium hover:text-foreground transition-colors">
+        <button className="text-muted-foreground dark:text-white/60 pb-2 text-sm font-medium hover:text-foreground dark:hover:text-white/90 transition-colors">
             Unread
         </button>
-        <button className="text-muted-foreground pb-2 text-sm font-medium hover:text-foreground transition-colors">
+        <button className="text-muted-foreground dark:text-white/60 pb-2 text-sm font-medium hover:text-foreground dark:hover:text-white/90 transition-colors">
             Flagged
         </button>
     </div>
@@ -90,10 +90,10 @@ const EmailListItem = memo(({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            whileHover={{ scale: 1.01, backgroundColor: "rgba(255,255,255,0.4)" }}
+            whileHover={{ scale: 1.01 }}
             onClick={() => onSelect?.(email.id)}
             className={cn(
-                "px-4 py-4 cursor-pointer transition-all duration-200 border-b border-black/5",
+                "px-4 py-4 cursor-pointer transition-all duration-200 border-b border-black/5 dark:border-white/5 hover:bg-white/40 dark:hover:bg-white/5",
                 isSelected
                     ? "bg-primary/10 border-l-4 border-l-primary" // Selected
                     : "border-l-4 border-transparent" // Regular
@@ -121,28 +121,28 @@ const EmailListItem = memo(({
                         <span className="w-2 h-2 rounded-full bg-primary shrink-0 animate-pulse" />
                     )}
                     <span className={cn(
-                        "text-sm truncate max-w-[160px]",
+                        "text-sm truncate max-w-[160px] tracking-tight",
                         isSelected || email.unread
-                            ? "font-semibold text-foreground"
-                            : "font-medium text-foreground/80"
+                            ? "font-semibold text-foreground dark:text-white/90"
+                            : "font-medium text-foreground/80 dark:text-white/70"
                     )}>
                         {email.sender}
                     </span>
                 </div>
                 <span className={cn(
                     "text-[11px] font-medium whitespace-nowrap",
-                    isSelected ? "text-primary" : "text-muted-foreground"
+                    isSelected ? "text-primary dark:text-white/90" : "text-muted-foreground dark:text-white/50"
                 )}>
                     {email.time}
                 </span>
             </div>
             <h4 className={cn(
-                "text-sm mb-1 truncate pr-2",
-                isSelected ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"
+                "text-sm mb-1 truncate pr-2 tracking-tight",
+                isSelected ? "font-semibold text-foreground/90 dark:text-white/90" : "font-medium text-foreground/70 dark:text-white/70"
             )}>
                 {email.subject}
             </h4>
-            <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+            <p className="text-xs text-muted-foreground dark:text-white/50 leading-relaxed line-clamp-2">
                 {previewText}
             </p>
         </motion.div>
@@ -205,8 +205,8 @@ const EmailList: React.FC<EmailListProps> = ({
     return (
         <main
             className={cn(
-                "glass-list flex flex-col h-full border-r",
-                "bg-white/60 backdrop-blur-3xl border-black/5",
+                "glass-list flex flex-col h-full border-r transition-colors",
+                "bg-white/60 dark:bg-black/80 backdrop-blur-2xl border-black/5 dark:border-white/5",
                 className
             )}
         >
@@ -220,7 +220,7 @@ const EmailList: React.FC<EmailListProps> = ({
                         onClick={onSync}
                         disabled={isSyncing}
                         className={cn(
-                            "p-2 rounded-lg bg-white/50 border border-white/20 hover:bg-white/80 transition-colors flex items-center justify-center",
+                            "p-2 rounded-lg bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 hover:bg-white/80 dark:hover:bg-white/10 transition-colors flex items-center justify-center",
                             isSyncing && "opacity-70 cursor-not-allowed"
                         )}
                         title="Sync Emails"

@@ -10,7 +10,7 @@ export const NotificationsSection = memo(() => (
         className="space-y-8"
     >
         {/* Email Notifications */}
-        <div className="p-8 rounded-3xl bg-secondary/30 border border-white/20 backdrop-blur-md">
+        <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Email Alerts</h3>
 
             <div className="space-y-6">
@@ -22,11 +22,11 @@ export const NotificationsSection = memo(() => (
                     {/* CSS Toggle Switch */}
                     <label className="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" className="sr-only peer" defaultChecked />
-                        <div className="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        <div className="w-11 h-6 bg-black/10 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                     </label>
                 </div>
 
-                <div className="h-px bg-white/10 w-full" />
+                <div className="h-px bg-white/10 dark:bg-white/5 w-full" />
 
                 <div className="flex items-center justify-between">
                     <div>
@@ -35,7 +35,7 @@ export const NotificationsSection = memo(() => (
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" className="sr-only peer" defaultChecked />
-                        <div className="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        <div className="w-11 h-6 bg-black/10 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                     </label>
                 </div>
             </div>
@@ -45,17 +45,17 @@ export const NotificationsSection = memo(() => (
                     <h4 className="font-semibold text-foreground">Notification Sound</h4>
                     <p className="text-sm text-muted-foreground mt-1">Choose the alert tone.</p>
                 </div>
-                <select className="px-4 py-2 rounded-xl bg-white/50 border border-white/20 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm font-medium">
-                    <option>Default Ping</option>
-                    <option>Chime</option>
-                    <option>Soft Bell</option>
-                    <option>Orbit</option>
+                <select className="px-4 py-2 rounded-xl bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm font-medium text-foreground">
+                    <option className="dark:bg-black">Default Ping</option>
+                    <option className="dark:bg-black">Chime</option>
+                    <option className="dark:bg-black">Soft Bell</option>
+                    <option className="dark:bg-black">Orbit</option>
                 </select>
             </div>
         </div>
 
         {/* Badge & Unread Counts */}
-        <div className="p-8 rounded-3xl bg-secondary/30 border border-white/20 backdrop-blur-md">
+        <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Badges</h3>
 
             <div className="flex items-center justify-between">
@@ -65,7 +65,7 @@ export const NotificationsSection = memo(() => (
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" className="sr-only peer" defaultChecked />
-                    <div className="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    <div className="w-11 h-6 bg-black/10 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                 </label>
             </div>
         </div>
