@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import DOMPurify from 'isomorphic-dompurify';
 import sanitizeHtml from 'sanitize-html';
+import { useTheme } from 'next-themes';
 
 // --- Types ---
 
@@ -145,6 +146,8 @@ AttachmentCard.displayName = "AttachmentCard";
 // --- Main Component ---
 
 const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onMarkAsRead }) => {
+    const { resolvedTheme } = useTheme();
+    const isDark = resolvedTheme === 'dark';
     const [bodyContent, setBodyContent] = React.useState<string>("");
     const [isLoadingBody, setIsLoadingBody] = React.useState<boolean>(false);
     const [iframeHeight, setIframeHeight] = React.useState<number>(400);
@@ -256,7 +259,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                         ) : (
                             <iframe
                                 title="Email Content"
-                                className="w-full bg-white border-0 email-content-iframe"
+                                className="w-full border-0 email-content-iframe bg-white dark:bg-[#111111]"
                                 sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
                                 scrolling="no"
                                 style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}
@@ -267,10 +270,28 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                         <meta charset="utf-8">
                                         <meta name="viewport" content="width=device-width, initial-scale=1">
                                         <style>
+                                            html { opacity: 0; }
+                                            html.ready { opacity: 1; }
                                             html, body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; overflow: hidden; width: 100%; }
                                             img { max-width: 100%; height: auto; }
                                             a { color: #2563eb; }
                                             #email-content-wrapper { display: block; overflow: hidden; }
+                                            
+                                            /* Smart Invert for Dark Mode */
+                                            html.dark-mode {
+                                                filter: invert(1) hue-rotate(180deg) brightness(1.05);
+                                                background-color: #EEEEEE; /* Inverts to ~ #111111 matching the outer pane */
+                                            }
+                                            html.dark-mode img, 
+                                            html.dark-mode video, 
+                                            html.dark-mode picture,
+                                            html.dark-mode svg,
+                                            html.dark-mode [style*="background-image"] {
+                                                filter: invert(1) hue-rotate(180deg);
+                                            }
+                                            html.dark-mode a {
+                                                color: #3b82f6; /* Adjust link color for dark mode */
+                                            }
                                         </style>
                                     </head>
                                     <body>
@@ -294,6 +315,45 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                             const wrapper = document.getElementById('email-content-wrapper');
                                             let lastHeight = 0;
                                             
+                                            // --- Smart Dark Mode Heuristics ---
+                                            const applySmartInvert = () => {
+                                                if (!${isDark}) return;
+                                                
+                                                // Function to parse rgb/rgba to check brightness
+                                                const getBrightness = (colorStr) => {
+                                                    const match = colorStr.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+                                                    if (!match) return 255; // default to light if parsing fails
+                                                    const r = parseInt(match[1]);
+                                                    const g = parseInt(match[2]);
+                                                    const b = parseInt(match[3]);
+                                                    // Standard luminance formula
+                                                    return (r * 299 + g * 587 + b * 114) / 1000;
+                                                };
+
+                                                // Check body and wrapper computed backgrounds
+                                                let bodyBg = window.getComputedStyle(document.body).backgroundColor;
+                                                let wrapperBg = window.getComputedStyle(wrapper).backgroundColor;
+                                                
+                                                // If both are transparent/rgba(0,0,0,0), assume it's "white" by default HTML standards
+                                                let isTransparent = (bg) => bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent';
+                                                
+                                                let effectiveBg = 'rgb(255, 255, 255)'; // Default HTML bg
+                                                if (!isTransparent(wrapperBg)) effectiveBg = wrapperBg;
+                                                else if (!isTransparent(bodyBg)) effectiveBg = bodyBg;
+
+                                                const brightness = getBrightness(effectiveBg);
+                                                
+                                                // If the background is light (brightness > 128), invert it!
+                                                // If it's already dark (brightness <= 128), leave it alone because it's a native dark email.
+                                                if (brightness > 128) {
+                                                    document.documentElement.classList.add('dark-mode');
+                                                }
+                                            };
+                                            
+                                            // Run IMMEDIATELY as the DOM parses, before images load!
+                                            applySmartInvert();
+                                            document.documentElement.classList.add('ready');
+
                                             const sendHeight = () => {
                                                 if (!wrapper) return;
                                                 // Only measure the strict wrapper height, ignoring the stretched iframe
