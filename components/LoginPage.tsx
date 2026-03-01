@@ -51,7 +51,7 @@ const LoginPage = () => {
     return (
         <>
             {isLoading && <LoadingOrion />}
-            <div ref={containerRef} className="bg-mesh h-full w-full flex items-center justify-center p-6 antialiased relative overflow-hidden">
+            <div ref={containerRef} className="bg-mesh dark:bg-[#111111] h-full w-full flex items-center justify-center p-6 antialiased relative overflow-hidden transition-colors">
                 {/* Top Navigation Bar */}
                 <nav className="fixed top-[30px] left-0 w-full px-6 py-4 flex justify-between items-center z-50">
                     <div className="flex items-center gap-3">
@@ -76,31 +76,31 @@ const LoginPage = () => {
                                 />
                             </svg>
                         </div>
-                        <span className="text-slate-900 font-bold text-xl tracking-tight">OrionMail</span>
+                        <span className="text-slate-900 dark:text-white/90 font-bold text-xl tracking-tight">OrionMail</span>
                     </div>
-                    <button className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-primary transition-colors">
+                    <button className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-white/60 hover:text-primary transition-colors">
                         Help Center
                     </button>
                 </nav>
 
                 {/* Main Glassmorphic Login Card */}
-                <main ref={cardRef} className="w-full max-w-[440px] z-10">
-                    <div className="glass-card rounded-xl p-8 md:p-10 flex flex-col items-center border border-white/40 shadow-2xl">
+                <main ref={cardRef} className="w-full max-w-[440px] z-10 transition-all">
+                    <div className="glass-card dark:bg-[#1C1C21]/70 dark:backdrop-blur-2xl rounded-xl p-8 md:p-10 flex flex-col items-center border border-white/40 dark:border-white/10 shadow-2xl transition-colors">
                         {/* Branding Header */}
                         <div className="text-center mb-8">
-                            <h1 className="text-slate-900 text-3xl font-bold tracking-tight mb-2">OrionMail</h1>
-                            <p className="text-slate-600 font-medium">Your unified inbox, reimagined.</p>
+                            <h1 className="text-slate-900 dark:text-white/90 text-3xl font-bold tracking-tight mb-2">OrionMail</h1>
+                            <p className="text-slate-600 dark:text-white/60 font-medium">Your unified inbox, reimagined.</p>
                         </div>
                         {/* Login Section */}
                         <div className="w-full space-y-4">
                             <div className="mb-6 text-center">
-                                <h2 className="text-slate-900 text-lg font-semibold mb-1">Connect Email</h2>
-                                <p className="text-slate-500 text-sm">Select your provider to get started</p>
+                                <h2 className="text-slate-900 dark:text-white/90 text-lg font-semibold mb-1">Connect Email</h2>
+                                <p className="text-slate-500 dark:text-white/50 text-sm">Select your provider to get started</p>
                             </div>
                             {/* Google Sign In */}
                             <button
                                 onClick={handleGoogleLogin}
-                                className="w-full h-12 flex items-center justify-center gap-3 px-4 bg-white hover:bg-slate-50 border border-slate-200/60 rounded-lg shadow-sm transition-all duration-200 group cursor-pointer"
+                                className="w-full h-12 flex items-center justify-center gap-3 px-4 bg-white dark:bg-white/5 hover:bg-slate-50 dark:hover:bg-white/10 border border-slate-200/60 dark:border-white/10 rounded-lg shadow-sm transition-all duration-200 group cursor-pointer"
                             >
                                 <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                     <path
@@ -120,23 +120,23 @@ const LoginPage = () => {
                                         fill="#EA4335"
                                     ></path>
                                 </svg>
-                                <span className="text-slate-700 font-semibold text-[15px]">Continue with Google</span>
+                                <span className="text-slate-700 dark:text-white/90 font-semibold text-[15px]">Continue with Google</span>
                             </button>
                             {/* Outlook Sign In */}
-                            <button className="w-full h-12 flex items-center justify-center gap-3 px-4 bg-white hover:bg-slate-50 border border-slate-200/60 rounded-lg shadow-sm transition-all duration-200 group">
+                            <button className="w-full h-12 flex items-center justify-center gap-3 px-4 bg-white dark:bg-white/5 hover:bg-slate-50 dark:hover:bg-white/10 border border-slate-200/60 dark:border-white/10 rounded-lg shadow-sm transition-all duration-200 group">
                                 <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M22.3 8.5L12 3L1.7 8.5V15.5L12 21L22.3 15.5V8.5Z" fill="#0078D4"></path>
                                     <path d="M12 3V21L22.3 15.5V8.5L12 3Z" fill="#106EBE"></path>
                                     <path d="M12 3L1.7 8.5V15.5L12 12.3V3Z" fill="#28A8EA"></path>
                                 </svg>
-                                <span className="text-slate-700 font-semibold text-[15px]">Continue with Outlook</span>
+                                <span className="text-slate-700 dark:text-white/90 font-semibold text-[15px]">Continue with Outlook</span>
                             </button>
                             <div className="relative py-4">
                                 <div aria-hidden="true" className="absolute inset-0 flex items-center">
-                                    <div className="w-full border-t border-slate-300/40"></div>
+                                    <div className="w-full border-t border-slate-300/40 dark:border-white/10"></div>
                                 </div>
                                 <div className="relative flex justify-center text-xs uppercase">
-                                    <span className="bg-transparent px-2 text-slate-500 font-medium whitespace-nowrap">or manual setup</span>
+                                    <span className="bg-transparent px-2 text-slate-500 dark:text-white/40 font-medium whitespace-nowrap">or manual setup</span>
                                 </div>
                             </div>
                             {/* IMAP Sign In */}
@@ -147,7 +147,7 @@ const LoginPage = () => {
                         </div>
                         {/* Footer Section */}
                         <div className="mt-10 text-center">
-                            <p className="text-slate-500 text-xs leading-relaxed">
+                            <p className="text-slate-500 dark:text-white/50 text-xs leading-relaxed">
                                 By signing in, you agree to our <br />
                                 <a className="text-primary hover:underline font-medium" href="#">
                                     Terms of Service
@@ -162,11 +162,11 @@ const LoginPage = () => {
                     </div>
                     {/* Decorative elements around the card */}
                     <div className="mt-8 flex justify-center gap-6 opacity-60">
-                        <div className="flex items-center gap-1.5 text-slate-500 text-xs font-medium">
+                        <div className="flex items-center gap-1.5 text-slate-500 dark:text-white/50 text-xs font-medium">
                             <Lock size={16} />
                             End-to-end Encrypted
                         </div>
-                        <div className="flex items-center gap-1.5 text-slate-500 text-xs font-medium">
+                        <div className="flex items-center gap-1.5 text-slate-500 dark:text-white/50 text-xs font-medium">
                             <ShieldCheck size={16} />
                             Privacy Focused
                         </div>
@@ -175,9 +175,14 @@ const LoginPage = () => {
 
                 {/* Background Decoration */}
                 <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
-                    <div className="bg-decoration absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[120px]"></div>
-                    <div className="bg-decoration absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] rounded-full bg-purple-500/10 blur-[120px]"></div>
-                    <div className="bg-decoration absolute top-[20%] right-[15%] w-[100px] h-[100px] bg-blue-400/20 blur-[60px]"></div>
+                    {/* Light Mode Blobs */}
+                    <div className="bg-decoration absolute dark:hidden -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[120px]"></div>
+                    <div className="bg-decoration absolute dark:hidden -bottom-[10%] -right-[10%] w-[40%] h-[40%] rounded-full bg-purple-500/10 blur-[120px]"></div>
+                    <div className="bg-decoration absolute dark:hidden top-[20%] right-[15%] w-[100px] h-[100px] bg-blue-400/20 blur-[60px]"></div>
+
+                    {/* Dark Mode Mesh */}
+                    <div className="bg-decoration absolute hidden dark:block top-[-20%] left-[-10%] w-[70%] h-[70%] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-purple-900/40 via-violet-900/10 to-transparent blur-[120px] rounded-full mix-blend-screen opacity-50" />
+                    <div className="bg-decoration absolute hidden dark:block bottom-[-20%] right-[-10%] w-[70%] h-[70%] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-fuchsia-900/30 via-purple-900/10 to-transparent blur-[120px] rounded-full mix-blend-screen opacity-50" />
                 </div>
             </div>
         </>
