@@ -17,6 +17,8 @@ import Link from 'next/link';
 // Modular Components
 import { AccountSection, SectionHeader } from '@/components/settings/AccountSection';
 import { AppearanceSection } from '@/components/settings/AppearanceSection';
+import { NotificationsSection } from '@/components/settings/NotificationsSection';
+import { SecuritySection } from '@/components/settings/SecuritySection';
 
 // --- Types ---
 
@@ -116,8 +118,28 @@ export default function SettingsPage() {
                             </motion.div>
                         )}
 
+                        {activeTab === 'notifications' && (
+                            <motion.div key="notifications" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                <SectionHeader
+                                    title="Notifications"
+                                    description="Manage how and when OrbitMail alerts you."
+                                />
+                                <NotificationsSection />
+                            </motion.div>
+                        )}
+
+                        {activeTab === 'security' && (
+                            <motion.div key="security" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                <SectionHeader
+                                    title="Privacy & Security"
+                                    description="Control your data, logins, and block unwanted senders."
+                                />
+                                <SecuritySection />
+                            </motion.div>
+                        )}
+
                         {/* Placeholders for other tabs */}
-                        {(activeTab === 'notifications' || activeTab === 'security') && (
+                        {(!['account', 'appearance', 'notifications', 'security'].includes(activeTab)) && (
                             <motion.div key="placeholder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                                 <SectionHeader
                                     title={SETTINGS_TABS.find(t => t.id === activeTab)?.label || 'Settings'}
