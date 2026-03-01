@@ -4,9 +4,11 @@ import React, { memo, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useTheme } from 'next-themes';
+import { useAccentColor, AccentColorName } from '@/components/AccentColorProvider';
 
 export const AppearanceSection = memo(() => {
     const { theme, setTheme } = useTheme();
+    const { accentColor, setAccentColor } = useAccentColor();
     const [mounted, setMounted] = useState(false);
 
     // Prevent hydration mismatch
@@ -98,13 +100,20 @@ export const AppearanceSection = memo(() => {
                 <div className="mt-10 flex items-center justify-between">
                     <h4 className="font-semibold text-foreground">Accent Color</h4>
                     <div className="flex gap-3">
-                        {['bg-blue-500', 'bg-purple-500', 'bg-rose-500', 'bg-emerald-500', 'bg-orange-500'].map((color, i) => (
+                        {([
+                            { name: 'blue', class: 'bg-blue-500' },
+                            { name: 'purple', class: 'bg-purple-500' },
+                            { name: 'rose', class: 'bg-rose-500' },
+                            { name: 'emerald', class: 'bg-emerald-500' },
+                            { name: 'orange', class: 'bg-orange-500' }
+                        ] as const).map((color) => (
                             <button
-                                key={color}
+                                key={color.name}
+                                onClick={() => setAccentColor(color.name)}
                                 className={cn(
-                                    "w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-white/0 transition-all",
-                                    color,
-                                    i === 0 ? "ring-primary scale-110" : "ring-transparent hover:scale-110"
+                                    "w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-white/0 dark:ring-offset-black/0 transition-all",
+                                    color.class,
+                                    mounted && accentColor === color.name ? "ring-primary scale-110" : "ring-transparent hover:scale-110"
                                 )}
                             />
                         ))}

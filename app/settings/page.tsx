@@ -43,7 +43,7 @@ export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState<SettingsTab>('account');
 
     return (
-        <div className="flex h-full w-full bg-[#FAFAFA] dark:bg-transparent text-slate-900 dark:text-white transition-colors duration-200">
+        <div className="flex h-full w-full bg-[#FAFAFA] dark:bg-black text-slate-900 dark:text-white transition-colors duration-200">
             {/* Left Sidebar Navigation */}
             <aside className="w-64 flex flex-col border-r border-white/20 dark:border-white/5 bg-white/40 dark:bg-[#1C1C21]/70 backdrop-blur-2xl transition-colors relative overflow-hidden">
                 {/* Dark Mode Purple Mesh Overlay */}
@@ -97,7 +97,7 @@ export default function SettingsPage() {
             </aside>
 
             {/* Main Content Area */}
-            <main className="flex-1 overflow-y-auto custom-scrollbar">
+            <main className="flex-1 overflow-y-auto custom-scrollbar bg-white dark:bg-[#111111] relative z-10">
                 <div className="max-w-4xl mx-auto p-12">
                     <AnimatePresence mode="wait">
                         {activeTab === 'account' && (
