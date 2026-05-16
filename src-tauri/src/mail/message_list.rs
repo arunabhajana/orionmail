@@ -112,9 +112,10 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                         plain_body = parsed.get_body().unwrap_or_default();
                     }
 
-                    let timestamp = chrono::DateTime::parse_from_rfc2822(&date)
+                    let clean_date = date.trim().replace('\r', "").replace('\n', "");
+                    let timestamp = chrono::DateTime::parse_from_rfc2822(&clean_date)
                         .map(|dt| dt.timestamp())
-                        .unwrap_or(0);
+                        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
 
                     let snippet = if !plain_body.is_empty() {
                         let clean: String = plain_body

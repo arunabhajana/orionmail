@@ -190,9 +190,10 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32) -> Op
         }
     }
 
-    let timestamp = chrono::DateTime::parse_from_rfc2822(&date)
+    let clean_date = date.trim().replace('\r', "").replace('\n', "");
+    let timestamp = chrono::DateTime::parse_from_rfc2822(&clean_date)
         .map(|dt| dt.timestamp())
-        .unwrap_or(0);
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
 
     // Minimal text parsing overhead on sync fetch
     let mut plain_body = String::new();
