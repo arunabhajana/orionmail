@@ -47,3 +47,10 @@ next-env.d.ts
 
 # sensitive data
 accounts.json
+
+# graphify
+/graphify-out
+.github
+
+#claude
+.claude
