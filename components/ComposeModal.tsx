@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Minus, Square, Pencil, Paperclip, Image as ImageIcon, Smile, Bold, Italic, Underline, Trash2, Send, UserPlus } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { cn } from '@/lib/utils';
 import { MOCK_EMAILS } from '@/lib/data';
+import { useRecipientAutocomplete } from '@/hooks/useRecipientAutocomplete';
 
 function escapeHtml(text: string): string {
     return text
@@ -21,38 +22,34 @@ interface ComposeModalProps {
 }
 
 export default function ComposeModal({ onClose }: ComposeModalProps) {
-    const [recipients, setRecipients] = useState<string[]>([]);
-    const [inputValue, setInputValue] = useState("");
     const [subject, setSubject] = useState("");
     const [plainBody, setPlainBody] = useState("");
     const [isSending, setIsSending] = useState(false);
-    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
     // Derive unique contacts from mock data
     const contacts = Array.from(new Set(MOCK_EMAILS.map(e => ({ name: e.sender, email: e.senderEmail }))))
         .filter((v, i, a) => a.findIndex(t => t.email === v.email) === i);
 
-    const handleAddRecipient = (email: string) => {
-        const trimmedEmail = email.trim();
-        if (trimmedEmail && !recipients.includes(trimmedEmail)) {
-            setRecipients([...recipients, trimmedEmail]);
-        }
-        setInputValue("");
-        setIsDropdownOpen(false);
-    };
+    const {
+        recipients,
+        inputValue,
+        isOpen,
+        selectedIndex,
+        filteredContacts,
+        setSelectedIndex,
+        handleInputChange,
+        handleKeyDown,
+        removeRecipient,
+        toggleOpen
+    } = useRecipientAutocomplete(contacts);
 
-    const handleRemoveRecipient = (email: string) => {
-        setRecipients(recipients.filter(r => r !== email));
-    };
+    const optionsRef = useRef<(HTMLButtonElement | null)[]>([]);
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            handleAddRecipient(inputValue);
-        } else if (e.key === 'Backspace' && !inputValue && recipients.length > 0) {
-            handleRemoveRecipient(recipients[recipients.length - 1]);
+    useEffect(() => {
+        if (isOpen && optionsRef.current[selectedIndex]) {
+            optionsRef.current[selectedIndex]?.scrollIntoView({ block: 'nearest' });
         }
-    };
+    }, [selectedIndex, isOpen]);
 
     const handleSend = async () => {
         if (recipients.length === 0) {
@@ -141,27 +138,31 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                                     <span>{email}</span>
                                     <X
                                         className="w-3 h-3 cursor-pointer hover:text-primary/70"
-                                        onClick={() => handleRemoveRecipient(email)}
+                                        onClick={() => removeRecipient(email)}
                                     />
                                 </motion.div>
                             ))}
                             <input
+                                role="combobox"
+                                aria-autocomplete="list"
+                                aria-expanded={isOpen}
+                                aria-activedescendant={isOpen && filteredContacts.length > 0 ? `option-${selectedIndex}` : undefined}
                                 className="flex-1 bg-transparent border-none focus:ring-0 text-sm p-0 placeholder:text-muted-foreground/50 dark:placeholder:text-white/40 text-foreground dark:text-white/90 outline-none"
                                 placeholder={recipients.length === 0 ? "Add recipients..." : ""}
                                 type="text"
                                 value={inputValue}
-                                onChange={(e) => setInputValue(e.target.value)}
-                                onKeyDown={handleKeyDown}
+                                onChange={(e) => handleInputChange(e.target.value)}
+                                onKeyDown={handleKeyDown as any}
                                 autoFocus
                             />
                         </div>
 
                         <div className="relative">
                             <button
-                                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                                onClick={toggleOpen}
                                 className={cn(
                                     "p-1.5 rounded-full flex items-center justify-center transition-all",
-                                    isDropdownOpen ? "bg-primary text-white" : "text-primary hover:bg-primary/10"
+                                    isOpen ? "bg-primary text-white" : "text-primary hover:bg-primary/10"
                                 )}
                             >
                                 <UserPlus className="w-4 h-4" />
@@ -169,8 +170,9 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
 
                             {/* Contacts Dropdown */}
                             <AnimatePresence>
-                                {isDropdownOpen && (
+                                {isOpen && (
                                     <motion.div
+                                        role="listbox"
                                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                                         animate={{ opacity: 1, y: 0, scale: 1 }}
                                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -181,16 +183,33 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                                             <span className="text-[10px] font-bold text-muted-foreground/60 dark:text-white/40 uppercase tracking-widest">Suggested Contacts</span>
                                         </div>
                                         <div className="max-h-48 overflow-y-auto custom-scrollbar pt-1">
-                                            {contacts.map(contact => (
-                                                <button
-                                                    key={contact.email}
-                                                    onClick={() => handleAddRecipient(contact.email)}
-                                                    className="w-full flex flex-col items-start px-3 py-2 hover:bg-primary/10 transition-colors group border-b border-black/[0.02] dark:border-white/[0.02] last:border-0"
-                                                >
-                                                    <span className="text-sm font-semibold text-foreground dark:text-white/90 group-hover:text-primary transition-colors">{contact.name}</span>
-                                                    <span className="text-xs text-muted-foreground dark:text-white/50 truncate w-full text-left">{contact.email}</span>
-                                                </button>
-                                            ))}
+                                            {filteredContacts.length === 0 ? (
+                                                <div className="px-3 py-4 text-center text-sm text-muted-foreground/60 dark:text-white/40">
+                                                    No matches found
+                                                </div>
+                                            ) : (
+                                                filteredContacts.map((contact, index) => (
+                                                    <button
+                                                        key={contact.email}
+                                                        ref={(el) => { optionsRef.current[index] = el; }}
+                                                        role="option"
+                                                        id={`option-${index}`}
+                                                        aria-selected={index === selectedIndex}
+                                                        onClick={() => {
+                                                            handleInputChange(contact.email + ", ");
+                                                            toggleOpen();
+                                                        }}
+                                                        onMouseEnter={() => setSelectedIndex(index)}
+                                                        className={cn(
+                                                            "w-full flex flex-col items-start px-3 py-2 transition-colors group border-b border-black/[0.02] dark:border-white/[0.02] last:border-0",
+                                                            index === selectedIndex ? "bg-primary/20" : "hover:bg-primary/10"
+                                                        )}
+                                                    >
+                                                        <span className="text-sm font-semibold text-foreground dark:text-white/90 group-hover:text-primary transition-colors">{contact.name}</span>
+                                                        <span className="text-xs text-muted-foreground dark:text-white/50 truncate w-full text-left">{contact.email}</span>
+                                                    </button>
+                                                ))
+                                            )}
                                         </div>
                                     </motion.div>
                                 )}
