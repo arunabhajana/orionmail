@@ -1,9 +1,11 @@
 mod auth;
 mod commands;
 mod mail;
+mod contacts;
 
 use crate::commands::auth_commands::*;
 use crate::commands::message_commands::*;
+use crate::contacts::contact_search::search_contacts;
 use tauri::Manager;
 
 #[cfg(target_os = "windows")]
@@ -56,6 +58,7 @@ pub fn run() {
       }
 
       crate::mail::database::init_db(app.handle())?;
+      crate::contacts::contact_store::init_contacts_db(app.handle())?;
 
       Ok(())
     })
@@ -77,7 +80,8 @@ pub fn run() {
       download_attachment,
       show_in_folder,
       show_main_window,
-      send_message
+      send_message,
+      search_contacts
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
