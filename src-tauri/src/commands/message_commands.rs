@@ -5,32 +5,46 @@ use tauri::AppHandle;
 
 #[tauri::command]
 pub async fn mark_as_read(app_handle: AppHandle, uid: u32) -> Result<(), String> {
+    log::info!("mark_as_read command invoked for UID {}", uid);
     let account = get_active_account(&app_handle).ok_or("No active account")?;
 
     // Idempotency Check: Don't hit IMAP if already updated locally
     let is_already_seen = tokio::task::spawn_blocking({
         let app = app_handle.clone();
         move || {
-            database::is_message_seen(&app, "INBOX", uid)
+            let seen = database::is_message_seen(&app, "INBOX", uid);
+            log::info!("is_message_seen for UID {}: {:?}", uid, seen);
+            seen
         }
     }).await.map_err(|e| e.to_string())??;
 
     if is_already_seen {
+        log::info!("UID {} is already marked as read locally. Skipping IMAP update.", uid);
         return Ok(());
     }
 
+    log::info!("Updating IMAP seen flag for UID {}", uid);
     // Update IMAP (Silent Flag to avoid untagged responses)
-    execute_with_session(&account, SessionKind::Primary, move |session| {
+    let imap_res = execute_with_session(&account, SessionKind::Primary, move |session| {
+        log::info!("Executing uid_store +FLAGS.SILENT (\\Seen) for UID {} on IMAP", uid);
         session.uid_store(uid.to_string(), "+FLAGS.SILENT (\\Seen)")
             .map_err(|e| format!("IMAP Error marking read: {}", e))?;
+        log::info!("IMAP uid_store success for UID {}", uid);
         Ok::<(), String>(())
-    }).await?;
+    }).await;
 
+    if let Err(e) = &imap_res {
+        log::error!("IMAP uid_store failed for UID {}: {}", uid, e);
+        return Err(e.clone());
+    }
+
+    log::info!("Updating SQLite seen flag to true for UID {}", uid);
     // Update SQLite
     let _ = tokio::task::spawn_blocking(move || {
         database::set_message_seen(&app_handle, "INBOX", uid, true)
     }).await;
 
+    log::info!("mark_as_read completed successfully for UID {}", uid);
     Ok(())
 }
 

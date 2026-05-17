@@ -52,14 +52,16 @@ export function useEmailBody(emailId: string | undefined, emailUnread: boolean |
 
         fetchBody();
 
-        // Trigger optimistic "mark as read" if the email is unread
-        if (emailUnread && onMarkAsRead) {
-            onMarkAsRead(emailId);
-        }
-
         return () => {
             isMounted = false;
         };
+    }, [emailId]);
+
+    // Trigger optimistic "mark as read" if the email is unread
+    useEffect(() => {
+        if (emailId && emailUnread && onMarkAsRead) {
+            onMarkAsRead(emailId);
+        }
     }, [emailId, emailUnread, onMarkAsRead]);
 
     // Handle iframe resize messages sent from the injected srcDoc script

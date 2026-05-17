@@ -20,6 +20,32 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     let db_path = get_db_path(app_handle)?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
+    // Verify primary key constraint is (folder, uid) to match ON CONFLICT clause
+    let mut check_stmt = conn.prepare("PRAGMA table_info(messages)").map_err(|e| e.to_string())?;
+    let check_rows = check_stmt.query_map([], |row| {
+        let name: String = row.get(1)?;
+        let pk: i32 = row.get(5)?;
+        Ok((name, pk))
+    }).map_err(|e| e.to_string())?;
+
+    let mut pk_cols = Vec::new();
+    for row in check_rows {
+        if let Ok((name, pk)) = row {
+            if pk > 0 {
+                pk_cols.push(name);
+            }
+        }
+    }
+
+    if !pk_cols.is_empty() {
+        let has_folder = pk_cols.iter().any(|c| c.to_lowercase() == "folder");
+        let has_uid = pk_cols.iter().any(|c| c.to_lowercase() == "uid");
+        if pk_cols.len() != 2 || !has_folder || !has_uid {
+            log::warn!("Mismatched Primary Key in messages table: {:?}. Dropping table for clean recreation.", pk_cols);
+            let _ = conn.execute("DROP TABLE IF EXISTS messages", ());
+        }
+    }
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
             folder TEXT NOT NULL,
