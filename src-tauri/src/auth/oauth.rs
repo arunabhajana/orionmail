@@ -2,7 +2,7 @@ use crate::auth::account::Account;
 use oauth2::basic::BasicClient;
 use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    RedirectUrl, Scope, TokenResponse, TokenUrl,
+    RedirectUrl, Scope, TokenResponse, TokenUrl, RefreshToken,
 };
 use reqwest::Client as HttpClient;
 use serde_json::Value;
@@ -116,7 +116,7 @@ pub async fn start_google_login() -> Result<Account, String> {
     Ok(Account {
         id,
         email: user_info["email"].as_str().unwrap_or_default().to_string(),
-        provider: "google".to_string(),
+        provider: crate::auth::account::MailProvider::Google,
         access_token: access_token.to_string(),
         refresh_token,
         expires_at,
@@ -124,4 +124,44 @@ pub async fn start_google_login() -> Result<Account, String> {
         profile_name: user_info["name"].as_str().unwrap_or_default().to_string(),
         profile_picture: user_info["picture"].as_str().unwrap_or_default().to_string(),
     })
+}
+
+pub async fn refresh_google_token(account: &mut Account) -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
+    let google_client_id = ClientId::new(
+        std::env::var("GOOGLE_CLIENT_ID")
+            .map_err(|_| anyhow::anyhow!("GOOGLE_CLIENT_ID not found in environment"))?,
+    );
+    let google_client_secret = ClientSecret::new(
+        std::env::var("GOOGLE_CLIENT_SECRET")
+            .map_err(|_| anyhow::anyhow!("GOOGLE_CLIENT_SECRET not found in environment"))?,
+    );
+    
+    let auth_url = AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string()).unwrap();
+    let token_url = TokenUrl::new("https://oauth2.googleapis.com/token".to_string()).unwrap();
+
+    let client = BasicClient::new(
+        google_client_id,
+        Some(google_client_secret),
+        auth_url,
+        Some(token_url),
+    );
+
+    let token_result = client
+        .exchange_refresh_token(&RefreshToken::new(account.refresh_token.clone()))
+        .request_async(oauth2::reqwest::async_http_client)
+        .await
+        .map_err(|e| anyhow::anyhow!("Token exchange failed: {}", e))?;
+
+    account.access_token = token_result.access_token().secret().to_string();
+    
+    if let Some(new_refresh_token) = token_result.refresh_token() {
+        account.refresh_token = new_refresh_token.secret().to_string();
+    }
+    
+    let expires_in = token_result.expires_in().map(|d| d.as_secs()).unwrap_or(3600);
+    account.expires_at = chrono::Utc::now().timestamp() + expires_in as i64;
+
+    Ok(())
 }

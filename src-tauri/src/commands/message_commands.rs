@@ -163,3 +163,30 @@ pub fn show_main_window(app_handle: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub async fn send_message(
+    app_handle: AppHandle,
+    to: Vec<String>,
+    cc: Vec<String>,
+    bcc: Vec<String>,
+    reply_to: Option<String>,
+    subject: String,
+    plain_body: String,
+    html_body: String,
+) -> Result<(), String> {
+    let mut account = get_active_account(&app_handle).ok_or("No active account")?;
+
+    crate::mail::smtp_client::send_email(
+        &app_handle,
+        &mut account,
+        to,
+        cc,
+        bcc,
+        reply_to,
+        &subject,
+        &plain_body,
+        &html_body,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}

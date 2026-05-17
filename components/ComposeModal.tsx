@@ -3,8 +3,18 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Minus, Square, Pencil, Paperclip, Image as ImageIcon, Smile, Bold, Italic, Underline, Trash2, Send, UserPlus } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { cn } from '@/lib/utils';
 import { MOCK_EMAILS } from '@/lib/data';
+
+function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
 
 interface ComposeModalProps {
     onClose: () => void;
@@ -13,6 +23,9 @@ interface ComposeModalProps {
 export default function ComposeModal({ onClose }: ComposeModalProps) {
     const [recipients, setRecipients] = useState<string[]>([]);
     const [inputValue, setInputValue] = useState("");
+    const [subject, setSubject] = useState("");
+    const [plainBody, setPlainBody] = useState("");
+    const [isSending, setIsSending] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
     // Derive unique contacts from mock data
@@ -38,6 +51,32 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
             handleAddRecipient(inputValue);
         } else if (e.key === 'Backspace' && !inputValue && recipients.length > 0) {
             handleRemoveRecipient(recipients[recipients.length - 1]);
+        }
+    };
+
+    const handleSend = async () => {
+        if (recipients.length === 0) {
+            alert("Please add at least one recipient.");
+            return;
+        }
+
+        setIsSending(true);
+        try {
+            const html_body = `<p>${escapeHtml(plainBody).replace(/\n/g, "<br/>")}</p>`;
+            await invoke('send_message', {
+                to: recipients,
+                cc: [],
+                bcc: [],
+                replyTo: null,
+                subject,
+                plainBody,
+                htmlBody: html_body,
+            });
+            onClose();
+        } catch (error) {
+            console.error("Failed to send message:", error);
+            alert(`Failed to send message: ${error}`);
+            setIsSending(false);
         }
     };
 
@@ -166,6 +205,8 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                             className="flex-1 bg-transparent border-none focus:ring-0 text-sm p-0 placeholder:text-muted-foreground/50 dark:placeholder:text-white/40 text-foreground dark:text-white/90 font-medium outline-none"
                             placeholder="Enter subject line"
                             type="text"
+                            value={subject}
+                            onChange={(e) => setSubject(e.target.value)}
                         />
                     </div>
                 </div>
@@ -175,6 +216,8 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                     <textarea
                         className="flex-1 w-full bg-transparent border-none focus:ring-0 resize-none text-base p-0 placeholder:text-muted-foreground/40 dark:placeholder:text-white/30 text-foreground dark:text-white/90 leading-relaxed outline-none"
                         placeholder="Write your message here..."
+                        value={plainBody}
+                        onChange={(e) => setPlainBody(e.target.value)}
                     />
                 </div>
 
@@ -212,9 +255,16 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                         </button>
 
                         {/* Send Button */}
-                        <button onClick={onClose} className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-6 py-2 rounded-lg font-semibold shadow-lg shadow-primary/20 transition-all active:scale-[0.98]">
-                            <span className="text-sm">Send</span>
-                            <Send className="w-4 h-4" />
+                        <button
+                            onClick={handleSend}
+                            disabled={isSending}
+                            className={cn(
+                                "flex items-center gap-2 px-6 py-2 rounded-lg font-semibold shadow-lg transition-all active:scale-[0.98]",
+                                isSending ? "bg-primary/50 text-white/70 cursor-not-allowed" : "bg-primary hover:bg-primary/90 text-white shadow-primary/20"
+                            )}
+                        >
+                            <span className="text-sm">{isSending ? "Sending..." : "Send"}</span>
+                            {!isSending && <Send className="w-4 h-4" />}
                         </button>
                     </div>
                 </footer>

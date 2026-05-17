@@ -76,7 +76,8 @@ pub fn run() {
       delete_message,
       download_attachment,
       show_in_folder,
-      show_main_window
+      show_main_window,
+      send_message
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
