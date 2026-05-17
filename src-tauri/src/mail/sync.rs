@@ -101,13 +101,20 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
 
             let fetch_results = session.uid_fetch(
                 &range,
-                "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])"
+                "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO)])"
             ).map_err(|e| format!("IMAP Fetch Error: {}", e))?;
 
             let mut messages = Vec::new();
+            let mut raw_headers = Vec::new();
+            
             for msg in fetch_results.iter() {
                 if let Some(header) = parse_header_to_message(msg, server_validity) {
                     messages.push(header);
+                }
+                if let Some(body) = msg.header() {
+                    if let Ok(s) = std::str::from_utf8(body) {
+                        raw_headers.push(s.to_string());
+                    }
                 }
             }
 
@@ -126,6 +133,13 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
 
             log::info!("Grabbed {} new messages!", num_new);
             database::insert_or_update_messages(&app_handle_clone, &messages)?;
+            
+            // Extract and store contacts from the batch of headers
+            if !raw_headers.is_empty() {
+                if let Err(e) = crate::contacts::contact_indexer::extract_and_store_contacts(&app_handle_clone, &raw_headers) {
+                    log::error!("Failed to index contacts: {}", e);
+                }
+            }
 
             if num_new > 0 {
                 use tauri::Emitter;

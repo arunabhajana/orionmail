@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, KeyboardEvent } from 'react';
+import { useState, useEffect, useCallback, KeyboardEvent, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface Contact {
     name: string;
@@ -7,52 +8,45 @@ export interface Contact {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function useRecipientAutocomplete(availableContacts: Contact[]) {
+export function useRecipientAutocomplete() {
     const [recipients, setRecipients] = useState<string[]>([]);
     const [inputValue, setInputValue] = useState("");
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [isOpen, setIsOpen] = useState(false);
+    
+    const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
+    const queryTokenRef = useRef(0);
 
-    // Normalize contact texts for search
-    const normalizedContacts = availableContacts.map(c => ({
-        ...c,
-        searchName: c.name.toLowerCase().trim().replace(/[^\w\s]/gi, ''),
-        searchEmail: c.email.toLowerCase().trim()
-    }));
-
-    // Filter contacts based on input
-    const filteredContacts = (() => {
-        if (!inputValue) return availableContacts;
-        
-        const q = inputValue.toLowerCase().trim().replace(/[^\w\s]/gi, '');
-        const qEmail = inputValue.toLowerCase().trim();
-
-        const exactPrefixMatches: Contact[] = [];
-        const includesMatches: Contact[] = [];
-
-        normalizedContacts.forEach(c => {
-            const matchesPrefix = c.searchName.startsWith(q) || c.searchEmail.startsWith(qEmail);
-            const matchesIncludes = c.searchName.includes(q) || c.searchEmail.includes(qEmail);
-
-            if (matchesPrefix) {
-                exactPrefixMatches.push({ name: c.name, email: c.email });
-            } else if (matchesIncludes) {
-                includesMatches.push({ name: c.name, email: c.email });
+    const fetchContacts = useCallback(async (query: string, currentRecipients: string[]) => {
+        const token = ++queryTokenRef.current;
+        try {
+            const results: Contact[] = await invoke('search_contacts', { query });
+            
+            // Stale response protection
+            if (token === queryTokenRef.current) {
+                // Filter out already selected recipients
+                const lowerRecipients = currentRecipients.map(r => r.toLowerCase());
+                const finalResults = results.filter(c => !lowerRecipients.includes(c.email.toLowerCase()));
+                setFilteredContacts(finalResults);
             }
-        });
-
-        // Dedup matches
-        const seen = new Set<string>();
-        const results: Contact[] = [];
-        
-        for (const c of [...exactPrefixMatches, ...includesMatches]) {
-            if (!seen.has(c.email)) {
-                seen.add(c.email);
-                results.push(c);
+        } catch (error) {
+            console.error("Failed to search contacts:", error);
+            if (token === queryTokenRef.current) {
+                setFilteredContacts([]);
             }
         }
-        return results;
-    })();
+    }, []);
+
+    // Debounce and fetch
+    useEffect(() => {
+        // If they just opened the dropdown and input is empty, fetch top
+        if (isOpen || inputValue) {
+            const timer = setTimeout(() => {
+                fetchContacts(inputValue, recipients);
+            }, 150);
+            return () => clearTimeout(timer);
+        }
+    }, [inputValue, isOpen, recipients, fetchContacts]);
 
     // Safe index bounds
     useEffect(() => {

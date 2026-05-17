@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Minus, Square, Pencil, Paperclip, Image as ImageIcon, Smile, Bold, Italic, Underline, Trash2, Send, UserPlus } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { cn } from '@/lib/utils';
-import { MOCK_EMAILS } from '@/lib/data';
 import { useRecipientAutocomplete } from '@/hooks/useRecipientAutocomplete';
 
 function escapeHtml(text: string): string {
@@ -26,10 +25,6 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
     const [plainBody, setPlainBody] = useState("");
     const [isSending, setIsSending] = useState(false);
 
-    // Derive unique contacts from mock data
-    const contacts = Array.from(new Set(MOCK_EMAILS.map(e => ({ name: e.sender, email: e.senderEmail }))))
-        .filter((v, i, a) => a.findIndex(t => t.email === v.email) === i);
-
     const {
         recipients,
         inputValue,
@@ -41,7 +36,7 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
         handleKeyDown,
         removeRecipient,
         toggleOpen
-    } = useRecipientAutocomplete(contacts);
+    } = useRecipientAutocomplete();
 
     const optionsRef = useRef<(HTMLButtonElement | null)[]>([]);
 

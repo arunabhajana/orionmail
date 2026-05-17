@@ -64,13 +64,13 @@ pub async fn send_email(
         .subject(subject)
         .header(MessageId::from(format!("<{}@orionmail>", uuid::Uuid::new_v4())));
 
-    for recipient in to {
+    for recipient in &to {
         builder = builder.to(recipient.parse().map_err(|_| SendError::InvalidRecipient)?);
     }
-    for recipient in cc {
+    for recipient in &cc {
         builder = builder.cc(recipient.parse().map_err(|_| SendError::InvalidRecipient)?);
     }
-    for recipient in bcc {
+    for recipient in &bcc {
         builder = builder.bcc(recipient.parse().map_err(|_| SendError::InvalidRecipient)?);
     }
     if let Some(rt) = reply_to {
@@ -113,7 +113,19 @@ pub async fn send_email(
 
     // 4. Send with timeout
     match timeout(Duration::from_secs(30), mailer.send(email)).await {
-        Ok(Ok(_)) => Ok(()),
+        Ok(Ok(_)) => {
+            let mut all_recipients = to;
+            all_recipients.extend(cc);
+            all_recipients.extend(bcc);
+            
+            if !all_recipients.is_empty() {
+                if let Err(e) = crate::contacts::contact_indexer::record_sent_emails(app_handle, all_recipients) {
+                    log::warn!("Failed to record sent emails for contacts index: {}", e);
+                }
+            }
+            
+            Ok(())
+        },
         Ok(Err(e)) => {
             if e.is_client() || e.is_transient() || e.is_permanent() {
                 Err(SendError::Authentication)
