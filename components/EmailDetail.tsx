@@ -41,6 +41,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     const { bodyContent, attachments, isLoadingBody, iframeHeight } = useEmailBody(
         email?.id,
         email?.unread,
+        email?.folder,
         onMarkAsRead
     );
 

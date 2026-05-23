@@ -332,16 +332,17 @@ fn generate_preview(html: &str) -> String {
     }
 }
 
-pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Account, uid: u32) -> Result<MessageDetail, String> {
+pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32) -> Result<MessageDetail, String> {
     let app_handle_cache = app_handle.clone();
+    let folder_cache = folder.to_string();
     
     // 1. Check caches in a blocking task
     let cache_result = tokio::task::spawn_blocking(move || {
-        let stored_validity = database::get_mailbox_validity(&app_handle_cache, "INBOX")
+        let stored_validity = database::get_mailbox_validity(&app_handle_cache, &folder_cache)
             .unwrap_or_default()
             .ok_or_else(|| "No stored mailbox validity. Resync required.".to_string())?;
 
-        if let Ok(Some((cached_body, attachments_json))) = database::get_message_body_cache(&app_handle_cache, "INBOX", uid) {
+        if let Ok(Some((cached_body, attachments_json))) = database::get_message_body_cache(&app_handle_cache, &folder_cache, uid) {
             let attachments = if let Some(json) = attachments_json {
                 serde_json::from_str(&json).unwrap_or_default()
             } else {
@@ -445,7 +446,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     let preview = generate_preview(&parsed_body);
     let attachments_json = serde_json::to_string(&fetched_attachments).ok();
     
-    let _ = database::update_message_body(app_handle, "INBOX", uid, &parsed_body, &preview, attachments_json);
+    let _ = database::update_message_body(app_handle, folder, uid, &parsed_body, &preview, attachments_json);
     
     Ok(MessageDetail {
         body: parsed_body,
@@ -453,8 +454,8 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     })
 }
 
-pub async fn get_message_body(app_handle: &AppHandle, account: Account, uid: u32) -> Result<MessageDetail, String> {
-    fetch_and_cache_body_internal(app_handle, &account, uid).await
+pub async fn get_message_body(app_handle: &AppHandle, account: Account, folder: &str, uid: u32) -> Result<MessageDetail, String> {
+    fetch_and_cache_body_internal(app_handle, &account, folder, uid).await
 }
 
 pub async fn fetch_attachment_part(account: &Account, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {

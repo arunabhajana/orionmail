@@ -82,7 +82,7 @@ fn spawn_prefetch_worker(app_handle: AppHandle, account: Account) {
 
                 // Double check it wasn't fetched while sitting in queue
                 if let Ok(None) = database::get_message_body_cache(&app_handle, "INBOX", uid) {
-                    let _ = fetch_and_cache_body_internal(&app_handle, &account, uid).await;
+                    let _ = fetch_and_cache_body_internal(&app_handle, &account, "INBOX", uid).await;
                 }
 
                 log::debug!("Prefetch complete: {}", uid);

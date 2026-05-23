@@ -378,3 +378,50 @@ pub fn delete_message_local(app_handle: &AppHandle, folder: &str, uid: u32) -> R
 
     Ok(())
 }
+
+pub fn insert_sent_message(
+    app_handle: &AppHandle,
+    _sender: &str,
+    to: &[String],
+    subject: &str,
+    plain_body: &str,
+    html_body: &str,
+) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let folder = "sent";
+    let date = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let highest = get_highest_uid(app_handle, folder)?;
+    let uid = std::cmp::max(highest + 1, (date % 1000000000) as u32);
+
+    let snippet_text = plain_body.trim();
+    let snippet = if snippet_text.chars().count() > 100 {
+        let end = snippet_text.char_indices().nth(100).map(|(i, _)| i).unwrap_or(snippet_text.len());
+        &snippet_text[..end]
+    } else {
+        snippet_text
+    };
+
+    let to_joined = to.join(", ");
+
+    conn.execute(
+        "INSERT INTO messages (folder, uid, subject, sender, date, snippet, processed_html, body_fetched, seen, flagged, uid_validity)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1, 0, 1)",
+        rusqlite::params![
+            folder,
+            uid,
+            subject,
+            to_joined, // use 'to' for sender column to show recipients in Sent folder list
+            date,
+            snippet,
+            html_body,
+        ],
+    ).map_err(|e| format!("Failed to insert sent message: {}", e))?;
+
+    Ok(())
+}

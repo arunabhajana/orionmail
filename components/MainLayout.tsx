@@ -70,7 +70,8 @@ export default function MainLayout() {
         ));
 
         try {
-            await invoke('toggle_star', { uid: Number(emailId), shouldStar: newStarredState });
+            const folderName = target.folder === "sent" ? "sent" : "INBOX";
+            await invoke('toggle_star', { uid: Number(emailId), shouldStar: newStarredState, folder: folderName });
         } catch (err) {
             console.error("Failed to toggle star", err);
             if (String(err).includes("No active account")) {
@@ -95,7 +96,8 @@ export default function MainLayout() {
         ));
 
         try {
-            await invoke('mark_as_read', { uid: Number(emailId) });
+            const folderName = target.folder === "sent" ? "sent" : "INBOX";
+            await invoke('mark_as_read', { uid: Number(emailId), folder: folderName });
         } catch (err) {
             console.error("Failed to mark as read", err);
             if (String(err).includes("No active account")) {
@@ -111,6 +113,7 @@ export default function MainLayout() {
     };
 
     const deleteMessage = async (emailId: string) => {
+        const target = emails.find(e => e.id === emailId);
         // Optimistic Update
         setEmails(prev => prev.filter(email => email.id !== emailId));
         if (selectedEmailId === emailId) {
@@ -118,7 +121,8 @@ export default function MainLayout() {
         }
 
         try {
-            await invoke('delete_message', { uid: Number(emailId) });
+            const folderName = target?.folder === "sent" ? "sent" : "INBOX";
+            await invoke('delete_message', { uid: Number(emailId), folder: folderName });
         } catch (err) {
             console.error("Failed to delete message", err);
             if (String(err).includes("No active account")) {
@@ -127,7 +131,7 @@ export default function MainLayout() {
                 return;
             }
             // Rollback via DB fetch since array splicing is tricky to reverse
-            await fetchCache();
+            await fetchCache(currentFolder);
         }
     };
 
@@ -141,22 +145,24 @@ export default function MainLayout() {
         time: formatEmailTime(msg.date * 1000),
         date: new Date(msg.date * 1000).toLocaleString(),
         unread: !msg.seen,
-        folder: "inbox",
+        folder: msg.folder?.toLowerCase() === "sent" ? "sent" : "inbox",
         tags: [],
         starred: msg.flagged,
         body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
         attachments: [],
     });
 
-    const fetchCache = async () => {
+    const fetchCache = async (folderToFetch = currentFolder) => {
         try {
-            const cached: any[] = await invoke('get_messages_page', { beforeUid: null, limit: 50 });
+            const dbFolder = folderToFetch === "sent" ? "sent" : "INBOX";
+            const cached: any[] = await invoke('get_messages_page', { folder: dbFolder, beforeUid: null, limit: 50 });
             if (cached && cached.length > 0) {
                 const formattedEmails = cached.map(formatEmailFromMessage);
                 setEmails(formattedEmails);
                 setHasMore(cached.length === 50);
                 return true;
             }
+            setEmails([]);
             setHasMore(false);
             return false;
         } catch (error) {
@@ -169,14 +175,15 @@ export default function MainLayout() {
         }
     };
 
-    const refreshNewEmails = async () => {
+    const refreshNewEmails = async (folderToFetch = currentFolder) => {
         try {
-            const cached: any[] = await invoke('get_messages_page', { beforeUid: null, limit: 50 });
+            const dbFolder = folderToFetch === "sent" ? "sent" : "INBOX";
+            const cached: any[] = await invoke('get_messages_page', { folder: dbFolder, beforeUid: null, limit: 50 });
             if (!cached || cached.length === 0) return;
 
             const existingEmails = emailsRef.current;
             if (existingEmails.length === 0) {
-                await fetchCache();
+                await fetchCache(folderToFetch);
                 return;
             }
 
@@ -217,8 +224,9 @@ export default function MainLayout() {
         try {
             const lastEmail = currentEmails[currentEmails.length - 1];
             const beforeUid = parseInt(lastEmail.id, 10);
+            const dbFolder = currentFolder === "sent" ? "sent" : "INBOX";
 
-            const nextBatch: any[] = await invoke('get_messages_page', { beforeUid, limit: 50 });
+            const nextBatch: any[] = await invoke('get_messages_page', { folder: dbFolder, beforeUid, limit: 50 });
             if (nextBatch.length === 0) {
                 setHasMore(false);
             } else {
@@ -340,6 +348,13 @@ export default function MainLayout() {
         loadCache();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    useEffect(() => {
+        if (!isBootstrapping) {
+            setSelectedEmailId(null);
+            fetchCache(currentFolder);
+        }
+    }, [currentFolder, isBootstrapping]);
 
     useEffect(() => {
         let unlisten: (() => void) | undefined;

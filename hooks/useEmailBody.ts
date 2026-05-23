@@ -8,7 +8,7 @@ interface MessageDetail {
     attachments: Attachment[];
 }
 
-export function useEmailBody(emailId: string | undefined, emailUnread: boolean | undefined, onMarkAsRead?: (id: string) => void) {
+export function useEmailBody(emailId: string | undefined, emailUnread: boolean | undefined, folder: string | undefined, onMarkAsRead?: (id: string) => void) {
     const [bodyContent, setBodyContent] = useState<string>("");
     const [attachments, setAttachments] = useState<Attachment[]>([]);
     const [isLoadingBody, setIsLoadingBody] = useState<boolean>(false);
@@ -27,7 +27,8 @@ export function useEmailBody(emailId: string | undefined, emailUnread: boolean |
             setIsLoadingBody(true);
             setIframeHeight(400); // Reset height on new email
             try {
-                const detail: MessageDetail = await invoke('get_message_body', { uid: Number(emailId) });
+                const dbFolder = folder === "sent" ? "sent" : "INBOX";
+                const detail: MessageDetail = await invoke('get_message_body', { folder: dbFolder, uid: Number(emailId) });
                 if (isMounted) {
                     setBodyContent(detail.body || "<p>Message has no content.</p>");
                     setAttachments(detail.attachments || []);
@@ -55,7 +56,7 @@ export function useEmailBody(emailId: string | undefined, emailUnread: boolean |
         return () => {
             isMounted = false;
         };
-    }, [emailId]);
+    }, [emailId, folder]);
 
     // Trigger optimistic "mark as read" if the email is unread
     useEffect(() => {
