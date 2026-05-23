@@ -19,6 +19,7 @@ import { AccountSection, SectionHeader } from '@/components/settings/AccountSect
 import { AppearanceSection } from '@/components/settings/AppearanceSection';
 import { NotificationsSection } from '@/components/settings/NotificationsSection';
 import { SecuritySection } from '@/components/settings/SecuritySection';
+import { useAuth } from '@/components/AuthContext';
 
 // --- Types ---
 
@@ -41,6 +42,7 @@ const SETTINGS_TABS: SettingsTabConfig[] = [
 
 export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState<SettingsTab>('account');
+    const { user, logout } = useAuth();
 
     return (
         <div className="flex h-full w-full bg-[#FAFAFA] dark:bg-black text-slate-900 dark:text-white transition-colors duration-200">
@@ -88,7 +90,12 @@ export default function SettingsPage() {
                             <Info className="w-5 h-5 text-muted-foreground" strokeWidth={2} />
                             About
                         </button>
-                        <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all duration-200">
+                        <button
+                            onClick={() => {
+                                if (user) logout(user.email);
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all duration-200"
+                        >
                             <LogOut className="w-5 h-5" strokeWidth={2} />
                             Sign Out
                         </button>

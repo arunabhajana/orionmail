@@ -1,9 +1,9 @@
 "use client";
 
-import React, { memo } from 'react';
+import React from 'react';
 import { motion } from 'framer-motion';
 
-export const NotificationsSection = memo(() => (
+export const NotificationsSection = () => (
     <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -70,5 +70,5 @@ export const NotificationsSection = memo(() => (
             </div>
         </div>
     </motion.div>
-));
+);
 NotificationsSection.displayName = "NotificationsSection";

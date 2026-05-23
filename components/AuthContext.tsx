@@ -8,7 +8,7 @@ export interface User {
     email: string;
     name: string;
     picture: string;
-    provider: string;
+    provider: { type: string; [key: string]: any };
 }
 
 interface AuthContextType {

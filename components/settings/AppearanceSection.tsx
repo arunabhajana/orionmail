@@ -1,12 +1,12 @@
 "use client";
 
-import React, { memo, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useTheme } from 'next-themes';
-import { useAccentColor, AccentColorName } from '@/components/AccentColorProvider';
+import { useAccentColor } from '@/components/AccentColorProvider';
 
-export const AppearanceSection = memo(() => {
+export const AppearanceSection = () => {
     const { theme, setTheme } = useTheme();
     const { accentColor, setAccentColor } = useAccentColor();
     const [mounted, setMounted] = useState(false);
@@ -122,5 +122,5 @@ export const AppearanceSection = memo(() => {
             </div>
         </motion.div>
     );
-});
+};
 AppearanceSection.displayName = "AppearanceSection";

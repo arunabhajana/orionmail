@@ -10,7 +10,7 @@ interface SectionHeaderProps {
     action?: React.ReactNode;
 }
 
-export const SectionHeader = memo(({ title, description, action }: SectionHeaderProps) => (
+export const SectionHeader = ({ title, description, action }: SectionHeaderProps) => (
     <div className="flex items-start justify-between mb-8">
         <div>
             <h1 className="text-3xl font-bold text-foreground mb-2">{title}</h1>
@@ -18,11 +18,11 @@ export const SectionHeader = memo(({ title, description, action }: SectionHeader
         </div>
         {action}
     </div>
-));
+);
 SectionHeader.displayName = "SectionHeader";
 
 // Wrap in functional component to use hooks
-export const AccountSection = memo(() => {
+export const AccountSection = () => {
     const { user } = useAuth();
 
     // Fallback values if user data is missing
@@ -54,7 +54,7 @@ export const AccountSection = memo(() => {
                     <div className="flex-1 pt-1">
                         <h2 className="text-2xl font-bold text-foreground mb-1">{userName}</h2>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-                            <span>Connected via {user?.provider || "Google"}</span>
+                            <span>Connected via {user?.provider?.type || "Google"}</span>
                             <span>•</span>
                             <span>Pro Plan Member</span>
                         </div>
@@ -95,5 +95,5 @@ export const AccountSection = memo(() => {
             </div>
         </motion.div>
     );
-});
+};
 AccountSection.displayName = "AccountSection";
