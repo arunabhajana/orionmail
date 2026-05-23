@@ -340,7 +340,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     let cache_result = tokio::task::spawn_blocking(move || {
         let stored_validity = database::get_mailbox_validity(&app_handle_cache, &folder_cache)
             .unwrap_or_default()
-            .ok_or_else(|| "No stored mailbox validity. Resync required.".to_string())?;
+            .unwrap_or(1);
 
         if let Ok(Some((cached_body, attachments_json))) = database::get_message_body_cache(&app_handle_cache, &folder_cache, uid) {
             let attachments = if let Some(json) = attachments_json {
