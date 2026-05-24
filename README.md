@@ -13,16 +13,16 @@ OrionMail is a modern, high-performance desktop email client built with **Next.j
 
 ---
 
-## Architecture & Knowledge Graph
+## Detailed Features & Architecture
 
-This project uses **Graphify** to maintain a comprehensive knowledge graph of its architecture, enabling quick navigation across the 42,000+ word codebase. 
+OrionMail connects local robustness with web-like flexibility. Key aspects of the project include:
 
-Based on the latest Graphify insights, the codebase is structurally organized into 24 distinct communities bridging the Rust backend and Next.js frontend:
-
-*   **Core Abstractions (God Nodes)**: Central to the project's operation are utility functions like `cn()` for uniform styling across React components, and `get_db_path()` / `get_active_account()` for robust data access and state management in Rust.
-*   **Frontend Authentication**: The Next.js pages heavily rely on `useAuth()` to manage secure state bridging between the UI and Tauri layers.
-*   **Backend Synchronization**: Processes like `sync_folder()` handle complex operations connecting local databases with remote data.
-*   **Exploration**: Run `graphify query "<your question>"` to explore the relationship between any undocumented components or to traverse across the architectural communities. Don't forget to run `graphify update .` after code changes to keep the graph AST up to date.
+*   **Offline-First & Fast Sync**: Seamlessly synchronize your inbox with the Rust backend handling complex background operations (e.g., `sync_folder`), data persistence, and local database management (`get_db_path()`).
+*   **Secure Email Rendering**: Robust email sanitization using DOMPurify ensures safety when rendering HTML content from untrusted senders.
+*   **High Performance UI**: Easily handles thousands of emails in your inbox utilizing virtualized lists (`@tanstack/react-virtual`).
+*   **Deep OS Integration**: Utilizing Tauri's native plugins for system-level dialogs and push notifications, bringing a native app feel to web technologies.
+*   **Adaptive Theming**: Built-in support for multiple color schemes including dark mode using `next-themes`.
+*   **State Management & Auth**: Clean React abstractions including the `useAuth()` hook securely manage active accounts and state (`get_active_account()`) bridging the UI and the local Tauri system.
 
 ---
 
@@ -68,11 +68,10 @@ npm run tauri dev
 *   `components/`: Houses reusable React UI components (e.g., Settings modules).
 *   `lib/`: Includes utility functions (like `cn()`) and data providers.
 *   `src-tauri/`: Manages the Rust-based Tauri configuration, database access, and backend sync logic.
-*   `graphify-out/`: Contains the generated knowledge graph and architecture reports.
 
 ## Contributing
 
-Contributions are welcome. Please feel free to submit a pull request or open an issue to discuss proposed changes. When making changes, please remember to update the Graphify knowledge base.
+Contributions are welcome. Please feel free to submit a pull request or open an issue to discuss proposed changes.
 
 ## License
 
