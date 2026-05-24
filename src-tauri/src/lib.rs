@@ -72,6 +72,8 @@ pub fn run() {
       get_inbox_messages,
       get_cached_messages,
       sync_inbox,
+      sync_mail_folder,
+      get_folder_messages,
       get_message_body,
       get_messages_page,
       mark_as_read,

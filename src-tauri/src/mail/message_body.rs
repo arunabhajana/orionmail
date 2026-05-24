@@ -370,7 +370,19 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     let _permit = CONCURRENT_FETCH_LIMIT.clone().acquire_owned().await.map_err(|e| e.to_string())?;
     log::debug!("IMAP fetch start: uid={}, active_permits={}", uid, 3 - CONCURRENT_FETCH_LIMIT.available_permits());
     
+    let folder_clone = folder.to_string();
     let imap_result = imap_session::execute_with_session(&account, imap_session::SessionKind::Prefetch, move |session| {
+        use std::str::FromStr;
+        let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
+            Ok(mf) => match mf.to_imap_mailbox() {
+                Some(mb) => mb.to_string(),
+                None => return Err("Cannot fetch from virtual folder".to_string()),
+            },
+            Err(_) => return Err(format!("Unknown folder: {}", folder_clone)),
+        };
+
+        session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
+
         let mut target_part = String::new();
         let mut full_payload: Vec<u8> = Vec::new();
         let mut attachments = Vec::new();
@@ -420,7 +432,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
         Ok::<_, String>((target_part, full_payload, attachments))
     }).await;
     
-    let (fetched_target_part, fetched_full_payload, fetched_attachments) = match imap_result {
+    let (_fetched_target_part, fetched_full_payload, fetched_attachments) = match imap_result {
         Ok(data) => data,
         Err(e) => return Err(format!("IMAP Execution Error: {:?}", e)),
     };
@@ -458,13 +470,25 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, folder: 
     fetch_and_cache_body_internal(app_handle, &account, folder, uid).await
 }
 
-pub async fn fetch_attachment_part(account: &Account, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {
+pub async fn fetch_attachment_part(account: &Account, folder: &str, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {
     let part_id_clone = part_id.to_string();
+    let folder_clone = folder.to_string();
     
     // -- SEMAPHORE ACQUIRE --
     let _permit = CONCURRENT_FETCH_LIMIT.clone().acquire_owned().await.map_err(|e| e.to_string())?;
     
     let imap_result = imap_session::execute_with_session(account, imap_session::SessionKind::Primary, move |session| {
+        use std::str::FromStr;
+        let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
+            Ok(mf) => match mf.to_imap_mailbox() {
+                Some(mb) => mb.to_string(),
+                None => return Err("Cannot fetch from virtual folder".to_string()),
+            },
+            Err(_) => return Err(format!("Unknown folder: {}", folder_clone)),
+        };
+
+        session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
+
         let mime_query = format!("BODY.PEEK[{}.MIME]", part_id_clone);
         let body_query = format!("BODY.PEEK[{}]", part_id_clone);
         let fetch_query = format!("({})", [mime_query, body_query].join(" "));

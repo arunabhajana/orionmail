@@ -7,12 +7,14 @@ export interface Attachment {
 
 export interface Email {
     id: string;
+    uid: number;
     sender: string;
     senderEmail: string;
     subject: string;
     preview: string;
     date: string;
     time: string;
+    timestamp: number;
     unread: boolean;
     starred: boolean;
     folder: "inbox" | "sent" | "drafts" | "trash" | "starred";

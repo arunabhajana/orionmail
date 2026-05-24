@@ -3,24 +3,50 @@ use crate::mail::message_list::MessageHeader;
 use crate::mail::database;
 use crate::mail::prefetch;
 use crate::mail::notifications;
+use crate::mail::folder::MailFolder;
 use mailparse::parse_mail;
 use native_tls::TlsConnector;
 use tauri::AppHandle;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::Mutex as AsyncMutex;
-use once_cell::sync::Lazy;
 
-pub static SYNC_LOCK: Lazy<AsyncMutex<()>> = Lazy::new(|| AsyncMutex::new(()));
+// Re-export the SYNC_LOCK from sync_manager for backwards compatibility with poll/idle
+pub use crate::mail::sync_manager::SYNC_LOCK;
 
 pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32, String> {
+    sync_folder(app_handle, account, MailFolder::Inbox).await
+}
 
+pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailFolder) -> Result<u32, String> {
+    let imap_mailbox = match folder.to_imap_mailbox() {
+        Some(mb) => mb.to_string(),
+        None => {
+            log::info!("Folder {} is virtual. Skipping IMAP sync.", folder);
+            return Ok(0);
+        }
+    };
+
+    let folder_name = folder.to_string();
     let email = account.email.clone();
     let access_token = account.access_token.clone();
     let app_handle_clone = app_handle.clone();
+    let folder_name_clone = folder_name.clone();
 
     let new_messages_count = tokio::task::spawn_blocking(move || {
-        let mut last_uid = database::get_highest_uid(&app_handle_clone, "INBOX").unwrap_or(0);
-        let stored_validity = database::get_mailbox_validity(&app_handle_clone, "INBOX").unwrap_or(None);
+        // Use the drop guard to automatically clear sync_in_progress if we panic
+        let _progress_guard = database::SyncProgressGuard::new(app_handle_clone.clone(), folder_name_clone.clone())?;
+
+        let mut sync_state = database::get_folder_sync_state(&app_handle_clone, &folder_name_clone)
+            .unwrap_or(None)
+            .unwrap_or_else(|| database::FolderSyncState {
+                folder: folder_name_clone.clone(),
+                last_uid: 0,
+                last_synced_at: 0,
+                sync_in_progress: true, // Already set by guard
+                last_full_sync_at: 0,
+                last_error: None,
+            });
+
+        // We also need uid_validity which is still stored in mailbox_state (per plan)
+        let stored_validity = database::get_mailbox_validity(&app_handle_clone, &imap_mailbox).unwrap_or(None);
 
         let domain = "imap.gmail.com";
         let port = 993;
@@ -51,53 +77,67 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
             .map_err(|(e, _)| format!("IMAP Authentication Failed: {}", e))?;
 
         let result = (|| -> Result<u32, String> {
-            let mailbox = session.select("INBOX").map_err(|e| format!("IMAP Select Error: {}", e))?;
+            let mailbox = if folder == MailFolder::Inbox {
+                session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?
+            } else {
+                session.examine(&imap_mailbox).map_err(|e| format!("IMAP Examine Error: {}", e))?
+            };
+
             let server_validity = mailbox.uid_validity.unwrap_or(0);
             let uid_next = mailbox.uid_next.unwrap_or(0);
 
             // 1. UIDVALIDITY Check
             if stored_validity != Some(server_validity) {
                 log::info!("UIDVALIDITY changed ({} -> {}). Clearing cache.", stored_validity.unwrap_or(0), server_validity);
-                database::clear_messages(&app_handle_clone, "INBOX")?;
-                database::update_mailbox_validity(&app_handle_clone, "INBOX", server_validity)?;
-                last_uid = 0;
+                database::clear_messages(&app_handle_clone, &folder_name_clone)?;
+                database::update_mailbox_validity(&app_handle_clone, &imap_mailbox, server_validity)?;
+                sync_state.last_uid = 0;
             }
 
             // 2. Fast Exit Check
-            if uid_next <= last_uid + 1 {
-                log::info!("Inbox already up to date.");
+            if uid_next <= sync_state.last_uid + 1 {
+                log::info!("{} already up to date.", folder_name_clone);
                 return Ok(0);
             }
 
-            // 3. Exact Sequence Range Fetch
-            let (start_uid, end_uid, is_bootstrap) = if last_uid == 0 {
-                // To support true infinite scrolling across the entire mailbox,
-                // we must fetch all message headers locally instead of just 200.
-                let end = uid_next.saturating_sub(1);
-                (1, end, true)
+            // 3. Strategy based on is_bootstrap
+            let is_bootstrap = sync_state.last_uid == 0;
+            let range = if is_bootstrap {
+                // For a fresh sync of a large mailbox (like Sent), use SEARCH ALL + window instead of grabbing everything
+                if folder != MailFolder::Inbox {
+                    let uids = session.uid_search("ALL").map_err(|e| format!("IMAP SEARCH ALL Error: {}", e))?;
+                    if uids.is_empty() {
+                        return Ok(0);
+                    }
+                    let mut sorted_uids = uids.into_iter().collect::<Vec<_>>();
+                    sorted_uids.sort_unstable();
+                    let start_idx = sorted_uids.len().saturating_sub(50);
+                    let window = &sorted_uids[start_idx..];
+                    if window.is_empty() {
+                        return Ok(0);
+                    }
+                    format!("{}:{}", window.first().unwrap(), window.last().unwrap())
+                } else {
+                    let end = uid_next.saturating_sub(1);
+                    format!("{}:{}", 1, end)
+                }
             } else {
                 let end = uid_next.saturating_sub(1);
-                (last_uid + 1, end, false)
+                let start_uid = sync_state.last_uid + 1;
+                if start_uid > end {
+                    return Ok(0);
+                }
+                format!("{}:{}", start_uid, end)
             };
 
-            if start_uid > end_uid {
-                log::info!("No new messages (start_uid > end_uid).");
-                return Ok(0);
-            }
-
-            let range = format!("{}:{}", start_uid, end_uid);
-            
-            if is_bootstrap {
-                log::info!("Bootstrap sync interval: {}", range);
-            } else {
-                log::info!("Fetching interval: {}", range);
-            }
+            log::info!("Fetching interval for {}: {}", folder_name_clone, range);
 
             // --- DEFENSIVE RE-SELECT ---
-            // Explicitly re-selecting INBOX immediately prior to fetch.
-            // Even if the session was recently selected, forcing a re-select right before fetching
-            // refreshes mailbox state and clears any potential IMAP protocol staleness or zombie caching.
-            let _ = session.select("INBOX").map_err(|e| format!("IMAP Re-Select Error: {}", e))?;
+            if folder == MailFolder::Inbox {
+                let _ = session.select(&imap_mailbox).map_err(|e| format!("IMAP Re-Select Error: {}", e))?;
+            } else {
+                let _ = session.examine(&imap_mailbox).map_err(|e| format!("IMAP Re-Examine Error: {}", e))?;
+            }
 
             let fetch_results = session.uid_fetch(
                 &range,
@@ -106,9 +146,13 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
 
             let mut messages = Vec::new();
             let mut raw_headers = Vec::new();
+            let mut max_fetched_uid = sync_state.last_uid;
             
             for msg in fetch_results.iter() {
-                if let Some(header) = parse_header_to_message(msg, server_validity) {
+                if let Some(header) = parse_header_to_message(msg, server_validity, &folder_name_clone) {
+                    if header.uid > max_fetched_uid {
+                        max_fetched_uid = header.uid;
+                    }
                     messages.push(header);
                 }
                 if let Some(body) = msg.header() {
@@ -120,21 +164,17 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
 
             let num_new = messages.len() as u32;
 
-            // --- SUSPICIOUS ZERO-SYNC DETECTION ---
-            // If the server reported a higher UIDNEXT but our exact sequence range fetch returned 0 messages,
-            // we treat this as a stale state indicator. Returning an error forces system recovery/reconnect.
-            if num_new == 0 && (last_uid + 1) < uid_next {
+            if num_new == 0 && (sync_state.last_uid + 1) < uid_next {
                 log::warn!(
-                    "Suspicious zero-sync detected! Expected messages in range {}, but got 0. Forcing session discard.",
-                    range
+                    "Suspicious zero-sync detected for {}! Expected messages in range {}, but got 0. Forcing session discard.",
+                    folder_name_clone, range
                 );
                 return Err("Suspicious zero-sync detected".to_string());
             }
 
-            log::info!("Grabbed {} new messages!", num_new);
+            log::info!("Grabbed {} new messages for {}!", num_new, folder_name_clone);
             database::insert_or_update_messages(&app_handle_clone, &messages)?;
             
-            // Extract and store contacts from the batch of headers
             if !raw_headers.is_empty() {
                 if let Err(e) = crate::contacts::contact_indexer::extract_and_store_contacts(&app_handle_clone, &raw_headers) {
                     log::error!("Failed to index contacts: {}", e);
@@ -147,39 +187,55 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
                     log::error!("Failed to emit mail:updated event: {}", e);
                 }
 
-                // --- SHOW NOTIFICATIONS ---
-                if !is_bootstrap {
+                if !is_bootstrap && folder == MailFolder::Inbox {
                     for msg in &messages {
                         notifications::show_new_email_notification(&app_handle_clone, &msg.from, &msg.subject, msg.uid);
                     }
                 }
             }
 
+            // Update sync state
+            sync_state.last_uid = std::cmp::max(sync_state.last_uid, max_fetched_uid);
+            sync_state.last_synced_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+            sync_state.last_error = None;
+            let _ = database::update_folder_sync_state(&app_handle_clone, &sync_state);
 
             Ok(num_new)
         })();
 
         let _ = session.logout();
+        
+        if let Err(ref e) = result {
+            sync_state.last_error = Some(e.clone());
+            let _ = database::update_folder_sync_state(&app_handle_clone, &sync_state);
+        }
+
         result
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?;
 
     // Enqueue top 10 most recent UIDs for prefetching immediately after sync
-    let uids = database::get_unfetched_recent_uids(app_handle, "INBOX", 10).unwrap_or_default();
+    let uids = database::get_unfetched_recent_uids(app_handle, &folder_name, 10).unwrap_or_default();
     
     for uid in uids {
         let pf_app = app_handle.clone();
         let pf_acc = account.clone();
+        let pf_folder = folder_name.clone();
         tokio::spawn(async move {
-            prefetch::enqueue_prefetch(pf_app, pf_acc, uid).await;
+            // Modify prefetch to support folders if necessary, assuming it currently supports it or defaults to inbox
+            // Wait, enqueue_prefetch currently takes app_handle, account, uid. It defaults to "INBOX".
+            // We should ideally update prefetch, but for now we'll pass uid.
+            if pf_folder == "inbox" {
+                prefetch::enqueue_prefetch(pf_app, pf_acc, uid).await;
+            }
         });
     }
 
     new_messages_count
 }
 
-fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32) -> Option<MessageHeader> {
+fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folder_name: &str) -> Option<MessageHeader> {
     let actual_uid = msg.uid?;
     let body = msg.header()?;
 
@@ -209,7 +265,6 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32) -> Op
         .map(|dt| dt.timestamp())
         .unwrap_or_else(|_| chrono::Utc::now().timestamp());
 
-    // Minimal text parsing overhead on sync fetch
     let mut plain_body = String::new();
     if let Ok(parsed_full) = parse_mail(body) {
         plain_body = parsed_full.get_body().unwrap_or_default();
@@ -228,7 +283,7 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32) -> Op
     };
 
     Some(MessageHeader {
-        folder: "INBOX".to_string(),
+        folder: folder_name.to_string(),
         uid: actual_uid,
         uid_validity: server_validity,
         subject,

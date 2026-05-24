@@ -71,7 +71,7 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder === "sent" ? "sent" : "INBOX";
-            await invoke('toggle_star', { uid: Number(emailId), shouldStar: newStarredState, folder: folderName });
+            await invoke('toggle_star', { uid: target.uid, shouldStar: newStarredState, folder: folderName });
         } catch (err) {
             console.error("Failed to toggle star", err);
             if (String(err).includes("No active account")) {
@@ -97,7 +97,7 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder === "sent" ? "sent" : "INBOX";
-            await invoke('mark_as_read', { uid: Number(emailId), folder: folderName });
+            await invoke('mark_as_read', { uid: target.uid, folder: folderName });
         } catch (err) {
             console.error("Failed to mark as read", err);
             if (String(err).includes("No active account")) {
@@ -114,6 +114,8 @@ export default function MainLayout() {
 
     const deleteMessage = async (emailId: string) => {
         const target = emails.find(e => e.id === emailId);
+        if (!target) return;
+        
         // Optimistic Update
         setEmails(prev => prev.filter(email => email.id !== emailId));
         if (selectedEmailId === emailId) {
@@ -121,8 +123,8 @@ export default function MainLayout() {
         }
 
         try {
-            const folderName = target?.folder === "sent" ? "sent" : "INBOX";
-            await invoke('delete_message', { uid: Number(emailId), folder: folderName });
+            const folderName = target.folder === "sent" ? "sent" : "INBOX";
+            await invoke('delete_message', { uid: target.uid, folder: folderName });
         } catch (err) {
             console.error("Failed to delete message", err);
             if (String(err).includes("No active account")) {
@@ -135,30 +137,53 @@ export default function MainLayout() {
         }
     };
 
-    const formatEmailFromMessage = (msg: any): Email => ({
-        id: msg.uid.toString(),
-        sender: msg.from.split('<')[0].trim() || msg.from,
-        senderEmail: msg.from,
-        subject: msg.subject || '(No Subject)',
-        preview: msg.snippet?.trim() || msg.subject?.substring(0, 100) || 'No preview available',
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.from.split('<')[0].trim() || msg.from)}&background=random`,
-        time: formatEmailTime(msg.date * 1000),
-        date: new Date(msg.date * 1000).toLocaleString(),
-        unread: !msg.seen,
-        folder: msg.folder?.toLowerCase() === "sent" ? "sent" : "inbox",
-        tags: [],
-        starred: msg.flagged,
-        body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
-        attachments: [],
-    });
+    const dedupeEmails = (emailArray: Email[]) => {
+        const emailMap = new Map();
+        for (const email of emailArray) {
+            if (emailMap.has(email.id)) {
+                console.warn("Duplicate email detected", email.id);
+            }
+            emailMap.set(email.id, email);
+        }
+        
+        const unique = Array.from(emailMap.values());
+        // Sort: primary by timestamp descending, secondary by uid descending
+        return unique.sort((a, b) => {
+            if (b.timestamp !== a.timestamp) {
+                return b.timestamp - a.timestamp;
+            }
+            return b.uid - a.uid;
+        });
+    };
+
+    const formatEmailFromMessage = (msg: any): Email => {
+        const folder = msg.folder?.toLowerCase() === "sent" ? "sent" : "inbox";
+        return {
+            id: `${folder}-${msg.uid}`,
+            uid: msg.uid,
+            sender: msg.from.split('<')[0].trim() || msg.from,
+            senderEmail: msg.from,
+            subject: msg.subject || '(No Subject)',
+            preview: msg.snippet?.trim() || msg.subject?.substring(0, 100) || 'No preview available',
+            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.from.split('<')[0].trim() || msg.from)}&background=random`,
+            time: formatEmailTime(msg.date * 1000),
+            date: new Date(msg.date * 1000).toLocaleString(),
+            timestamp: msg.date * 1000,
+            unread: !msg.seen,
+            folder: folder,
+            tags: [],
+            starred: msg.flagged,
+            body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
+            attachments: [],
+        };
+    };
 
     const fetchCache = async (folderToFetch = currentFolder) => {
         try {
-            const dbFolder = folderToFetch === "sent" ? "sent" : "INBOX";
-            const cached: any[] = await invoke('get_messages_page', { folder: dbFolder, beforeUid: null, limit: 50 });
+            const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
             if (cached && cached.length > 0) {
                 const formattedEmails = cached.map(formatEmailFromMessage);
-                setEmails(formattedEmails);
+                setEmails(dedupeEmails(formattedEmails));
                 setHasMore(cached.length === 50);
                 return true;
             }
@@ -177,8 +202,7 @@ export default function MainLayout() {
 
     const refreshNewEmails = async (folderToFetch = currentFolder) => {
         try {
-            const dbFolder = folderToFetch === "sent" ? "sent" : "INBOX";
-            const cached: any[] = await invoke('get_messages_page', { folder: dbFolder, beforeUid: null, limit: 50 });
+            const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
             if (!cached || cached.length === 0) return;
 
             const existingEmails = emailsRef.current;
@@ -187,18 +211,15 @@ export default function MainLayout() {
                 return;
             }
 
-            const firstUid = parseInt(existingEmails[0].id, 10);
-            const newMessages = cached.filter(msg => msg.uid > firstUid);
+            const newMessages = cached;
 
             if (newMessages.length > 0) {
                 const formattedEmails = newMessages.map(formatEmailFromMessage);
-
                 const previousHeight = emailListContainerRef.current?.scrollHeight || 0;
 
                 setEmails(prev => {
-                    const existingIds = new Set(prev.map(p => p.id));
-                    const uniqueNew = formattedEmails.filter(n => !existingIds.has(n.id));
-                    return [...uniqueNew, ...prev];
+                    const merged = [...formattedEmails, ...prev];
+                    return dedupeEmails(merged);
                 });
 
                 requestAnimationFrame(() => {
@@ -223,18 +244,16 @@ export default function MainLayout() {
         setIsLoadingMore(true);
         try {
             const lastEmail = currentEmails[currentEmails.length - 1];
-            const beforeUid = parseInt(lastEmail.id, 10);
-            const dbFolder = currentFolder === "sent" ? "sent" : "INBOX";
+            const beforeUid = lastEmail.uid;
 
-            const nextBatch: any[] = await invoke('get_messages_page', { folder: dbFolder, beforeUid, limit: 50 });
+            const nextBatch: any[] = await invoke('get_folder_messages', { folder: currentFolder, beforeUid, limit: 50 });
             if (nextBatch.length === 0) {
                 setHasMore(false);
             } else {
                 const formattedEmails = nextBatch.map(formatEmailFromMessage);
                 setEmails(prev => {
-                    const existingIds = new Set(prev.map(p => p.id));
-                    const uniqueNew = formattedEmails.filter(n => !existingIds.has(n.id));
-                    return [...prev, ...uniqueNew];
+                    const merged = [...prev, ...formattedEmails];
+                    return dedupeEmails(merged);
                 });
                 if (nextBatch.length < 50) {
                     setHasMore(false);
@@ -255,7 +274,11 @@ export default function MainLayout() {
         setIsSyncing(true);
         setSyncError(null);
 
-        return invoke('sync_inbox')
+        // For Starred, we just need to ensure Inbox/Sent are relatively up-to-date.
+        // We will opportunistically sync Inbox if they are on Starred view.
+        const syncTarget = currentFolder === "starred" ? "inbox" : currentFolder;
+
+        return invoke('sync_mail_folder', { folder: syncTarget })
             .then(async (newMessages: unknown) => {
                 const count = Number(newMessages);
                 console.log(`Synced: ${count} new emails`);
@@ -352,7 +375,16 @@ export default function MainLayout() {
     useEffect(() => {
         if (!isBootstrapping) {
             setSelectedEmailId(null);
-            fetchCache(currentFolder);
+            fetchCache(currentFolder).then((hasCache) => {
+                if (hasCache) {
+                    // Debounced background sync on folder entry
+                    setTimeout(() => {
+                        handleSync(true);
+                    }, 500);
+                } else {
+                    handleSync(false);
+                }
+            });
         }
     }, [currentFolder, isBootstrapping]);
 

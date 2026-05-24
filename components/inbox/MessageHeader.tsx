@@ -112,7 +112,7 @@ const getTypeColor = (mime: string | undefined): string => {
     return "primary";
 };
 
-export const AttachmentCard = memo(({ uid, attachment }: { uid: number, attachment: Attachment }) => {
+export const AttachmentCard = memo(({ uid, folder, attachment }: { uid: number, folder: string, attachment: Attachment }) => {
     const [isDownloading, setIsDownloading] = React.useState(false);
     const { addDownload, updateDownloadStatus } = useDownloads();
 
@@ -138,9 +138,10 @@ export const AttachmentCard = memo(({ uid, attachment }: { uid: number, attachme
             // Since imap fetch blocks, we don't have true byte-level progress in NextJS easily.
             // The context will show "downloading" spinner until the IPC call returns.
             const resultPath = await invoke<string>('download_attachment', {
+                folder: folder === "sent" ? "sent" : "INBOX",
                 uid,
                 partId: attachment.partId,
-                savePath: savePath // Note: Rust expects `save_path`, Tauri backend automatically camelCases mapping. Wait, let's use `save_path` explicitly or rely on Tauri mapping. Usually tauri maps `savePath` from JS to `save_path` in Rust if `#[tauri::command(rename_all = "camelCase")]` is used globally, or default is camelCase. If it fails, we will check.
+                savePath: savePath
             });
             console.log(`Downloaded to ${resultPath}`);
             updateDownloadStatus(downloadId, 'completed', resultPath);

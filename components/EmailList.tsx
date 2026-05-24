@@ -92,7 +92,7 @@ const EmailList: React.FC<EmailListProps> = ({
                             const email = emails[virtualRow.index];
                             return (
                                 <div
-                                    key={`${email.folder}-${email.id}`}
+                                    key={email.id}
                                     data-index={virtualRow.index}
                                     ref={rowVirtualizer.measureElement}
                                     style={{

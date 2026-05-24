@@ -4,6 +4,16 @@ use tauri::AppHandle;
 use tauri::Manager;
 use crate::mail::message_list::MessageHeader;
 
+#[derive(Debug, Clone)]
+pub struct FolderSyncState {
+    pub folder: String,
+    pub last_uid: u32,
+    pub last_synced_at: i64,
+    pub sync_in_progress: bool,
+    pub last_full_sync_at: i64,
+    pub last_error: Option<String>,
+}
+
 pub fn get_db_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let app_dir = app_handle
         .path()
@@ -144,6 +154,21 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
         (),
     ).map_err(|e| e.to_string())?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS folder_sync_state (
+            folder TEXT PRIMARY KEY,
+            last_uid INTEGER,
+            last_synced_at INTEGER,
+            sync_in_progress INTEGER DEFAULT 0,
+            last_full_sync_at INTEGER,
+            last_error TEXT
+        )",
+        (),
+    ).map_err(|e| e.to_string())?;
+
+    // Reset sync_in_progress on startup to avoid permanent soft-locks from previous crashes
+    conn.execute("UPDATE folder_sync_state SET sync_in_progress = 0", ()).map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -255,35 +280,163 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
 
     let mut messages = Vec::new();
 
-    if let Some(uid) = before_uid {
-        let mut stmt = conn.prepare(
-            "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id
+    if folder.to_lowercase() == "starred" {
+        // Starred uses date-based sorting and pagination
+        let mut query = "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id
              FROM messages 
-             WHERE folder = ?1 AND uid < ?2
-             ORDER BY uid DESC 
-             LIMIT ?3"
-        ).map_err(|e| e.to_string())?;
+             WHERE flagged = 1".to_string();
+             
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        let msg_iter = stmt.query_map(rusqlite::params![folder, uid, limit], parse_row).map_err(|e| e.to_string())?;
+        if let Some(uid) = before_uid {
+            // Find the date of the before_uid to paginate correctly
+            // Note: Since Starred spans folders, finding the exact message by just UID is ambiguous, 
+            // but we can assume the client passes a known flagged UID. 
+            // A safer approach is to look up its date:
+            let date: Option<i64> = conn.query_row(
+                "SELECT date FROM messages WHERE uid = ?1 AND flagged = 1 LIMIT 1",
+                rusqlite::params![uid],
+                |row| row.get(0)
+            ).ok();
+            
+            if let Some(d) = date {
+                query.push_str(" AND date < ?1");
+                params.push(Box::new(d));
+                query.push_str(" ORDER BY date DESC LIMIT ?2");
+                params.push(Box::new(limit));
+            } else {
+                query.push_str(" ORDER BY date DESC LIMIT ?1");
+                params.push(Box::new(limit));
+            }
+        } else {
+            query.push_str(" ORDER BY date DESC LIMIT ?1");
+            params.push(Box::new(limit));
+        }
+
+        // Convert params to refs
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
+        let msg_iter = stmt.query_map(rusqlite::params_from_iter(param_refs), parse_row).map_err(|e| e.to_string())?;
         for msg in msg_iter {
             messages.push(msg.map_err(|e| e.to_string())?);
         }
     } else {
-        let mut stmt = conn.prepare(
-            "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id
-             FROM messages 
-             WHERE folder = ?1
-             ORDER BY uid DESC 
-             LIMIT ?2"
-        ).map_err(|e| e.to_string())?;
+        if let Some(uid) = before_uid {
+            let mut stmt = conn.prepare(
+                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id
+                 FROM messages 
+                 WHERE folder = ?1 AND uid < ?2
+                 ORDER BY uid DESC 
+                 LIMIT ?3"
+            ).map_err(|e| e.to_string())?;
 
-        let msg_iter = stmt.query_map(rusqlite::params![folder, limit], parse_row).map_err(|e| e.to_string())?;
-        for msg in msg_iter {
-            messages.push(msg.map_err(|e| e.to_string())?);
+            let msg_iter = stmt.query_map(rusqlite::params![folder, uid, limit], parse_row).map_err(|e| e.to_string())?;
+            for msg in msg_iter {
+                messages.push(msg.map_err(|e| e.to_string())?);
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id
+                 FROM messages 
+                 WHERE folder = ?1
+                 ORDER BY uid DESC 
+                 LIMIT ?2"
+            ).map_err(|e| e.to_string())?;
+
+            let msg_iter = stmt.query_map(rusqlite::params![folder, limit], parse_row).map_err(|e| e.to_string())?;
+            for msg in msg_iter {
+                messages.push(msg.map_err(|e| e.to_string())?);
+            }
         }
     }
 
     Ok(messages)
+}
+
+pub fn get_folder_sync_state(app_handle: &AppHandle, folder: &str) -> Result<Option<FolderSyncState>, String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare("SELECT folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error FROM folder_sync_state WHERE folder = ?1").unwrap();
+    let state = stmt.query_row([folder], |row| {
+        Ok(FolderSyncState {
+            folder: row.get(0)?,
+            last_uid: row.get(1)?,
+            last_synced_at: row.get(2)?,
+            sync_in_progress: row.get::<_, i32>(3)? != 0,
+            last_full_sync_at: row.get(4)?,
+            last_error: row.get(5)?,
+        })
+    }).ok();
+
+    Ok(state)
+}
+
+pub fn update_folder_sync_state(app_handle: &AppHandle, state: &FolderSyncState) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO folder_sync_state (folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            state.folder,
+            state.last_uid,
+            state.last_synced_at,
+            if state.sync_in_progress { 1 } else { 0 },
+            state.last_full_sync_at,
+            state.last_error
+        ],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn set_sync_in_progress(app_handle: &AppHandle, folder: &str, in_progress: bool) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // We use INSERT OR IGNORE and then UPDATE to ensure the row exists
+    conn.execute(
+        "INSERT OR IGNORE INTO folder_sync_state (folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error) VALUES (?1, 0, 0, 0, 0, NULL)",
+        rusqlite::params![folder],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE folder_sync_state SET sync_in_progress = ?1 WHERE folder = ?2",
+        rusqlite::params![if in_progress { 1 } else { 0 }, folder],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn set_folder_sync_error(app_handle: &AppHandle, folder: &str, error: &str) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE folder_sync_state SET last_error = ?1 WHERE folder = ?2",
+        rusqlite::params![error, folder],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub struct SyncProgressGuard {
+    app_handle: AppHandle,
+    folder: String,
+}
+
+impl SyncProgressGuard {
+    pub fn new(app_handle: AppHandle, folder: String) -> Result<Self, String> {
+        set_sync_in_progress(&app_handle, &folder, true)?;
+        Ok(Self { app_handle, folder })
+    }
+}
+
+impl Drop for SyncProgressGuard {
+    fn drop(&mut self) {
+        let _ = set_sync_in_progress(&self.app_handle, &self.folder, false);
+    }
 }
 
 

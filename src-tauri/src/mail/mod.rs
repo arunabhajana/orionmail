@@ -10,3 +10,5 @@ pub mod poll;
 pub mod prefetch;
 pub mod notifications;
 pub mod smtp_client;
+pub mod folder;
+pub mod sync_manager;

@@ -40,6 +40,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
 
     const { bodyContent, attachments, isLoadingBody, iframeHeight } = useEmailBody(
         email?.id,
+        email?.uid,
         email?.unread,
         email?.folder,
         onMarkAsRead
@@ -241,7 +242,8 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                     {attachments.map((att, i) => (
                                         <AttachmentCard
                                             key={att.partId || i}
-                                            uid={Number(email.id)}
+                                            uid={email.uid}
+                                            folder={email.folder}
                                             attachment={att}
                                         />
                                     ))}

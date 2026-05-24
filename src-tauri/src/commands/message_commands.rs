@@ -166,13 +166,14 @@ pub async fn get_messages_page(
 #[tauri::command]
 pub async fn download_attachment(
     app_handle: tauri::AppHandle,
+    folder: String,
     uid: u32,
     part_id: String,
     save_path: String,
 ) -> Result<String, String> {
     let account = get_active_account(&app_handle).ok_or("No active account")?;
     
-    let bytes = crate::mail::message_body::fetch_attachment_part(&account, uid, &part_id).await?;
+    let bytes = crate::mail::message_body::fetch_attachment_part(&account, &folder, uid, &part_id).await?;
     
     std::fs::write(&save_path, bytes)
         .map_err(|e| format!("Failed to write file to {}: {}", save_path, e))?;
