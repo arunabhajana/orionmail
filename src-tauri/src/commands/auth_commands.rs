@@ -90,6 +90,7 @@ pub async fn sync_mail_folder(app_handle: AppHandle, folder: String) -> Result<u
 
 #[command]
 pub fn get_folder_messages(app_handle: AppHandle, folder: String, before_uid: Option<u32>, limit: u32) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
+    let folder = folder.to_lowercase();
     crate::mail::database::load_messages_page(&app_handle, &folder, before_uid, limit)
 }
 
@@ -97,7 +98,8 @@ pub fn get_folder_messages(app_handle: AppHandle, folder: String, before_uid: Op
 pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -> Result<crate::mail::message_body::MessageDetail, String> {
     let account = session::get_active_account(&app_handle)
         .ok_or_else(|| "No active account".to_string())?;
-
+    
+    let folder = folder.to_lowercase();
     crate::mail::message_body::get_message_body(&app_handle, account, &folder, uid).await
 }
 
