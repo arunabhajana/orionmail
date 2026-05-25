@@ -1,7 +1,7 @@
 use crate::auth::account::Account;
 use crate::mail::message_list::MessageHeader;
 use crate::mail::database;
-use crate::mail::prefetch;
+use crate::mail::body_prefetch_manager;
 use crate::mail::notifications;
 use crate::mail::folder::MailFolder;
 use mailparse::parse_mail;
@@ -226,9 +226,12 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             // Modify prefetch to support folders if necessary, assuming it currently supports it or defaults to inbox
             // Wait, enqueue_prefetch currently takes app_handle, account, uid. It defaults to "INBOX".
             // We should ideally update prefetch, but for now we'll pass uid.
-            if pf_folder == "inbox" {
-                prefetch::enqueue_prefetch(pf_app, pf_acc, uid).await;
-            }
+            crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
+                pf_app,
+                pf_acc,
+                crate::mail::body_prefetch_manager::PrefetchRequest { folder: pf_folder, uid },
+                crate::mail::body_prefetch_manager::PrefetchPriority::Background,
+            ).await;
         });
     }
 

@@ -100,7 +100,39 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
         .ok_or_else(|| "No active account".to_string())?;
     
     let folder = folder.to_lowercase();
-    crate::mail::message_body::get_message_body(&app_handle, account, &folder, uid).await
+    
+    // Check cache first before enqueueing
+    if let Ok(Some((cached_body, attachments_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
+        let attachments = if let Some(json) = attachments_json {
+            serde_json::from_str(&json).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        return Ok(crate::mail::message_body::MessageDetail { body: cached_body, attachments });
+    }
+
+    // Delegate to Manager
+    crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
+        app_handle.clone(),
+        account.clone(),
+        crate::mail::body_prefetch_manager::PrefetchRequest { folder: folder.clone(), uid },
+        crate::mail::body_prefetch_manager::PrefetchPriority::Immediate,
+    ).await;
+
+    // Poll cache
+    for _ in 0..100 { // 5 second timeout (100 * 50ms)
+        if let Ok(Some((cached_body, attachments_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
+            let attachments = if let Some(json) = attachments_json {
+                serde_json::from_str(&json).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            return Ok(crate::mail::message_body::MessageDetail { body: cached_body, attachments });
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    Err("Timeout waiting for message body to fetch".to_string())
 }
 
 #[command]

@@ -7,7 +7,7 @@ pub mod imap_session;
 pub mod body_cache;
 pub mod idle;
 pub mod poll;
-pub mod prefetch;
+pub mod body_prefetch_manager;
 pub mod notifications;
 pub mod smtp_client;
 pub mod folder;

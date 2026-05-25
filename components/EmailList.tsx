@@ -9,6 +9,7 @@ import { SearchBar, FilterTabs } from './inbox/EmailListHeader';
 import { EmailListItem } from './inbox/EmailListItem';
 import { useVirtualEmailList } from '@/hooks/useVirtualEmailList';
 import OrbitLoader from './inbox/OrbitLoader';
+import { invoke } from '@tauri-apps/api/core';
 
 // Global cache states removed as predictive prefetch happens in Rust backend now
 
@@ -54,6 +55,33 @@ const EmailList: React.FC<EmailListProps> = ({
         onLoadMore,
         listRef,
     });
+
+    React.useEffect(() => {
+        if (!virtualItems || virtualItems.length === 0) return;
+
+        const timer = setTimeout(() => {
+            const firstVisible = virtualItems[0].index;
+            const lastVisible = virtualItems[virtualItems.length - 1].index;
+            
+            // +/- 5 rows for prefetch window
+            const startIdx = Math.max(0, firstVisible - 5);
+            const endIdx = Math.min(emails.length - 1, lastVisible + 5);
+            
+            const requests = [];
+            for (let i = startIdx; i <= endIdx; i++) {
+                const email = emails[i];
+                if (email) {
+                    requests.push({ folder: email.folder, uid: email.uid });
+                }
+            }
+            
+            if (requests.length > 0) {
+                invoke('prefetch_messages', { requests }).catch(console.error);
+            }
+        }, 300); // 300ms debounce
+
+        return () => clearTimeout(timer);
+    }, [virtualItems, emails]);
 
     return (
         <main

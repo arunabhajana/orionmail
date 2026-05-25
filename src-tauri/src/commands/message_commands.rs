@@ -151,17 +151,41 @@ pub async fn get_messages_page(
             
             // Fire-and-forget background prefetch enqueue
             tokio::spawn(async move {
-                // Cancel stale prefetch requests before enqueuing new ones
-                crate::mail::prefetch::clear_prefetch_queue().await;
-                
                 for uid in uids_to_prefetch {
-                    crate::mail::prefetch::enqueue_prefetch(app_handle_pf.clone(), account.clone(), uid).await;
+                    crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
+                        app_handle_pf.clone(),
+                        account.clone(),
+                        crate::mail::body_prefetch_manager::PrefetchRequest { folder: "inbox".to_string(), uid },
+                        crate::mail::body_prefetch_manager::PrefetchPriority::Background,
+                    ).await;
                 }
             });
         }
     }
 
     Ok(pages)
+}
+
+#[tauri::command]
+pub async fn prefetch_messages(
+    app_handle: tauri::AppHandle,
+    requests: Vec<crate::mail::body_prefetch_manager::PrefetchRequest>,
+) -> Result<(), String> {
+    let account = get_active_account(&app_handle).ok_or("No active account")?;
+    
+    // Clear old background queue before queueing the new viewport items
+    crate::mail::body_prefetch_manager::PREFETCH_MANAGER.clear_background_queue().await;
+
+    for request in requests {
+        crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
+            app_handle.clone(),
+            account.clone(),
+            request,
+            crate::mail::body_prefetch_manager::PrefetchPriority::Background,
+        ).await;
+    }
+    
+    Ok(())
 }
 
 #[tauri::command]

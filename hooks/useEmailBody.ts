@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import { Attachment } from "@/lib/types";
 
@@ -53,8 +54,20 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
 
         fetchBody();
 
+        // Listen for background prefetch completion
+        const unlisten = listen('mail:body_cached', (event) => {
+            const payload = event.payload as { folder: string; uid: number };
+            const dbFolder = folder === "sent" ? "sent" : "inbox";
+            if (payload.folder === dbFolder && payload.uid === emailUid) {
+                // Background fetch finished for the email we are currently looking at!
+                // Re-fetch to grab the newly cached content from SQLite
+                fetchBody();
+            }
+        });
+
         return () => {
             isMounted = false;
+            unlisten.then(f => f());
         };
     }, [emailId, emailUid, folder]);
 
