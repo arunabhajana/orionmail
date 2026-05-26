@@ -83,6 +83,43 @@ const EmailList: React.FC<EmailListProps> = ({
         return () => clearTimeout(timer);
     }, [virtualItems, emails]);
 
+    const pullDistance = React.useRef(0);
+    const touchStart = React.useRef(0);
+
+    const handleWheel = (e: React.WheelEvent) => {
+        if (parentRef.current && parentRef.current.scrollTop <= 0 && e.deltaY < 0) {
+            pullDistance.current -= e.deltaY;
+            if (pullDistance.current > 150 && !isSyncing) {
+                pullDistance.current = 0;
+                onSync?.();
+            }
+        } else {
+            pullDistance.current = 0;
+        }
+    };
+
+    const handleTouchStart = (e: React.TouchEvent) => {
+        if (parentRef.current && parentRef.current.scrollTop <= 0) {
+            touchStart.current = e.touches[0].clientY;
+        } else {
+            touchStart.current = 0;
+        }
+    };
+
+    const handleTouchMove = (e: React.TouchEvent) => {
+        if (touchStart.current > 0 && parentRef.current && parentRef.current.scrollTop <= 0) {
+            const delta = e.touches[0].clientY - touchStart.current;
+            if (delta > 100 && !isSyncing) {
+                touchStart.current = 0;
+                onSync?.();
+            }
+        }
+    };
+
+    const handleTouchEnd = () => {
+        touchStart.current = 0;
+    };
+
     return (
         <main
             className={cn(
@@ -113,7 +150,14 @@ const EmailList: React.FC<EmailListProps> = ({
             </div>
 
             {/* 2. Scrollable List */}
-            <div ref={parentRef} className="flex-1 overflow-y-auto custom-scrollbar relative">
+            <div 
+                ref={parentRef} 
+                className="flex-1 overflow-y-auto custom-scrollbar relative"
+                onWheel={handleWheel}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+            >
                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
                     <AnimatePresence>
                         {virtualItems.map((virtualRow) => {

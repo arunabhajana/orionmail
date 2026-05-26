@@ -23,7 +23,7 @@ export default function MainLayout() {
     // --- New State for Folders & Stars ---
     const [currentFolder, setCurrentFolder] = useState<string>("inbox");
     const [emails, setEmails] = useState<Email[]>([]);
-    const { isSyncing, setIsSyncing, setSyncMessage, setUnreadCount } = useSync();
+    const { isSyncing, setIsSyncing, setSyncMessage, setUnreadCount, syncTriggerCount } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
     const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -314,6 +314,12 @@ export default function MainLayout() {
                 setIsSyncing(false);
             });
     };
+
+    useEffect(() => {
+        if (syncTriggerCount > 0) {
+            handleSync(false);
+        }
+    }, [syncTriggerCount]);
 
     const blockForInitialSync = async () => {
         // Since AuthContext (or another component) might have already triggered `sync_inbox`,

@@ -259,6 +259,7 @@ function DownloadManagerPopover() {
 // --- Main Component ---
 
 export default function Titlebar() {
+    const { isSyncing, triggerSync } = useSync();
     // Use state to safely access window object only on client
     const [appWindow, setAppWindow] = useState<TauriWindow | null>(null);
 
@@ -294,6 +295,18 @@ export default function Titlebar() {
 
             {/* Right: Window Controls */}
             <div className="justify-self-end flex items-center pr-1">
+                <button
+                    onClick={triggerSync}
+                    disabled={isSyncing}
+                    className={cn(
+                        "p-1.5 rounded-md transition-colors relative mr-1",
+                        "hover:bg-black/5 dark:hover:bg-white/10 text-foreground/70 dark:text-white/70"
+                    )}
+                    title="Manual Sync"
+                    style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                >
+                    <RefreshCw size={14} strokeWidth={2} className={cn(isSyncing && "animate-spin text-primary")} />
+                </button>
                 <DownloadManagerPopover />
                 <div className="flex gap-1">
                     <WindowControl
