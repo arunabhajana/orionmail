@@ -84,7 +84,8 @@ pub fn run() {
       show_in_folder,
       show_main_window,
       send_message,
-      search_contacts
+      search_contacts,
+      get_unread_counts
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

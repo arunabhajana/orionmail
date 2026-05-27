@@ -27,7 +27,7 @@ interface SidebarProps {
     onCompose: () => void;
     currentFolder?: string;
     onFolderSelect?: (folder: string) => void;
-    unreadCount?: number;
+    unreadCounts?: Record<string, number>;
 }
 
 // --- Constants ---
@@ -49,7 +49,7 @@ const TAG_ITEMS: TagConfig[] = [
 
 // --- Main Component ---
 
-const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, currentFolder, onFolderSelect, unreadCount }) => {
+const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, currentFolder, onFolderSelect, unreadCounts }) => {
     return (
         <aside
             className={cn(
@@ -76,7 +76,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, currentFolder, 
                             <NavItem
                                 key={item.id}
                                 {...item}
-                                badge={item.id === "inbox" && unreadCount && unreadCount > 0 ? unreadCount : item.badge}
+                                badge={unreadCounts?.[item.id] && unreadCounts[item.id] > 0 ? unreadCounts[item.id] : item.badge}
                                 highlight={currentFolder === item.id}
                                 onClick={() => onFolderSelect?.(item.id)}
                             />

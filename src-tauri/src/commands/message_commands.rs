@@ -275,3 +275,35 @@ pub async fn send_message(
 
     res
 }
+
+#[tauri::command]
+pub async fn get_unread_counts(app_handle: AppHandle) -> Result<std::collections::HashMap<String, u32>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db_path = crate::mail::database::get_db_path(&app_handle)?;
+        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+        let mut counts = std::collections::HashMap::new();
+
+        // 1. Unread counts for all folders
+        let mut stmt = conn.prepare("SELECT folder, COUNT(*) FROM messages WHERE seen = 0 GROUP BY folder").unwrap();
+        let rows = stmt.query_map([], |row| {
+            let folder: String = row.get(0)?;
+            let count: u32 = row.get(1)?;
+            Ok((folder, count))
+        }).unwrap();
+
+        for row in rows {
+            if let Ok((folder, count)) = row {
+                counts.insert(folder.to_lowercase(), count);
+            }
+        }
+
+        // 2. Unread count specifically for Starred
+        let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE seen = 0 AND flagged = 1").unwrap();
+        if let Ok(count) = stmt.query_row([], |row| row.get(0)) {
+            counts.insert("starred".to_string(), count);
+        }
+
+        Ok(counts)
+    }).await.map_err(|e| e.to_string())?
+}

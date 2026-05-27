@@ -23,7 +23,7 @@ export default function MainLayout() {
     // --- New State for Folders & Stars ---
     const [currentFolder, setCurrentFolder] = useState<string>("inbox");
     const [emails, setEmails] = useState<Email[]>([]);
-    const { isSyncing, setIsSyncing, setSyncMessage, setUnreadCount, syncTriggerCount } = useSync();
+    const { isSyncing, setIsSyncing, setSyncMessage, unreadCounts, setUnreadCounts, syncTriggerCount } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
     const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -52,9 +52,12 @@ export default function MainLayout() {
 
     // --- Global State Sync ---
     useEffect(() => {
-        const count = emails.filter(e => e.unread).length;
-        setUnreadCount(count);
-    }, [emails, setUnreadCount]);
+        invoke<Record<string, number>>('get_unread_counts')
+            .then((counts) => {
+                setUnreadCounts(counts);
+            })
+            .catch(console.error);
+    }, [emails, setUnreadCounts]);
 
     // --- Handlers ---
 
@@ -179,6 +182,12 @@ export default function MainLayout() {
     };
 
     const fetchCache = async (folderToFetch = currentFolder) => {
+        if (folderToFetch === "drafts" || folderToFetch === "trash") {
+            setEmails([]);
+            setHasMore(false);
+            return false;
+        }
+
         try {
             const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
             if (cached && cached.length > 0) {
@@ -201,6 +210,8 @@ export default function MainLayout() {
     };
 
     const refreshNewEmails = async (folderToFetch = currentFolder) => {
+        if (folderToFetch === "drafts" || folderToFetch === "trash") return;
+
         try {
             const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
             if (!cached || cached.length === 0) return;
@@ -240,7 +251,7 @@ export default function MainLayout() {
 
     const loadMoreEmails = async () => {
         const currentEmails = emailsRef.current;
-        if (isLoadingMore || !hasMore || currentEmails.length === 0) return;
+        if (isLoadingMore || !hasMore || currentEmails.length === 0 || currentFolder === "drafts" || currentFolder === "trash") return;
         setIsLoadingMore(true);
         try {
             const lastEmail = currentEmails[currentEmails.length - 1];
@@ -270,7 +281,7 @@ export default function MainLayout() {
     };
 
     const handleSync = (isBackground = false) => {
-        if (isSyncing) return Promise.resolve();
+        if (isSyncing || currentFolder === "drafts" || currentFolder === "trash") return Promise.resolve();
         setIsSyncing(true);
         setSyncError(null);
 
@@ -528,7 +539,7 @@ export default function MainLayout() {
                 onCompose={() => setIsComposeOpen(true)}
                 currentFolder={currentFolder}
                 onFolderSelect={setCurrentFolder}
-                unreadCount={emails.filter(e => e.unread && e.folder === "inbox").length}
+                unreadCounts={unreadCounts}
             />
 
             {/* Column 2: Message List */}
@@ -545,6 +556,7 @@ export default function MainLayout() {
                 hasMore={hasMore}
                 isLoadingMore={isLoadingMore}
                 listRef={emailListContainerRef}
+                currentFolder={currentFolder}
             />
 
             {/* Column 3: Reading Pane */}

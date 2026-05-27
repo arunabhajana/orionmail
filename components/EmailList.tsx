@@ -28,6 +28,7 @@ interface EmailListProps {
     hasMore?: boolean;
     isLoadingMore?: boolean;
     listRef?: React.Ref<HTMLDivElement>;
+    currentFolder?: string;
 }
 
 // --- Constants ---
@@ -46,7 +47,8 @@ const EmailList: React.FC<EmailListProps> = ({
     onLoadMore,
     hasMore,
     isLoadingMore,
-    listRef
+    listRef,
+    currentFolder
 }) => {
     const { parentRef, rowVirtualizer, virtualItems } = useVirtualEmailList({
         itemCount: emails.length,
@@ -149,15 +151,20 @@ const EmailList: React.FC<EmailListProps> = ({
                 <FilterTabs />
             </div>
 
-            {/* 2. Scrollable List */}
-            <div 
-                ref={parentRef} 
-                className="flex-1 overflow-y-auto custom-scrollbar relative"
-                onWheel={handleWheel}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-            >
+            {/* 2. Scrollable List or Placeholder */}
+            {(currentFolder === "drafts" || currentFolder === "trash") ? (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground/50 italic px-4 text-center">
+                    This folder will be implemented soon!
+                </div>
+            ) : (
+                <div 
+                    ref={parentRef} 
+                    className="flex-1 overflow-y-auto custom-scrollbar relative"
+                    onWheel={handleWheel}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                >
                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
                     <AnimatePresence>
                         {virtualItems.map((virtualRow) => {
@@ -194,6 +201,7 @@ const EmailList: React.FC<EmailListProps> = ({
                     </div>
                 )}
             </div>
+            )}
         </main>
     );
 };

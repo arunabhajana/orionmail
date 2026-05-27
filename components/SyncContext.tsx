@@ -7,8 +7,8 @@ interface SyncContextType {
     setIsSyncing: (value: boolean) => void;
     syncMessage: string | null;
     setSyncMessage: (msg: string | null) => void;
-    unreadCount: number;
-    setUnreadCount: (value: number) => void;
+    unreadCounts: Record<string, number>;
+    setUnreadCounts: (value: Record<string, number>) => void;
     syncTriggerCount: number;
     triggerSync: () => void;
 }
@@ -18,7 +18,7 @@ const SyncContext = createContext<SyncContextType | undefined>(undefined);
 export function SyncProvider({ children }: { children: ReactNode }) {
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncMessage, setSyncMessage] = useState<string | null>(null);
-    const [unreadCount, setUnreadCount] = useState(0);
+    const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
     const [syncTriggerCount, setSyncTriggerCount] = useState(0);
 
     const triggerSync = () => setSyncTriggerCount(c => c + 1);
@@ -29,8 +29,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
             setIsSyncing,
             syncMessage,
             setSyncMessage,
-            unreadCount,
-            setUnreadCount,
+            unreadCounts,
+            setUnreadCounts,
             syncTriggerCount,
             triggerSync
         }}>
