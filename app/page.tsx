@@ -11,7 +11,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!loading && user) {
-      router.push("/inbox");
+      router.replace("/inbox");
     }
   }, [user, loading, router]);
 

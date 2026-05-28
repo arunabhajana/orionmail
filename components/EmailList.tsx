@@ -159,7 +159,7 @@ const EmailList: React.FC<EmailListProps> = ({
             ) : (
                 <div 
                     ref={parentRef} 
-                    className="flex-1 overflow-y-auto custom-scrollbar relative"
+                    className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar relative"
                     onWheel={handleWheel}
                     onTouchStart={handleTouchStart}
                     onTouchMove={handleTouchMove}

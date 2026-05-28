@@ -43,7 +43,7 @@ export default function RootLayout({
                 <DownloadProvider>
                   <div className="app-window">
                     <TitlebarWrapper />
-                    <div className="pt-[30px] h-full w-full">
+                    <div className="pt-[30px] h-full w-full overflow-hidden">
                       {children}
                     </div>
                   </div>
