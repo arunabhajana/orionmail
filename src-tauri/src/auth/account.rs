@@ -48,6 +48,7 @@ pub struct Account {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserProfile {
+    pub id: String,
     pub email: String,
     pub name: String,
     pub picture: String,
@@ -57,6 +58,7 @@ pub struct UserProfile {
 impl From<Account> for UserProfile {
     fn from(account: Account) -> Self {
         Self {
+            id: account.id,
             email: account.email,
             name: account.profile_name,
             picture: account.profile_picture,

@@ -30,7 +30,7 @@ const ProfileDropdown = ({ onClose }: { onClose: () => void }) => {
                 <div className="h-px bg-black/5 my-1" />
                 <div
                     onClick={() => {
-                        if (user) logout(user.email);
+                        if (user) logout(user.id);
                         onClose();
                     }}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-600 hover:bg-red-500/10 transition-colors cursor-pointer"

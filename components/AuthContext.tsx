@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useRouter } from "next/navigation";
 
 export interface User {
+    id: string;
     email: string;
     name: string;
     picture: string;
@@ -53,17 +54,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         try {
             const result = await invoke<{ user: User | null; needs_refresh: boolean }>("bootstrap_accounts");
 
-            if (result.user) {
+            if (result.needs_refresh) {
+                // Token is invalid or expired and couldn't be refreshed. Force user to sign in again.
+                setUser(null);
+                setNeedsRefresh(true);
+                localStorage.removeItem("orion_user");
+                if (result.user?.id) {
+                    await invoke("logout_user", { accountId: result.user.id }).catch(() => {});
+                }
+                router.push("/");
+            } else if (result.user) {
                 setUser(result.user);
-                setNeedsRefresh(result.needs_refresh);
+                setNeedsRefresh(false);
+                // Also update local storage with the freshest info
+                localStorage.setItem("orion_user", JSON.stringify(result.user));
             } else {
+                // No active user returned from backend
                 const storedUser = localStorage.getItem("orion_user");
                 if (storedUser) {
+                    // Try to fall back to local storage if backend didn't return one (rare edge case)
                     setUser(JSON.parse(storedUser));
+                } else {
+                    router.push("/");
                 }
             }
         } catch (error) {
             console.error("Auth: Bootstrap failed", error);
+            router.push("/");
         } finally {
             setLoading(false);
         }

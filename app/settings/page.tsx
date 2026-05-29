@@ -92,7 +92,7 @@ export default function SettingsPage() {
                         </button>
                         <button
                             onClick={() => {
-                                if (user) logout(user.email);
+                                if (user) logout(user.id);
                             }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all duration-200"
                         >
