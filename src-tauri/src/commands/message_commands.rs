@@ -59,6 +59,39 @@ pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String
 }
 
 #[tauri::command]
+pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, folder: Option<String>) -> Result<(), String> {
+    let account = get_active_account(&app_handle).ok_or("No active account")?;
+    let folder_str = folder.map(|f| f.to_lowercase()).unwrap_or_else(|| "inbox".to_string());
+
+    if folder_str != "inbox" {
+        let _ = tokio::task::spawn_blocking(move || {
+            database::set_message_seen(&app_handle, &folder_str, uid, should_read)
+        }).await;
+        return Ok(());
+    }
+
+    // Update IMAP
+    let flag_cmd = if should_read {
+        "+FLAGS.SILENT (\\Seen)"
+    } else {
+        "-FLAGS.SILENT (\\Seen)"
+    };
+
+    execute_with_session(&account, SessionKind::Primary, move |session| {
+        session.uid_store(uid.to_string(), flag_cmd)
+            .map_err(|e| format!("IMAP Error toggling read: {}", e))?;
+        Ok::<(), String>(())
+    }).await?;
+
+    // Update SQLite
+    let _ = tokio::task::spawn_blocking(move || {
+        database::set_message_seen(&app_handle, "inbox", uid, should_read)
+    }).await;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn toggle_star(app_handle: AppHandle, uid: u32, should_star: bool, folder: Option<String>) -> Result<(), String> {
     let account = get_active_account(&app_handle).ok_or("No active account")?;
     let folder_str = folder.map(|f| f.to_lowercase()).unwrap_or_else(|| "inbox".to_string());

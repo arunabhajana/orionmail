@@ -255,7 +255,7 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
 }
 
 pub fn load_cached_messages(app_handle: &AppHandle, limit: usize) -> Result<Vec<MessageHeader>, String> {
-    load_messages_page(app_handle, "INBOX", None, limit as u32)
+    load_messages_page(app_handle, "inbox", None, limit as u32)
 }
 
 pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Option<u32>, limit: u32) -> Result<Vec<MessageHeader>, String> {

@@ -78,6 +78,7 @@ pub fn run() {
       get_messages_page,
       mark_as_read,
       prefetch_messages,
+      toggle_read,
       toggle_star,
       delete_message,
       download_attachment,

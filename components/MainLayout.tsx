@@ -89,6 +89,34 @@ export default function MainLayout() {
         }
     };
 
+    const toggleRead = async (emailId: string) => {
+        const target = emails.find(e => e.id === emailId);
+        if (!target) return;
+
+        const newReadState = !target.unread; // if it was unread, it becomes read, i.e., should_read = true.
+
+        // Optimistic Update
+        setEmails(prev => prev.map(email =>
+            email.id === emailId ? { ...email, unread: !newReadState } : email
+        ));
+
+        try {
+            const folderName = target.folder === "sent" ? "sent" : "INBOX";
+            await invoke('toggle_read', { uid: target.uid, shouldRead: newReadState, folder: folderName });
+        } catch (err) {
+            console.error("Failed to toggle read", err);
+            if (String(err).includes("No active account")) {
+                localStorage.removeItem("orion_user");
+                window.location.href = "/";
+                return;
+            }
+            // Rollback
+            setEmails(prev => prev.map(email =>
+                email.id === emailId ? { ...email, unread: target.unread } : email
+            ));
+        }
+    };
+
     const markAsRead = async (emailId: string) => {
         const target = emails.find(e => e.id === emailId);
         if (!target || !target.unread) return;
@@ -161,14 +189,20 @@ export default function MainLayout() {
 
     const formatEmailFromMessage = (msg: any): Email => {
         const folder = msg.folder?.toLowerCase() === "sent" ? "sent" : "inbox";
+        let senderName = msg.from.split('<')[0].trim();
+        if (!senderName) {
+            const emailMatch = msg.from.match(/<([^>]+)>/);
+            senderName = emailMatch ? emailMatch[1].split('@')[0] : msg.from;
+        }
+
         return {
             id: `${folder}-${msg.uid}`,
             uid: msg.uid,
-            sender: msg.from.split('<')[0].trim() || msg.from,
+            sender: senderName,
             senderEmail: msg.from,
             subject: msg.subject || '(No Subject)',
             preview: msg.snippet?.trim() || msg.subject?.substring(0, 100) || 'No preview available',
-            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.from.split('<')[0].trim() || msg.from)}&background=random`,
+            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`,
             time: formatEmailTime(msg.date * 1000),
             date: new Date(msg.date * 1000).toLocaleString(),
             timestamp: msg.date * 1000,
@@ -549,6 +583,7 @@ export default function MainLayout() {
                 selectedEmailId={selectedEmailId}
                 onSelectEmail={(id) => setSelectedEmailId(id)}
                 onToggleStar={toggleStar}
+                onToggleRead={toggleRead}
                 onDeleteMessage={deleteMessage}
                 onSync={handleSync}
                 isSyncing={isSyncing}

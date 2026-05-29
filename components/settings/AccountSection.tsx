@@ -41,9 +41,11 @@ export const AccountSection = () => {
             <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
                 <div className="flex items-start gap-6">
                     {user?.picture ? (
-                        <div
-                            className="w-24 h-24 rounded-full bg-cover bg-center border-4 border-white/20 shadow-xl shrink-0"
-                            style={{ backgroundImage: `url('${user.picture}')` }}
+                        <img
+                            src={user.picture}
+                            referrerPolicy="no-referrer"
+                            className="w-24 h-24 rounded-full object-cover border-4 border-white/20 shadow-xl shrink-0"
+                            alt="User Avatar"
                         />
                     ) : (
                         <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary to-primary/60 border-4 border-white/20 dark:border-white/10 shadow-xl flex items-center justify-center shrink-0">

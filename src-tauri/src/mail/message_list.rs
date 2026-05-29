@@ -130,7 +130,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                     };
 
                     messages.push(MessageHeader {
-                        folder: "INBOX".to_string(),
+                        folder: "inbox".to_string(),
                         uid: actual_uid,
                         uid_validity,
                         subject,

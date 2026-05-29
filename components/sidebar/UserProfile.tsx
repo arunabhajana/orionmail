@@ -87,10 +87,11 @@ export const UserProfile = memo(() => {
                 )}
             >
                 {user.picture ? (
-                    <div
-                        className="size-10 rounded-full bg-cover bg-center border border-white/40 shadow-sm shrink-0"
-                        style={{ backgroundImage: `url('${user.picture}')` }}
-                        aria-label="User Avatar"
+                    <img
+                        src={user.picture}
+                        referrerPolicy="no-referrer"
+                        className="size-10 rounded-full object-cover border border-white/40 shadow-sm shrink-0"
+                        alt="User Avatar"
                     />
                 ) : (
                     <div className="size-10 rounded-full bg-primary/10 border border-white/40 flex items-center justify-center text-primary font-bold text-sm shrink-0">
