@@ -64,10 +64,19 @@ npm run tauri dev
 
 ## Project Structure
 
-*   `app/`: Contains the Next.js App Router pages and layouts.
-*   `components/`: Houses reusable React UI components (e.g., Settings modules).
+### Frontend (Next.js & React)
+*   `app/`: Contains the Next.js App Router pages and layouts, handling routing and core views.
+*   `components/`: Houses reusable React UI components (e.g., Settings modules, Email list items), styled with Tailwind CSS.
+*   `hooks/`: Custom React hooks for frontend state management and encapsulating side effects.
 *   `lib/`: Includes utility functions (like `cn()`) and data providers.
-*   `src-tauri/`: Manages the Rust-based Tauri configuration, database access, and backend sync logic.
+*   `public/`: Static assets such as images and icons.
+
+### Backend (Tauri & Rust)
+*   `src-tauri/`: Manages the Rust-based Tauri configuration, local database access, and core backend logic.
+    *   `src/auth/`: Handles secure authentication flows (e.g., Google OAuth).
+    *   `src/commands/`: Defines Tauri IPC (Inter-Process Communication) commands exposed to the frontend.
+    *   `src/contacts/`: Manages user contacts and address book functionality.
+    *   `src/mail/`: Core email processing module, handling IMAP/SMTP synchronization, email parsing, and local storage management.
 
 ## Contributing
 
