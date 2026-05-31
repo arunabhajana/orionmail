@@ -1,46 +1,80 @@
 "use client";
 
-import React, { memo } from 'react';
-import { motion } from 'framer-motion';
-import { File, Download, FileText, Image as ImageIcon, FileArchive, FileCode, Video, Music, Presentation, Table, FileSpreadsheet, FileAudio, FileVideo, FileType } from 'lucide-react';
+import React, { memo, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { File, Download, FileText, Image as ImageIcon, FileArchive, FileCode, Video, Music, Presentation, Table, FileSpreadsheet, FileAudio, FileVideo, FileType, Check, Copy } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { cn } from '@/lib/utils';
 import { Email, Attachment } from '@/lib/types';
 import { useDownloads } from '@/components/DownloadContext';
 
-export const MessageHeader = memo(({ email }: { email: Email }) => (
-    <header className="mb-8">
-        <motion.h1
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-2xl font-bold tracking-tight text-foreground dark:text-white/90 mb-6 leading-tight"
-        >
-            {email.subject}
-        </motion.h1>
-        <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-                <div
-                    className="w-12 h-12 rounded-full bg-cover bg-center border border-border"
-                    style={{ backgroundImage: `url('${email?.avatar || ""}')` }}
-                />
-                <div>
-                    <div className="flex items-center gap-2">
-                        <span className="font-bold tracking-tight text-foreground dark:text-white/90">{email.sender}</span>
-                        <span className="text-muted-foreground dark:text-white/50 text-sm">&lt;{email.senderEmail}&gt;</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-sm text-muted-foreground dark:text-white/50">To:</span>
-                        <span className="text-sm font-medium text-foreground/80 dark:text-white/70">Arunabha Jana</span>
+export const MessageHeader = memo(({ email }: { email: Email }) => {
+    const [showToast, setShowToast] = useState(false);
+
+    const handleCopyEmail = () => {
+        if (email.senderEmail) {
+            // Extract just the email address if it's in the format "Name" <email@domain.com>
+            const extractedEmail = email.senderEmail.match(/<([^>]+)>/)?.[1] || email.senderEmail;
+            navigator.clipboard.writeText(extractedEmail.trim());
+            setShowToast(true);
+            setTimeout(() => setShowToast(false), 2000);
+        }
+    };
+
+    return (
+        <header className="mb-8 relative">
+            <motion.h1
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-2xl font-bold tracking-tight text-foreground dark:text-white/90 mb-6 leading-tight"
+            >
+                {email.subject}
+            </motion.h1>
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div
+                        className="w-12 h-12 rounded-full bg-cover bg-center border border-border"
+                        style={{ backgroundImage: `url('${email?.avatar || ""}')` }}
+                    />
+                    <div>
+                        <div className="relative">
+                            <div 
+                                onClick={handleCopyEmail}
+                                className="flex items-center gap-2 cursor-pointer group rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-colors px-2 py-1 -ml-2 select-none"
+                                title="Click to copy email address"
+                            >
+                                <span className="font-bold tracking-tight text-foreground dark:text-white/90 group-hover:text-primary transition-colors">{email.sender}</span>
+                                <span className="text-muted-foreground dark:text-white/50 text-sm group-hover:text-primary/70 transition-colors">&lt;{email.senderEmail}&gt;</span>
+                                <Copy className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 text-primary transition-opacity" />
+                            </div>
+                            <AnimatePresence>
+                                {showToast && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 5, scale: 0.95 }}
+                                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                                        exit={{ opacity: 0, y: -5, scale: 0.95 }}
+                                        className="absolute left-0 -top-8 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/80 dark:bg-white/90 text-white dark:text-black backdrop-blur-md shadow-lg"
+                                    >
+                                        <Check className="w-3.5 h-3.5" />
+                                        <span className="text-xs font-semibold tracking-tight">Email copied</span>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 px-0">
+                            <span className="text-sm text-muted-foreground dark:text-white/50">To:</span>
+                            <span className="text-sm font-medium text-foreground/80 dark:text-white/70">Arunabha Jana</span>
+                        </div>
                     </div>
                 </div>
+                <span className="text-sm font-medium text-muted-foreground dark:text-white/50">
+                    {email.date}
+                </span>
             </div>
-            <span className="text-sm font-medium text-muted-foreground dark:text-white/50">
-                {email.date}
-            </span>
-        </div>
-    </header>
-));
+        </header>
+    );
+});
 MessageHeader.displayName = "MessageHeader";
 
 const getFileIcon = (mime: string | undefined) => {
