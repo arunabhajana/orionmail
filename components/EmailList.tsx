@@ -1,11 +1,11 @@
 "use client";
 
 import React, { memo } from 'react';
-import { Search, Star, RefreshCw } from 'lucide-react';
+import { Search, Star, RefreshCw, Mailbox, CheckCircle2, Flag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { SearchBar, FilterTabs } from './inbox/EmailListHeader';
+import { SearchBar, FilterTabs, FilterType } from './inbox/EmailListHeader';
 import { EmailListItem } from './inbox/EmailListItem';
 import { useVirtualEmailList } from '@/hooks/useVirtualEmailList';
 import OrbitLoader from './inbox/OrbitLoader';
@@ -52,8 +52,22 @@ const EmailList: React.FC<EmailListProps> = ({
     listRef,
     currentFolder
 }) => {
+    const [currentFilter, setCurrentFilter] = React.useState<FilterType>('all');
+
+    React.useEffect(() => {
+        setCurrentFilter('all');
+    }, [currentFolder]);
+
+    const displayedEmails = React.useMemo(() => {
+        switch (currentFilter) {
+            case 'unread': return emails.filter(e => e.unread);
+            case 'flagged': return emails.filter(e => e.starred);
+            default: return emails;
+        }
+    }, [emails, currentFilter]);
+
     const { parentRef, rowVirtualizer, virtualItems } = useVirtualEmailList({
-        itemCount: emails.length,
+        itemCount: displayedEmails.length,
         hasMore,
         isLoadingMore,
         onLoadMore,
@@ -73,7 +87,7 @@ const EmailList: React.FC<EmailListProps> = ({
             
             const requests = [];
             for (let i = startIdx; i <= endIdx; i++) {
-                const email = emails[i];
+                const email = displayedEmails[i];
                 if (email) {
                     requests.push({ folder: email.folder, uid: email.uid });
                 }
@@ -85,7 +99,7 @@ const EmailList: React.FC<EmailListProps> = ({
         }, 300); // 300ms debounce
 
         return () => clearTimeout(timer);
-    }, [virtualItems, emails]);
+    }, [virtualItems, displayedEmails]);
 
     const pullDistance = React.useRef(0);
     const touchStart = React.useRef(0);
@@ -150,14 +164,51 @@ const EmailList: React.FC<EmailListProps> = ({
                         <RefreshCw className={cn("w-4 h-4 text-muted-foreground", isSyncing && "animate-spin text-primary")} />
                     </button>
                 </div>
-                <FilterTabs />
+                <FilterTabs currentFilter={currentFilter} onFilterChange={setCurrentFilter} />
             </div>
 
             {/* 2. Scrollable List or Placeholder */}
             {(currentFolder === "drafts" || currentFolder === "trash") ? (
-                <div className="flex-1 flex items-center justify-center text-muted-foreground/50 italic px-4 text-center">
-                    This folder will be implemented soon!
-                </div>
+                <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} className="flex-1 flex flex-col items-center justify-center text-center px-4">
+                    <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                        <Mailbox className="w-10 h-10 text-primary opacity-80" />
+                    </div>
+                    <h3 className="text-xl font-semibold text-foreground mb-2">Folder in progress</h3>
+                    <p className="text-sm text-muted-foreground max-w-[250px]">
+                        This folder will be implemented soon!
+                    </p>
+                </motion.div>
+            ) : emails.length === 0 && !isSyncing ? (
+                <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} className="flex-1 flex flex-col items-center justify-center text-center px-4">
+                    <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                        <Mailbox className="w-10 h-10 text-primary opacity-80" />
+                    </div>
+                    <h3 className="text-xl font-semibold text-foreground mb-2">No messages here</h3>
+                    <p className="text-sm text-muted-foreground max-w-[250px]">
+                        Your {currentFolder} is completely empty.
+                    </p>
+                </motion.div>
+            ) : displayedEmails.length === 0 && !isSyncing ? (
+                <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} className="flex-1 flex flex-col items-center justify-center text-center px-4">
+                    <div className={cn(
+                        "w-20 h-20 rounded-full flex items-center justify-center mb-6",
+                        currentFilter === 'unread' ? "bg-green-500/10" : "bg-amber-500/10"
+                    )}>
+                        {currentFilter === 'unread' ? (
+                            <CheckCircle2 className="w-10 h-10 text-green-500 opacity-80" />
+                        ) : (
+                            <Flag className="w-10 h-10 text-amber-500 opacity-80" />
+                        )}
+                    </div>
+                    <h3 className="text-xl font-semibold text-foreground mb-2">
+                        {currentFilter === 'unread' ? "All caught up!" : "No flagged messages"}
+                    </h3>
+                    <p className="text-sm text-muted-foreground max-w-[250px]">
+                        {currentFilter === 'unread' 
+                            ? "You've read all the messages in this view." 
+                            : "Star some messages to see them here for quick access."}
+                    </p>
+                </motion.div>
             ) : (
                 <div 
                     ref={parentRef} 
@@ -170,7 +221,7 @@ const EmailList: React.FC<EmailListProps> = ({
                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
                     <AnimatePresence>
                         {virtualItems.map((virtualRow) => {
-                            const email = emails[virtualRow.index];
+                            const email = displayedEmails[virtualRow.index];
                             return (
                                 <div
                                     key={email.id}

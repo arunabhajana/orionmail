@@ -20,15 +20,46 @@ export const SearchBar = memo(() => (
 ));
 SearchBar.displayName = "SearchBar";
 
-export const FilterTabs = memo(() => (
+export type FilterType = 'all' | 'unread' | 'flagged';
+
+interface FilterTabsProps {
+    currentFilter: FilterType;
+    onFilterChange: (filter: FilterType) => void;
+}
+
+export const FilterTabs = memo(({ currentFilter, onFilterChange }: FilterTabsProps) => (
     <div className="flex gap-4 border-b border-black/5 dark:border-white/10 pb-1">
-        <button className="text-foreground dark:text-white/90 border-b-2 border-primary pb-2 text-sm font-semibold">
+        <button 
+            onClick={() => onFilterChange('all')}
+            className={cn(
+                "pb-2 text-sm transition-colors",
+                currentFilter === 'all' 
+                    ? "text-foreground dark:text-white/90 border-b-2 border-primary font-semibold" 
+                    : "text-muted-foreground dark:text-white/60 font-medium hover:text-foreground dark:hover:text-white/90"
+            )}
+        >
             All
         </button>
-        <button className="text-muted-foreground dark:text-white/60 pb-2 text-sm font-medium hover:text-foreground dark:hover:text-white/90 transition-colors">
+        <button 
+            onClick={() => onFilterChange('unread')}
+            className={cn(
+                "pb-2 text-sm transition-colors",
+                currentFilter === 'unread' 
+                    ? "text-foreground dark:text-white/90 border-b-2 border-primary font-semibold" 
+                    : "text-muted-foreground dark:text-white/60 font-medium hover:text-foreground dark:hover:text-white/90"
+            )}
+        >
             Unread
         </button>
-        <button className="text-muted-foreground dark:text-white/60 pb-2 text-sm font-medium hover:text-foreground dark:hover:text-white/90 transition-colors">
+        <button 
+            onClick={() => onFilterChange('flagged')}
+            className={cn(
+                "pb-2 text-sm transition-colors",
+                currentFilter === 'flagged' 
+                    ? "text-foreground dark:text-white/90 border-b-2 border-primary font-semibold" 
+                    : "text-muted-foreground dark:text-white/60 font-medium hover:text-foreground dark:hover:text-white/90"
+            )}
+        >
             Flagged
         </button>
     </div>
