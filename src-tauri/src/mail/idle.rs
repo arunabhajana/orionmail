@@ -50,8 +50,14 @@ pub fn start_idle_listener(app_handle: AppHandle, account: Account) {
 
             log::info!("IMAP IDLE: Triggering auto-sync...");
 
-            if let Err(e) = sync_inbox(&app_clone, account_clone.clone()).await {
-                log::error!("IMAP IDLE: Auto-sync failed: {}", e);
+            match sync_inbox(&app_clone, account_clone.clone()).await {
+                Ok(_) => {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+                    let _ = crate::mail::database::update_global_idle_time(&app_clone, now);
+                }
+                Err(e) => {
+                    log::error!("IMAP IDLE: Auto-sync failed: {}", e);
+                }
             }
         }
 

@@ -412,9 +412,15 @@ export default function MainLayout() {
             if (key === 'starred') return acc; // starred is a duplicate of unread state
             return acc + (val || 0);
         }, 0);
-        
-        invoke('update_tray_tooltip', { count: total }).catch(console.error);
     }, [unreadCounts]);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            invoke('sync_folder_command', { folder: 'inbox' }).catch(console.error);
+            fetchUnreadCounts();
+        }, 60000);
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         let unlistenSync: (() => void) | undefined;

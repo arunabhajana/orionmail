@@ -16,10 +16,6 @@ use std::sync::Mutex;
 use crate::config::{AppSettings, get_app_settings, set_app_settings, was_launched_minimized};
 use tauri_plugin_autostart::MacosLauncher;
 
-#[tauri::command]
-fn update_tray_tooltip(app_handle: tauri::AppHandle, count: u32) {
-    crate::tray_state::set_unread_count(&app_handle, count);
-}
 
 #[cfg(target_os = "windows")]
 use window_vibrancy::apply_mica;
@@ -187,10 +183,10 @@ pub fn run() {
       send_message,
       search_contacts,
       get_unread_counts,
+      get_sync_diagnostics,
       get_app_settings,
       set_app_settings,
-      was_launched_minimized,
-      update_tray_tooltip
+      was_launched_minimized
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

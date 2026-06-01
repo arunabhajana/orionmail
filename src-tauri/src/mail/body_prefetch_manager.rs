@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use once_cell::sync::Lazy;
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{AppHandle, Emitter};
 use crate::auth::account::Account;
 use crate::mail::database;
 use crate::mail::message_body;

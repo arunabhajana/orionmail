@@ -2,7 +2,7 @@ use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 use std::sync::Mutex;
 use std::time::{Instant, Duration};
-use std::collections::{HashSet, HashMap};
+use std::collections::HashMap;
 use once_cell::sync::Lazy;
 
 struct NotificationState {
@@ -54,6 +54,11 @@ pub fn show_new_emails(app: &AppHandle, new_emails: &[(String, String, u32)]) {
     
     let count = deduped_emails.len();
     
+    let current_timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let _ = crate::mail::database::update_global_notification_time(app, current_timestamp);
+
     if count >= 4 {
         // Summary notification
         let mut body = String::new();

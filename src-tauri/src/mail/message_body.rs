@@ -362,9 +362,9 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     }
 
     // Prepare variables for the raw fetch payload
-    let fetched_target_part = String::new();
-    let fetched_full_payload: Vec<u8> = Vec::new();
-    let fetched_attachments: Vec<MessageAttachment> = Vec::new();
+    let _fetched_target_part = String::new();
+    let _fetched_full_payload: Vec<u8> = Vec::new();
+    let _fetched_attachments: Vec<MessageAttachment> = Vec::new();
 
     // -- SEMAPHORE ACQUIRE (NETWORK BOUNDARY) --
     let _permit = CONCURRENT_FETCH_LIMIT.clone().acquire_owned().await.map_err(|e| e.to_string())?;

@@ -14,6 +14,14 @@ pub struct FolderSyncState {
     pub last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct GlobalSyncState {
+    pub last_sync_at: Option<i64>,
+    pub last_successful_idle_at: Option<i64>,
+    pub last_notification_at: Option<i64>,
+    pub last_sync_error: Option<String>,
+}
+
 pub fn get_db_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let app_dir = app_handle
         .path()
@@ -162,6 +170,17 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             sync_in_progress INTEGER DEFAULT 0,
             last_full_sync_at INTEGER,
             last_error TEXT
+        )",
+        (),
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS global_sync_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_sync_at INTEGER,
+            last_successful_idle_at INTEGER,
+            last_notification_at INTEGER,
+            last_sync_error TEXT
         )",
         (),
     ).map_err(|e| e.to_string())?;
@@ -577,4 +596,76 @@ pub fn insert_sent_message(
     ).map_err(|e| format!("Failed to insert sent message: {}", e))?;
 
     Ok(())
+}
+
+pub fn get_global_sync_state(app_handle: &AppHandle) -> Result<GlobalSyncState, String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare("SELECT last_sync_at, last_successful_idle_at, last_notification_at, last_sync_error FROM global_sync_state WHERE id = 1").unwrap();
+    let state = stmt.query_row([], |row| {
+        Ok(GlobalSyncState {
+            last_sync_at: row.get(0)?,
+            last_successful_idle_at: row.get(1)?,
+            last_notification_at: row.get(2)?,
+            last_sync_error: row.get(3)?,
+        })
+    }).unwrap_or_default();
+
+    Ok(state)
+}
+
+pub fn update_global_sync_time(app_handle: &AppHandle, timestamp: Option<i64>, error: Option<String>) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    if timestamp.is_some() {
+        conn.execute(
+            "INSERT INTO global_sync_state (id, last_sync_at, last_sync_error) 
+             VALUES (1, ?1, ?2) 
+             ON CONFLICT(id) DO UPDATE SET last_sync_at = ?1, last_sync_error = ?2",
+            rusqlite::params![timestamp, error],
+        ).map_err(|e| e.to_string())?;
+    } else {
+        conn.execute(
+            "INSERT INTO global_sync_state (id, last_sync_error) 
+             VALUES (1, ?1) 
+             ON CONFLICT(id) DO UPDATE SET last_sync_error = ?1",
+            rusqlite::params![error],
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+pub fn update_global_idle_time(app_handle: &AppHandle, timestamp: i64) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO global_sync_state (id, last_successful_idle_at) 
+         VALUES (1, ?1) 
+         ON CONFLICT(id) DO UPDATE SET last_successful_idle_at = ?1",
+        rusqlite::params![timestamp],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn update_global_notification_time(app_handle: &AppHandle, timestamp: i64) -> Result<(), String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO global_sync_state (id, last_notification_at) 
+         VALUES (1, ?1) 
+         ON CONFLICT(id) DO UPDATE SET last_notification_at = ?1",
+        rusqlite::params![timestamp],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn get_global_unread_count(app_handle: &AppHandle) -> Result<u32, String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE seen = 0").unwrap();
+    let count: u32 = stmt.query_row([], |row| row.get(0)).unwrap_or(0);
+    Ok(count)
 }

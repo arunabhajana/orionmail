@@ -2,7 +2,6 @@ use crate::auth::account::{Account, MailProvider};
 use crate::auth::oauth::refresh_google_token;
 use crate::auth::session::save_account;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
-use lettre::transport::smtp::client::AsyncSmtpConnection;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use lettre::message::{MultiPart, header::MessageId};
 use tauri::AppHandle;

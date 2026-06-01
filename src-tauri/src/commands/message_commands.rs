@@ -340,3 +340,35 @@ pub async fn get_unread_counts(app_handle: AppHandle) -> Result<std::collections
         Ok(counts)
     }).await.map_err(|e| e.to_string())?
 }
+
+#[derive(serde::Serialize)]
+pub struct DiagnosticsSyncStatus {
+    pub unread_count: u32,
+    pub sync_in_progress: bool,
+    pub last_sync_at: Option<i64>,
+    pub last_successful_idle_at: Option<i64>,
+    pub last_notification_at: Option<i64>,
+    pub last_sync_error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_sync_diagnostics(app_handle: AppHandle) -> Result<DiagnosticsSyncStatus, String> {
+    tokio::task::spawn_blocking(move || {
+        let global_state = crate::mail::database::get_global_sync_state(&app_handle).unwrap_or_default();
+        let unread = crate::mail::database::get_global_unread_count(&app_handle).unwrap_or(0);
+        
+        let mut in_progress = false;
+        if let Ok(Some(inbox_state)) = crate::mail::database::get_folder_sync_state(&app_handle, "inbox") {
+            in_progress = inbox_state.sync_in_progress;
+        }
+
+        Ok(DiagnosticsSyncStatus {
+            unread_count: unread,
+            sync_in_progress: in_progress,
+            last_sync_at: global_state.last_sync_at,
+            last_successful_idle_at: global_state.last_successful_idle_at,
+            last_notification_at: global_state.last_notification_at,
+            last_sync_error: global_state.last_sync_error,
+        })
+    }).await.map_err(|e| e.to_string())?
+}

@@ -1,7 +1,6 @@
 use crate::auth::account::Account;
 use crate::mail::message_list::MessageHeader;
 use crate::mail::database;
-use crate::mail::body_prefetch_manager;
 use crate::mail::notifications;
 use crate::mail::folder::MailFolder;
 use mailparse::parse_mail;
@@ -196,7 +195,12 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
                 }
             }
 
-            crate::tray_state::set_last_sync_time(&app_handle_clone);
+            if folder == MailFolder::Inbox {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+                let _ = crate::mail::database::update_global_sync_time(&app_handle_clone, Some(now), None);
+                crate::tray_state::set_last_sync_time(&app_handle_clone);
+                crate::tray_state::refresh_unread_count_from_db(&app_handle_clone);
+            }
 
             // Update sync state
             sync_state.last_uid = std::cmp::max(sync_state.last_uid, max_fetched_uid);
@@ -212,6 +216,9 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
         if let Err(ref e) = result {
             sync_state.last_error = Some(e.clone());
             let _ = database::update_folder_sync_state(&app_handle_clone, &sync_state);
+            if folder == MailFolder::Inbox {
+                let _ = crate::mail::database::update_global_sync_time(&app_handle_clone, None, Some(e.clone()));
+            }
         }
 
         result
