@@ -188,11 +188,15 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
                 }
 
                 if !is_bootstrap && folder == MailFolder::Inbox {
+                    let mut notif_batch = Vec::new();
                     for msg in &messages {
-                        notifications::show_new_email_notification(&app_handle_clone, &msg.from, &msg.subject, msg.uid);
+                        notif_batch.push((msg.from.clone(), msg.subject.clone(), msg.uid));
                     }
+                    notifications::show_new_emails(&app_handle_clone, &notif_batch);
                 }
             }
+
+            crate::tray_state::set_last_sync_time(&app_handle_clone);
 
             // Update sync state
             sync_state.last_uid = std::cmp::max(sync_state.last_uid, max_fetched_uid);

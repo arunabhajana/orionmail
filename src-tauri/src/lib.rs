@@ -3,6 +3,7 @@ mod commands;
 mod mail;
 mod contacts;
 mod config;
+pub mod tray_state;
 
 use crate::commands::auth_commands::*;
 use crate::commands::message_commands::*;
@@ -17,14 +18,7 @@ use tauri_plugin_autostart::MacosLauncher;
 
 #[tauri::command]
 fn update_tray_tooltip(app_handle: tauri::AppHandle, count: u32) {
-    if let Some(tray) = app_handle.tray_by_id("main") {
-        let text = if count > 0 {
-            format!("Orion Mail ({} unread)", count)
-        } else {
-            "Orion Mail".to_string()
-        };
-        let _ = tray.set_tooltip(Some(text));
-    }
+    crate::tray_state::set_unread_count(&app_handle, count);
 }
 
 #[cfg(target_os = "windows")]
@@ -163,6 +157,8 @@ pub fn run() {
 
       crate::mail::database::init_db(app.handle())?;
       crate::contacts::contact_store::init_contacts_db(app.handle())?;
+
+      crate::tray_state::spawn_tray_update_loop(app.handle().clone());
 
       Ok(())
     })

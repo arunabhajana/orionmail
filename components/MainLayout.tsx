@@ -9,7 +9,7 @@ import ComposeModal from '@/components/ComposeModal';
 import gsap from 'gsap';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { isPermissionGranted, requestPermission, onAction, sendNotification } from '@tauri-apps/plugin-notification';
+import { isPermissionGranted, requestPermission, onAction, registerActionTypes, sendNotification } from '@tauri-apps/plugin-notification';
 import { useSync } from '@/components/SyncContext';
 import LogoSpinner from '@/components/LogoSpinner';
 import Sidebar from '@/components/Sidebar';
@@ -572,19 +572,60 @@ export default function MainLayout() {
                 if (permissionGranted) {
                     console.log("Notification permission granted");
 
+                    try {
+                        await registerActionTypes([
+                            {
+                                id: 'new_email',
+                                actions: [
+                                    { id: 'open', title: 'Open' },
+                                    { id: 'mark_read', title: 'Mark as Read' }
+                                ]
+                            },
+                            {
+                                id: 'summary_email',
+                                actions: [
+                                    { id: 'open', title: 'Open Inbox' }
+                                ]
+                            }
+                        ]);
+                    } catch (e) {
+                        console.warn("Failed to register action types. May not be supported on this OS.", e);
+                    }
+
                     // Listen for notification clicks
                     try {
                         const unlisten = await onAction((result: any) => {
                             console.log('Notification action:', result);
 
-                            // Handle 'Open' action or general click
-                            const uid = result.notification?.extra?.uid;
-                            if (uid) {
-                                setSelectedEmailId(uid);
+                            // Handle 'mark_read' action without focusing the window
+                            if (result.actionId === 'mark_read') {
+                                const uid = result.notification?.extra?.uid;
+                                if (uid) {
+                                    const emailId = `inbox-${uid}`; // Assuming inbox since notifications are for inbox
+                                    markAsRead(emailId).catch(console.error);
+                                }
+                                return;
                             }
 
-                            // Focus the window
+                            // Handle 'open' or default click
                             invoke('show_main_window').catch(console.error);
+                            setCurrentFolder("inbox"); // Force navigation to inbox
+
+                            if (result.notification?.actionTypeId === 'new_email') {
+                                const uid = result.notification?.extra?.uid;
+                                if (uid) {
+                                    setSelectedEmailId(`inbox-${uid}`);
+                                }
+                            } else if (result.notification?.actionTypeId === 'summary_email') {
+                                // Just clear selection so the list is shown
+                                setSelectedEmailId(null);
+                            } else {
+                                // Fallback for default notifications
+                                const uid = result.notification?.extra?.uid;
+                                if (uid) {
+                                    setSelectedEmailId(`inbox-${uid}`);
+                                }
+                            }
                         });
                         return unlisten;
                     } catch (e: any) {
