@@ -8,7 +8,8 @@ import {
     Shield,
     Info,
     LogOut,
-    ChevronLeft
+    ChevronLeft,
+    MonitorSmartphone
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -19,11 +20,12 @@ import { AccountSection, SectionHeader } from '@/components/settings/AccountSect
 import { AppearanceSection } from '@/components/settings/AppearanceSection';
 import { NotificationsSection } from '@/components/settings/NotificationsSection';
 import { SecuritySection } from '@/components/settings/SecuritySection';
+import { SystemSection } from '@/components/settings/SystemSection';
 import { useAuth } from '@/components/AuthContext';
 
 // --- Types ---
 
-type SettingsTab = 'account' | 'appearance' | 'notifications' | 'security' | 'about';
+type SettingsTab = 'account' | 'appearance' | 'notifications' | 'security' | 'system' | 'about';
 
 interface SettingsTabConfig {
     id: SettingsTab;
@@ -36,6 +38,7 @@ const SETTINGS_TABS: SettingsTabConfig[] = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'security', label: 'Privacy & Security', icon: Shield },
+    { id: 'system', label: 'System & Behavior', icon: MonitorSmartphone },
 ];
 
 // --- Main Page Component ---
@@ -152,8 +155,18 @@ export default function SettingsPage() {
                             </motion.div>
                         )}
 
+                        {activeTab === 'system' && (
+                            <motion.div key="system" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                <SectionHeader
+                                    title="System & Behavior"
+                                    description="Manage startup behavior, system tray, and performance options."
+                                />
+                                <SystemSection />
+                            </motion.div>
+                        )}
+
                         {/* Placeholders for other tabs */}
-                        {(!['account', 'appearance', 'notifications', 'security'].includes(activeTab)) && (
+                        {(!['account', 'appearance', 'notifications', 'security', 'system'].includes(activeTab)) && (
                             <motion.div key="placeholder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                                 <SectionHeader
                                     title={SETTINGS_TABS.find(t => t.id === activeTab)?.label || 'Settings'}

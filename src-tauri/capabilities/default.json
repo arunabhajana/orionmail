@@ -17,6 +17,7 @@
     "notification:allow-notify",
     "notification:allow-request-permission",
     "notification:allow-register-action-types",
-    "notification:allow-register-listener"
+    "notification:allow-register-listener",
+    "autostart:default"
   ]
 }

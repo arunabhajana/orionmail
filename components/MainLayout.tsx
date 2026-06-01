@@ -9,7 +9,7 @@ import ComposeModal from '@/components/ComposeModal';
 import gsap from 'gsap';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { isPermissionGranted, requestPermission, onAction, registerActionTypes } from '@tauri-apps/plugin-notification';
+import { isPermissionGranted, requestPermission, onAction, sendNotification } from '@tauri-apps/plugin-notification';
 import { useSync } from '@/components/SyncContext';
 import LogoSpinner from '@/components/LogoSpinner';
 import Sidebar from '@/components/Sidebar';
@@ -436,7 +436,6 @@ export default function MainLayout() {
                 const hintShown = localStorage.getItem("orion_tray_hint");
                 if (!hintShown) {
                     try {
-                        const { sendNotification } = await import('@tauri-apps/plugin-notification');
                         sendNotification({
                             title: 'Orion Mail is still running',
                             body: "You'll continue receiving notifications and syncing email in the background."
@@ -487,6 +486,12 @@ export default function MainLayout() {
     useEffect(() => {
         const loadCache = async () => {
             const hasCache = await fetchCache();
+            const wasMinimized = await invoke<boolean>('was_launched_minimized').catch(() => false);
+
+            if (!wasMinimized) {
+                setSyncMessage("✓ Background sync active");
+                setTimeout(() => setSyncMessage(null), 2500);
+            }
 
             if (!hasCache) {
                 // DB is empty, sync is likely already running in the background. Block and poll.
@@ -503,10 +508,12 @@ export default function MainLayout() {
 
                 // If we already had a cache, we just spun up instantly. 
                 // Delay a background sync to grab new items to prevent layout jank.
+                // If launched via autostart, delay 10s to let VPN/WiFi connect.
                 if (hasCache) {
+                    let delay = wasMinimized ? 10000 : 500;
                     setTimeout(() => {
                         handleSync(true);
-                    }, 500);
+                    }, delay);
                 }
             }
         };

@@ -2,6 +2,7 @@ mod auth;
 mod commands;
 mod mail;
 mod contacts;
+mod config;
 
 use crate::commands::auth_commands::*;
 use crate::commands::message_commands::*;
@@ -11,15 +12,8 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use std::sync::Mutex;
 
-struct TraySettings {
-    minimize_to_tray: Mutex<bool>,
-}
-
-#[tauri::command]
-fn set_minimize_to_tray(app_handle: tauri::AppHandle, minimize: bool) {
-    let state = app_handle.state::<TraySettings>();
-    *state.minimize_to_tray.lock().unwrap() = minimize;
-}
+use crate::config::{AppSettings, get_app_settings, set_app_settings, was_launched_minimized};
+use tauri_plugin_autostart::MacosLauncher;
 
 #[tauri::command]
 fn update_tray_tooltip(app_handle: tauri::AppHandle, count: u32) {
@@ -40,7 +34,11 @@ use window_vibrancy::apply_mica;
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
-      app.manage(TraySettings { minimize_to_tray: Mutex::new(true) });
+      let (min_to_tray, start_hidden) = config::load_settings(app.handle());
+      app.manage(AppSettings { 
+          minimize_to_tray: Mutex::new(min_to_tray),
+          start_hidden: Mutex::new(start_hidden),
+      });
 
       let show_i = MenuItem::with_id(app, "show", "Show Orion Mail", true, None::<&str>)?;
       let compose_i = MenuItem::with_id(app, "compose", "Compose Email", true, None::<&str>)?;
@@ -108,9 +106,18 @@ pub fn run() {
           
           let app_handle = window.app_handle().clone();
           let window_clone = window.clone();
+          
+          // Initial Window Visibility Logic
+          let launched_with_minimized = was_launched_minimized();
+          if launched_with_minimized && start_hidden {
+              window.hide().unwrap();
+          } else {
+              window.show().unwrap();
+          }
+
           window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-              let state = app_handle.state::<TraySettings>();
+              let state = app_handle.state::<AppSettings>();
               let minimize = *state.minimize_to_tray.lock().unwrap();
               if minimize {
                   log::info!("Window close intercepted. Hiding window to run in background.");
@@ -147,6 +154,7 @@ pub fn run() {
       
       app.handle().plugin(tauri_plugin_dialog::init())?;
       app.handle().plugin(tauri_plugin_notification::init())?;
+      app.handle().plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))?;
 
       if let Ok(cache_dir) = app.handle().path().app_cache_dir() {
         let inline_dir = cache_dir.join("orbitmail_inline");
@@ -183,7 +191,9 @@ pub fn run() {
       send_message,
       search_contacts,
       get_unread_counts,
-      set_minimize_to_tray,
+      get_app_settings,
+      set_app_settings,
+      was_launched_minimized,
       update_tray_tooltip
     ])
     .run(tauri::generate_context!())
