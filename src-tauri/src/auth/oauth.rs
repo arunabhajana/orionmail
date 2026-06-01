@@ -23,11 +23,11 @@ pub async fn start_google_login() -> Result<Account, String> {
 
     let google_client_id = ClientId::new(
         std::env::var("GOOGLE_CLIENT_ID")
-            .map_err(|_| "GOOGLE_CLIENT_ID not found in environment".to_string())?,
+            .or_else(|_| option_env!("GOOGLE_CLIENT_ID").map(|s| s.to_string()).ok_or_else(|| "GOOGLE_CLIENT_ID not found".to_string()))?,
     );
     let google_client_secret = ClientSecret::new(
         std::env::var("GOOGLE_CLIENT_SECRET")
-            .map_err(|_| "GOOGLE_CLIENT_SECRET not found in environment".to_string())?,
+            .or_else(|_| option_env!("GOOGLE_CLIENT_SECRET").map(|s| s.to_string()).ok_or_else(|| "GOOGLE_CLIENT_SECRET not found".to_string()))?,
     );
     
     let auth_url = AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string()).unwrap();
@@ -131,11 +131,11 @@ pub async fn refresh_google_token(account: &mut Account) -> anyhow::Result<()> {
 
     let google_client_id = ClientId::new(
         std::env::var("GOOGLE_CLIENT_ID")
-            .map_err(|_| anyhow::anyhow!("GOOGLE_CLIENT_ID not found in environment"))?,
+            .or_else(|_| option_env!("GOOGLE_CLIENT_ID").map(|s| s.to_string()).ok_or_else(|| anyhow::anyhow!("GOOGLE_CLIENT_ID not found")))?,
     );
     let google_client_secret = ClientSecret::new(
         std::env::var("GOOGLE_CLIENT_SECRET")
-            .map_err(|_| anyhow::anyhow!("GOOGLE_CLIENT_SECRET not found in environment"))?,
+            .or_else(|_| option_env!("GOOGLE_CLIENT_SECRET").map(|s| s.to_string()).ok_or_else(|| anyhow::anyhow!("GOOGLE_CLIENT_SECRET not found")))?,
     );
     
     let auth_url = AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string()).unwrap();

@@ -60,7 +60,8 @@ WindowControl.displayName = "WindowControl";
  * Cycles between 'Online' and 'Syncing' states.
  */
 function SyncIndicator() {
-    const { isSyncing, syncMessage, unreadCount } = useSync();
+    const { isSyncing, syncMessage, unreadCounts } = useSync();
+    const unreadCount = unreadCounts['inbox'] || 0;
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
     useEffect(() => {

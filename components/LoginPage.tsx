@@ -38,13 +38,13 @@ const LoginPage = () => {
                 ease: "power2.in",
                 onComplete: () => {
                     setIsLoading(true);
-                    loginWithGoogle();
+                    loginWithGoogle().catch(() => setIsLoading(false));
                 }
             }, "-=0.4");
         } else {
             // Fallback if decorations missing
             setIsLoading(true);
-            loginWithGoogle();
+            loginWithGoogle().catch(() => setIsLoading(false));
         }
     };
 

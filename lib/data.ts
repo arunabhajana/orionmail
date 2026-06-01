@@ -15,6 +15,7 @@ export const CURRENT_USER: User = {
 export const MOCK_EMAILS: Email[] = [
   {
     id: '1',
+    uid: 1,
     sender: 'Elena Ross',
     senderEmail: 'elena.ross@design.com',
     avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
@@ -22,6 +23,7 @@ export const MOCK_EMAILS: Email[] = [
     preview: "Hi Team, I've attached the latest updates for our design system components...",
     time: '10:24 AM',
     date: 'Oct 24, 2023, 10:24 AM',
+    timestamp: 1698143040000,
     unread: true,
     folder: 'inbox',
     tags: ['Work'],
@@ -42,6 +44,7 @@ export const MOCK_EMAILS: Email[] = [
   },
   {
     id: '2',
+    uid: 2,
     sender: 'GitHub',
     senderEmail: 'noreply@github.com',
     avatar: 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png',
@@ -49,6 +52,7 @@ export const MOCK_EMAILS: Email[] = [
     preview: "A new release has been published for the core-ui repository with glassmorphism support...",
     time: '9:15 AM',
     date: 'Oct 24, 2023, 9:15 AM',
+    timestamp: 1698138900000,
     unread: true,
     folder: 'inbox',
     tags: ['Work', 'Dev'],
@@ -68,6 +72,7 @@ export const MOCK_EMAILS: Email[] = [
   },
   {
     id: '3',
+    uid: 3,
     sender: 'Marco Valesquez',
     senderEmail: 'marco.v@marketing.com',
     avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
@@ -75,6 +80,7 @@ export const MOCK_EMAILS: Email[] = [
     preview: "The stakeholder meeting resulted in a few adjustments to our Q4 roadmap. Can we sync?",
     time: 'Yesterday',
     date: 'Oct 23, 2023, 4:30 PM',
+    timestamp: 1698078600000,
     unread: false,
     folder: 'inbox',
     tags: ['Work'],
@@ -89,6 +95,7 @@ export const MOCK_EMAILS: Email[] = [
   },
   {
     id: '4',
+    uid: 4,
     sender: 'Dribbble',
     senderEmail: 'digest@dribbble.com',
     avatar: 'https://cdn.dribbble.com/assets/dribbble-ball-icon-4e54c54ee8f8f72d8cf9f9dd525193a654e72ad85875704bb842749fb2a4729f.png',
@@ -96,6 +103,7 @@ export const MOCK_EMAILS: Email[] = [
     preview: "Check out these trending shots in UI/UX Design this week from artists you follow.",
     time: 'Nov 12',
     date: 'Nov 12, 2023, 8:00 AM',
+    timestamp: 1699776000000,
     unread: false,
     folder: 'inbox',
     tags: ['Personal', 'Design'],
@@ -111,6 +119,7 @@ export const MOCK_EMAILS: Email[] = [
   },
   {
     id: '5',
+    uid: 5,
     sender: 'Linear',
     senderEmail: 'updates@linear.app',
     avatar: 'https://pbs.twimg.com/profile_images/1699757754687594497/c7J84d7I_400x400.jpg',
@@ -118,6 +127,7 @@ export const MOCK_EMAILS: Email[] = [
     preview: "Your team completed 24 issues in Cycle 42. Velocity increased by 15%.",
     time: 'Nov 10',
     date: 'Nov 10, 2023, 9:00 AM',
+    timestamp: 1699606800000,
     unread: false,
     folder: 'inbox',
     tags: ['Work'],
