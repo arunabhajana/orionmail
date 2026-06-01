@@ -50,14 +50,31 @@ export default function MainLayout() {
 
     const selectedEmail = emails.find(e => e.id === selectedEmailId);
 
+    const fetchUnreadCounts = async () => {
+        try {
+            const counts = await invoke<Record<string, number>>('get_unread_counts');
+            setUnreadCounts(counts);
+        } catch (error) {
+            console.error("Failed to fetch unread counts", error);
+        }
+    };
+
+    const updateUnreadCount = (email: Email, delta: number) => {
+        setUnreadCounts(prev => {
+            const newCounts = { ...prev };
+            const folderId = email.folder.toLowerCase();
+            newCounts[folderId] = Math.max(0, (newCounts[folderId] || 0) + delta);
+            if (email.starred) {
+                newCounts['starred'] = Math.max(0, (newCounts['starred'] || 0) + delta);
+            }
+            return newCounts;
+        });
+    };
+
     // --- Global State Sync ---
     useEffect(() => {
-        invoke<Record<string, number>>('get_unread_counts')
-            .then((counts) => {
-                setUnreadCounts(counts);
-            })
-            .catch(console.error);
-    }, [emails, setUnreadCounts]);
+        fetchUnreadCounts();
+    }, []);
 
     // --- Handlers ---
 
@@ -72,9 +89,17 @@ export default function MainLayout() {
             email.id === emailId ? { ...email, starred: newStarredState } : email
         ));
 
+        if (target.unread) {
+            setUnreadCounts(prev => ({
+                ...prev,
+                starred: Math.max(0, (prev['starred'] || 0) + (newStarredState ? 1 : -1))
+            }));
+        }
+
         try {
             const folderName = target.folder === "sent" ? "sent" : "INBOX";
             await invoke('toggle_star', { uid: target.uid, shouldStar: newStarredState, folder: folderName });
+            fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to toggle star", err);
             if (String(err).includes("No active account")) {
@@ -100,9 +125,12 @@ export default function MainLayout() {
             email.id === emailId ? { ...email, unread: !newReadState } : email
         ));
 
+        updateUnreadCount(target, newReadState ? -1 : 1);
+
         try {
             const folderName = target.folder === "sent" ? "sent" : "INBOX";
             await invoke('toggle_read', { uid: target.uid, shouldRead: newReadState, folder: folderName });
+            fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to toggle read", err);
             if (String(err).includes("No active account")) {
@@ -126,9 +154,12 @@ export default function MainLayout() {
             email.id === emailId ? { ...email, unread: false } : email
         ));
 
+        updateUnreadCount(target, -1);
+
         try {
             const folderName = target.folder === "sent" ? "sent" : "INBOX";
             await invoke('mark_as_read', { uid: target.uid, folder: folderName });
+            fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to mark as read", err);
             if (String(err).includes("No active account")) {
@@ -153,9 +184,14 @@ export default function MainLayout() {
             setSelectedEmailId(null);
         }
 
+        if (target.unread) {
+            updateUnreadCount(target, -1);
+        }
+
         try {
             const folderName = target.folder === "sent" ? "sent" : "INBOX";
             await invoke('delete_message', { uid: target.uid, folder: folderName });
+            fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to delete message", err);
             if (String(err).includes("No active account")) {
@@ -228,10 +264,12 @@ export default function MainLayout() {
                 const formattedEmails = cached.map(formatEmailFromMessage);
                 setEmails(dedupeEmails(formattedEmails));
                 setHasMore(cached.length === 50);
+                fetchUnreadCounts();
                 return true;
             }
             setEmails([]);
             setHasMore(false);
+            fetchUnreadCounts();
             return false;
         } catch (error) {
             console.error("Failed to load cache", error);
@@ -266,6 +304,8 @@ export default function MainLayout() {
                     const merged = [...formattedEmails, ...prev];
                     return dedupeEmails(merged);
                 });
+
+                fetchUnreadCounts();
 
                 requestAnimationFrame(() => {
                     if (emailListContainerRef.current) {

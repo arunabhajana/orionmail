@@ -1,14 +1,14 @@
 "use client";
 
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, Dispatch, SetStateAction } from 'react';
 
 interface SyncContextType {
     isSyncing: boolean;
-    setIsSyncing: (value: boolean) => void;
+    setIsSyncing: Dispatch<SetStateAction<boolean>>;
     syncMessage: string | null;
-    setSyncMessage: (msg: string | null) => void;
+    setSyncMessage: Dispatch<SetStateAction<string | null>>;
     unreadCounts: Record<string, number>;
-    setUnreadCounts: (value: Record<string, number>) => void;
+    setUnreadCounts: Dispatch<SetStateAction<Record<string, number>>>;
     syncTriggerCount: number;
     triggerSync: () => void;
 }
