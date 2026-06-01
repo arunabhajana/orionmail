@@ -24,6 +24,7 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
     const [subject, setSubject] = useState("");
     const [plainBody, setPlainBody] = useState("");
     const [isSending, setIsSending] = useState(false);
+    const [isSent, setIsSent] = useState(false);
 
     const {
         recipients,
@@ -64,7 +65,13 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                 plainBody,
                 htmlBody: html_body,
             });
-            onClose();
+            setIsSending(false);
+            setIsSent(true);
+            
+            // Wait for the success animation to finish before closing
+            setTimeout(() => {
+                onClose();
+            }, 2000);
         } catch (error) {
             console.error("Failed to send message:", error);
             alert(`Failed to send message: ${error}`);
@@ -79,7 +86,7 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                onClick={onClose}
+                onClick={() => !isSending && !isSent && onClose()}
                 className="absolute inset-0 bg-slate-900/10 backdrop-blur-sm"
             />
 
@@ -91,6 +98,82 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                 transition={{ duration: 0.2, ease: "easeOut" }}
                 className="relative w-full max-w-2xl bg-white/70 dark:bg-[#1C1C21]/70 backdrop-blur-2xl rounded-xl shadow-2xl border border-white/40 dark:border-white/5 overflow-hidden flex flex-col h-[600px] m-4"
             >
+                {/* Success Overlay */}
+                <AnimatePresence>
+                    {isSent && (
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/90 dark:bg-[#1C1C21]/90 backdrop-blur-xl"
+                        >
+                            <motion.div
+                                animate={{ 
+                                    scale: [0, 1, 1, 0],
+                                }}
+                                transition={{
+                                    duration: 2,
+                                    times: [0, 0.2, 0.8, 1],
+                                    ease: ["backOut", "linear", "easeIn"]
+                                }}
+                                className="w-24 h-24 bg-primary/20 rounded-full flex items-center justify-center mb-6 relative shadow-[0_0_40px_rgba(var(--primary),0.3)]"
+                            >
+                                <motion.div 
+                                    initial={{ scale: 0.8, opacity: 1 }}
+                                    animate={{ scale: 1.5, opacity: 0 }}
+                                    transition={{ duration: 1, repeat: Infinity, ease: "easeOut" }}
+                                    className="absolute inset-0 bg-primary/30 rounded-full"
+                                />
+                                <motion.div
+                                    animate={{ 
+                                        x: [ -80, 0, 0, 400 ],
+                                        y: [ 80, 0, 0, -400 ],
+                                        opacity: [ 0, 1, 1, 0 ],
+                                        scale: [ 0.5, 1, 1, 0.5 ]
+                                    }}
+                                    transition={{ 
+                                        duration: 2, 
+                                        times: [0, 0.25, 0.75, 1],
+                                        ease: ["backOut", "linear", "backIn"]
+                                    }}
+                                >
+                                    <Send className="w-10 h-10 text-primary ml-1 mt-1" />
+                                </motion.div>
+                            </motion.div>
+                            
+                            <motion.h3
+                                animate={{ 
+                                    opacity: [0, 1, 1, 0],
+                                    y: [20, 0, 0, -20]
+                                }}
+                                transition={{ 
+                                    duration: 2,
+                                    times: [0, 0.2, 0.8, 1],
+                                    ease: ["backOut", "linear", "easeIn"]
+                                }}
+                                className="text-2xl font-bold text-foreground dark:text-white mb-2 tracking-tight"
+                            >
+                                Message Sent
+                            </motion.h3>
+                            
+                            <motion.p
+                                animate={{ 
+                                    opacity: [0, 1, 1, 0],
+                                    y: [10, 0, 0, -10]
+                                }}
+                                transition={{ 
+                                    duration: 2,
+                                    times: [0, 0.2, 0.8, 1],
+                                    ease: ["easeOut", "linear", "easeIn"]
+                                }}
+                                className="text-muted-foreground dark:text-white/60"
+                            >
+                                Your email is on its way.
+                            </motion.p>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
                 {/* Windows Style Window Header */}
                 <header className="flex items-center justify-between px-4 py-2.5 border-b border-black/5 dark:border-white/5 relative select-none">
                     {/* Title */}
@@ -108,8 +191,9 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                             <Square className="w-3 h-3" />
                         </button>
                         <button
-                            onClick={onClose}
-                            className="p-2 text-foreground/60 dark:text-white/60 hover:bg-red-500 hover:text-white dark:hover:bg-red-500/90 rounded-md transition-colors"
+                            onClick={() => !isSending && !isSent && onClose()}
+                            disabled={isSending || isSent}
+                            className="p-2 text-foreground/60 dark:text-white/60 hover:bg-red-500 hover:text-white dark:hover:bg-red-500/90 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <X className="w-3.5 h-3.5" />
                         </button>
@@ -271,14 +355,38 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
                         {/* Send Button */}
                         <button
                             onClick={handleSend}
-                            disabled={isSending}
+                            disabled={isSending || isSent}
                             className={cn(
-                                "flex items-center gap-2 px-6 py-2 rounded-lg font-semibold shadow-lg transition-all active:scale-[0.98]",
-                                isSending ? "bg-primary/50 text-white/70 cursor-not-allowed" : "bg-primary hover:bg-primary/90 text-white shadow-primary/20"
+                                "flex items-center gap-2 px-6 py-2 rounded-lg font-semibold shadow-lg transition-all active:scale-[0.98] relative overflow-hidden",
+                                isSending || isSent ? "bg-primary/70 text-white cursor-not-allowed" : "bg-primary hover:bg-primary/90 text-white shadow-primary/20"
                             )}
                         >
-                            <span className="text-sm">{isSending ? "Sending..." : "Send"}</span>
-                            {!isSending && <Send className="w-4 h-4" />}
+                            <span className="text-sm relative z-10">{isSending ? "Sending..." : "Send"}</span>
+                            
+                            {!isSending && !isSent && <Send className="w-4 h-4 relative z-10" />}
+                            
+                            {isSending && (
+                                <motion.div
+                                    animate={{ 
+                                        x: [0, 4, 0],
+                                        y: [0, -2, 0] 
+                                    }}
+                                    transition={{ repeat: Infinity, duration: 1 }}
+                                    className="relative z-10"
+                                >
+                                    <Send className="w-4 h-4" />
+                                </motion.div>
+                            )}
+                            
+                            {/* Loading shimmer effect */}
+                            {isSending && (
+                                <motion.div
+                                    initial={{ x: "-100%" }}
+                                    animate={{ x: "200%" }}
+                                    transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+                                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12 z-0"
+                                />
+                            )}
                         </button>
                     </div>
                 </footer>
