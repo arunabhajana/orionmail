@@ -26,10 +26,11 @@ pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String
     }
 
     if folder_str != "inbox" {
-        // Only update local SQLite for non-INBOX folders
+        let app_handle_clone = app_handle.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            database::set_message_seen(&app_handle, &folder_str, uid, true)
+            database::set_message_seen(&app_handle_clone, &folder_str, uid, true)
         }).await;
+        crate::tray_state::refresh_unread_count_from_db(&app_handle);
         return Ok(());
     }
 
@@ -50,9 +51,12 @@ pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String
 
     log::info!("Updating SQLite seen flag to true for UID {}", uid);
     // Update SQLite
+    let app_handle_clone = app_handle.clone();
     let _ = tokio::task::spawn_blocking(move || {
-        database::set_message_seen(&app_handle, "inbox", uid, true)
+        database::set_message_seen(&app_handle_clone, "inbox", uid, true)
     }).await;
+    
+    crate::tray_state::refresh_unread_count_from_db(&app_handle);
 
     log::info!("mark_as_read completed successfully for UID {}", uid);
     Ok(())
@@ -63,10 +67,12 @@ pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, fol
     let account = get_active_account(&app_handle).ok_or("No active account")?;
     let folder_str = folder.map(|f| f.to_lowercase()).unwrap_or_else(|| "inbox".to_string());
 
+    let app_handle_clone = app_handle.clone();
     if folder_str != "inbox" {
         let _ = tokio::task::spawn_blocking(move || {
-            database::set_message_seen(&app_handle, &folder_str, uid, should_read)
+            database::set_message_seen(&app_handle_clone, &folder_str, uid, should_read)
         }).await;
+        crate::tray_state::refresh_unread_count_from_db(&app_handle);
         return Ok(());
     }
 
@@ -83,10 +89,13 @@ pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, fol
         Ok::<(), String>(())
     }).await?;
 
+    let app_handle_clone2 = app_handle.clone();
     // Update SQLite
     let _ = tokio::task::spawn_blocking(move || {
-        database::set_message_seen(&app_handle, "inbox", uid, should_read)
+        database::set_message_seen(&app_handle_clone2, "inbox", uid, should_read)
     }).await;
+    
+    crate::tray_state::refresh_unread_count_from_db(&app_handle);
 
     Ok(())
 }
@@ -129,10 +138,12 @@ pub async fn delete_message(app_handle: AppHandle, uid: u32, folder: Option<Stri
     let account = get_active_account(&app_handle).ok_or("No active account")?;
     let folder_str = folder.map(|f| f.to_lowercase()).unwrap_or_else(|| "inbox".to_string());
 
+    let app_handle_clone = app_handle.clone();
     if folder_str != "inbox" {
         let _ = tokio::task::spawn_blocking(move || {
-            database::delete_message_local(&app_handle, &folder_str, uid)
+            database::delete_message_local(&app_handle_clone, &folder_str, uid)
         }).await;
+        crate::tray_state::refresh_unread_count_from_db(&app_handle);
         return Ok(());
     }
 
@@ -151,10 +162,13 @@ pub async fn delete_message(app_handle: AppHandle, uid: u32, folder: Option<Stri
         Ok::<(), String>(())
     }).await?;
 
+    let app_handle_clone2 = app_handle.clone();
     // Delete locally
     let _ = tokio::task::spawn_blocking(move || {
-        database::delete_message_local(&app_handle, "inbox", uid)
+        database::delete_message_local(&app_handle_clone2, "inbox", uid)
     }).await;
+    
+    crate::tray_state::refresh_unread_count_from_db(&app_handle);
 
     Ok(())
 }
