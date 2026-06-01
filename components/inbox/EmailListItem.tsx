@@ -28,17 +28,13 @@ export const EmailListItem = memo(({
     }, [email.preview]);
 
     return (
-        <motion.div
-            layoutId={`email-${email.id}`}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="relative border-b border-black/5 dark:border-white/5 overflow-hidden group h-full"
+        <div
+            className="relative border-b border-black/5 dark:border-white/5 overflow-hidden group"
         >
             <div
                 onClick={() => onSelect?.(email.id)}
                 className={cn(
-                    "px-4 py-4 cursor-pointer transition-all duration-200 relative z-10 bg-background/50 backdrop-blur-md h-full flex flex-col",
+                    "px-4 py-4 cursor-pointer transition-all duration-200 relative z-10 bg-background/50 backdrop-blur-md flex flex-col",
                     isSelected
                         ? "bg-primary/10 border-l-4 border-l-primary" // Selected
                         : "border-l-4 border-transparent hover:bg-white/40 dark:hover:bg-white/5" // Regular
@@ -91,7 +87,7 @@ export const EmailListItem = memo(({
                     {previewText}
                 </p>
             </div>
-        </motion.div>
+        </div>
     );
 });
 EmailListItem.displayName = "EmailListItem";

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 interface UseVirtualEmailListProps {
@@ -15,7 +15,8 @@ export function useVirtualEmailList({
     isLoadingMore,
     onLoadMore,
     listRef,
-}: UseVirtualEmailListProps) {
+    getItemKey = (index: number) => index,
+}: UseVirtualEmailListProps & { getItemKey?: (index: number) => string | number }) {
     const parentRef = useRef<HTMLDivElement>(null);
     const loadingRef = useRef(false);
 
@@ -32,8 +33,9 @@ export function useVirtualEmailList({
     const rowVirtualizer = useVirtualizer({
         count: itemCount,
         getScrollElement: () => parentRef.current,
-        estimateSize: () => 72,
-        overscan: 8,
+        estimateSize: () => 100,
+        overscan: 10,
+        getItemKey,
     });
 
     const virtualItems = rowVirtualizer.getVirtualItems();

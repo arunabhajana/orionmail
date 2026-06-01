@@ -298,7 +298,6 @@ export default function MainLayout() {
 
             if (newMessages.length > 0) {
                 const formattedEmails = newMessages.map(formatEmailFromMessage);
-                const previousHeight = emailListContainerRef.current?.scrollHeight || 0;
 
                 setEmails(prev => {
                     const merged = [...formattedEmails, ...prev];
@@ -306,13 +305,6 @@ export default function MainLayout() {
                 });
 
                 fetchUnreadCounts();
-
-                requestAnimationFrame(() => {
-                    if (emailListContainerRef.current) {
-                        const newHeight = emailListContainerRef.current.scrollHeight;
-                        emailListContainerRef.current.scrollTop += (newHeight - previousHeight);
-                    }
-                });
             }
         } catch (error) {
             console.error("Failed to refresh new emails", error);
@@ -416,7 +408,7 @@ export default function MainLayout() {
 
     useEffect(() => {
         const interval = setInterval(() => {
-            invoke('sync_folder_command', { folder: 'inbox' }).catch(console.error);
+            invoke('sync_mail_folder', { folder: 'inbox' }).catch(console.error);
             fetchUnreadCounts();
         }, 60000);
         return () => clearInterval(interval);

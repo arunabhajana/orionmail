@@ -72,6 +72,7 @@ const EmailList: React.FC<EmailListProps> = ({
         isLoadingMore,
         onLoadMore,
         listRef,
+        getItemKey: (index) => displayedEmails[index]?.id || index,
     });
 
     React.useEffect(() => {
@@ -219,12 +220,11 @@ const EmailList: React.FC<EmailListProps> = ({
                     onTouchEnd={handleTouchEnd}
                 >
                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
-                    <AnimatePresence>
                         {virtualItems.map((virtualRow) => {
                             const email = displayedEmails[virtualRow.index];
                             return (
                                 <div
-                                    key={email.id}
+                                    key={virtualRow.key}
                                     data-index={virtualRow.index}
                                     ref={rowVirtualizer.measureElement}
                                     style={{
@@ -246,7 +246,6 @@ const EmailList: React.FC<EmailListProps> = ({
                                 </div>
                             );
                         })}
-                    </AnimatePresence>
                 </div>
                 {/* Loader showing below the items if loading more */}
                 {hasMore && isLoadingMore && (
