@@ -6,7 +6,32 @@ mod contacts;
 use crate::commands::auth_commands::*;
 use crate::commands::message_commands::*;
 use crate::contacts::contact_search::search_contacts;
-use tauri::Manager;
+use tauri::{Manager, Emitter};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use std::sync::Mutex;
+
+struct TraySettings {
+    minimize_to_tray: Mutex<bool>,
+}
+
+#[tauri::command]
+fn set_minimize_to_tray(app_handle: tauri::AppHandle, minimize: bool) {
+    let state = app_handle.state::<TraySettings>();
+    *state.minimize_to_tray.lock().unwrap() = minimize;
+}
+
+#[tauri::command]
+fn update_tray_tooltip(app_handle: tauri::AppHandle, count: u32) {
+    if let Some(tray) = app_handle.tray_by_id("main") {
+        let text = if count > 0 {
+            format!("Orion Mail ({} unread)", count)
+        } else {
+            "Orion Mail".to_string()
+        };
+        let _ = tray.set_tooltip(Some(text));
+    }
+}
 
 #[cfg(target_os = "windows")]
 use window_vibrancy::apply_mica;
@@ -15,17 +40,88 @@ use window_vibrancy::apply_mica;
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
+      app.manage(TraySettings { minimize_to_tray: Mutex::new(true) });
+
+      let show_i = MenuItem::with_id(app, "show", "Show Orion Mail", true, None::<&str>)?;
+      let compose_i = MenuItem::with_id(app, "compose", "Compose Email", true, None::<&str>)?;
+      let sync_i = MenuItem::with_id(app, "sync", "Sync Now", true, None::<&str>)?;
+      let sep1 = PredefinedMenuItem::separator(app)?;
+      let pause_i = MenuItem::with_id(app, "pause", "Pause Sync (15 min)", false, None::<&str>)?;
+      let sep2 = PredefinedMenuItem::separator(app)?;
+      let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+      let menu = Menu::with_items(app, &[
+          &show_i, &compose_i, &sync_i, &sep1, &pause_i, &sep2, &quit_i
+      ])?;
+
+      let _tray = TrayIconBuilder::with_id("main")
+          .icon(app.default_window_icon().unwrap().clone())
+          .menu(&menu)
+          .tooltip("Orion Mail")
+          .on_menu_event(move |app_handle, event| {
+              match event.id.as_ref() {
+                  "quit" => {
+                      log::info!("Quit requested from tray.");
+                      app_handle.exit(0);
+                  }
+                  "show" => {
+                      if let Some(window) = app_handle.get_webview_window("main") {
+                          window.show().unwrap();
+                          window.unminimize().unwrap();
+                          window.set_focus().unwrap();
+                      }
+                  }
+                  "compose" => {
+                      if let Some(window) = app_handle.get_webview_window("main") {
+                          window.show().unwrap();
+                          window.unminimize().unwrap();
+                          window.set_focus().unwrap();
+                          window.emit("tray:compose", ()).ok();
+                      }
+                  }
+                  "sync" => {
+                      app_handle.emit("tray:sync_now", ()).ok();
+                  }
+                  _ => {}
+              }
+          })
+          .on_tray_icon_event(|tray, event| {
+              if let TrayIconEvent::DoubleClick { .. } = event {
+                  if let Some(window) = tray.app_handle().get_webview_window("main") {
+                      if window.is_visible().unwrap_or(false) {
+                          window.hide().unwrap();
+                      } else {
+                          window.show().unwrap();
+                          window.unminimize().unwrap();
+                          window.set_focus().unwrap();
+                      }
+                  }
+              }
+          })
+          .build(app)?;
+
       // Apply Mica window effect on Windows
       #[cfg(target_os = "windows")]
       {
         if let Some(window) = app.get_webview_window("main") {
           apply_mica(&window, None).ok();
           
-          window.on_window_event(|event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-              log::info!("App closing: Stopping IMAP IDLE and Polling listeners...");
-              crate::mail::idle::stop_idle_listener();
-              crate::mail::poll::stop_polling();
+          let app_handle = window.app_handle().clone();
+          let window_clone = window.clone();
+          window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+              let state = app_handle.state::<TraySettings>();
+              let minimize = *state.minimize_to_tray.lock().unwrap();
+              if minimize {
+                  log::info!("Window close intercepted. Hiding window to run in background.");
+                  api.prevent_close();
+                  window_clone.hide().unwrap();
+                  window_clone.emit("window:hidden", ()).ok();
+              } else {
+                  log::info!("App closing permanently.");
+                  crate::mail::idle::stop_idle_listener();
+                  crate::mail::poll::stop_polling();
+              }
             }
           });
         }
@@ -86,7 +182,9 @@ pub fn run() {
       show_main_window,
       send_message,
       search_contacts,
-      get_unread_counts
+      get_unread_counts,
+      set_minimize_to_tray,
+      update_tray_tooltip
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

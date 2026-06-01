@@ -23,7 +23,7 @@ export default function MainLayout() {
     // --- New State for Folders & Stars ---
     const [currentFolder, setCurrentFolder] = useState<string>("inbox");
     const [emails, setEmails] = useState<Email[]>([]);
-    const { isSyncing, setIsSyncing, setSyncMessage, unreadCounts, setUnreadCounts, syncTriggerCount } = useSync();
+    const { isSyncing, setIsSyncing, setSyncMessage, unreadCounts, setUnreadCounts, syncTriggerCount, triggerSync } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
     const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -405,6 +405,58 @@ export default function MainLayout() {
             handleSync(false);
         }
     }, [syncTriggerCount]);
+
+    // Calculate total unreads and update tray
+    useEffect(() => {
+        const total = Object.entries(unreadCounts).reduce((acc, [key, val]) => {
+            if (key === 'starred') return acc; // starred is a duplicate of unread state
+            return acc + (val || 0);
+        }, 0);
+        
+        invoke('update_tray_tooltip', { count: total }).catch(console.error);
+    }, [unreadCounts]);
+
+    useEffect(() => {
+        let unlistenSync: (() => void) | undefined;
+        let unlistenCompose: (() => void) | undefined;
+        let unlistenHidden: (() => void) | undefined;
+
+        const setupTrayListeners = async () => {
+            unlistenSync = await listen('tray:sync_now', () => {
+                console.log("tray:sync_now event received");
+                triggerSync(); // Use context trigger to avoid stale state in handleSync
+            });
+            
+            unlistenCompose = await listen('tray:compose', () => {
+                console.log("tray:compose event received");
+                setIsComposeOpen(true);
+            });
+            
+            unlistenHidden = await listen('window:hidden', async () => {
+                const hintShown = localStorage.getItem("orion_tray_hint");
+                if (!hintShown) {
+                    try {
+                        const { sendNotification } = await import('@tauri-apps/plugin-notification');
+                        sendNotification({
+                            title: 'Orion Mail is still running',
+                            body: "You'll continue receiving notifications and syncing email in the background."
+                        });
+                        localStorage.setItem("orion_tray_hint", "true");
+                    } catch (e) {
+                        console.error("Failed to send tray hint notification", e);
+                    }
+                }
+            });
+        };
+
+        setupTrayListeners();
+
+        return () => {
+            if (unlistenSync) unlistenSync();
+            if (unlistenCompose) unlistenCompose();
+            if (unlistenHidden) unlistenHidden();
+        };
+    }, []);
 
     const blockForInitialSync = async () => {
         // Since AuthContext (or another component) might have already triggered `sync_inbox`,
