@@ -40,9 +40,23 @@ OrionMail connects local robustness with web-like flexibility. Key features and 
 
 ### Prerequisites
 
-The following components are required for local development:
-*   [Node.js](https://nodejs.org/) (v18 or higher)
-*   [Rust and Cargo](https://rustup.rs/) (required for Tauri builds)
+The following components and versions are required for local development:
+*   **[Node.js](https://nodejs.org/)**: v18 or higher
+*   **[Rust](https://rustup.rs/)**: v1.77.2 or higher (specified in `Cargo.toml`)
+
+### Core Dependencies
+
+**Frontend (`package.json`)**:
+*   **Next.js**: v16.1.6
+*   **React**: v19.2.3
+*   **Tailwind CSS**: v4.x
+*   **Tauri API/CLI**: v2.10.x
+
+**Backend (`Cargo.toml`)**:
+*   **Tauri**: v2.10.0
+*   **Rusqlite**: v0.38.x (for local SQLite storage)
+*   **IMAP & Lettre**: For email synchronization and SMTP sending
+*   **OAuth2**: For secure Google authentication
 
 ### 1. Clone the repository
 ```bash
