@@ -15,14 +15,24 @@ OrionMail is a modern, high-performance desktop email client built with **Next.j
 
 ## Detailed Features & Architecture
 
-OrionMail connects local robustness with web-like flexibility. Key aspects of the project include:
+OrionMail connects local robustness with web-like flexibility. Key features and their underlying mechanics include:
 
-*   **Offline-First & Fast Sync**: Seamlessly synchronize your inbox with the Rust backend handling complex background operations (e.g., `sync_folder`), data persistence, and local database management (`get_db_path()`).
-*   **Secure Email Rendering**: Robust email sanitization using DOMPurify ensures safety when rendering HTML content from untrusted senders.
-*   **High Performance UI**: Easily handles thousands of emails in your inbox utilizing virtualized lists (`@tanstack/react-virtual`).
-*   **Deep OS Integration**: Utilizing Tauri's native plugins for system-level dialogs and push notifications, bringing a native app feel to web technologies.
-*   **Adaptive Theming**: Built-in support for multiple color schemes including dark mode using `next-themes`.
-*   **State Management & Auth**: Clean React abstractions including the `useAuth()` hook securely manage active accounts and state (`get_active_account()`) bridging the UI and the local Tauri system.
+### ⚡ Core Capabilities
+*   **Offline-First Database**: Uses a local SQLite database (`get_db_path()`, `init_from_db()`) to store emails, contacts, and account configurations, ensuring instant access even without an internet connection.
+*   **Smart Background Sync**: The Rust backend handles complex IMAP/SMTP operations (`sync_folder()`, `sync_inbox()`) quietly in the background without blocking the UI.
+*   **Predictive Body Prefetching**: Features a dedicated `BodyPrefetchManager` and background worker (`spawn_prefetch_worker()`) that preemptively downloads and caches email contents (`fetch_and_cache_body_internal()`) for zero-latency reading.
+*   **Secure Google OAuth Integration**: Clean authentication flow (`start_google_login()`, `refresh_google_token()`) managed via a secure local `AuthStore`, seamlessly integrated with the React frontend through the `useAuth()` hook.
+
+### 🎨 User Interface & Experience
+*   **Glassmorphic & Adaptive Theming**: A sophisticated, translucent UI built with Tailwind CSS. Includes dynamic accent color customization (`AccentColorProvider`, `useAccentColor()`) and dark mode support.
+*   **High-Performance Email List**: Utilizes virtualized lists to effortlessly render thousands of emails (`EmailList`), paired with smooth transitions and interactive loaders like `OrbitLoader`.
+*   **Secure Email Rendering**: Robust email sanitization ensures safety when rendering HTML content from untrusted senders in the `EmailDetail` view.
+*   **Integrated Compose & Attachments**: A feature-rich `ComposeModal` for drafting emails, alongside native attachment handling and a dedicated downloads manager (`useDownloads()`, `download_attachment()`).
+
+### 🧠 Smart Features & OS Integration
+*   **Automated Contact Management**: Automatically extracts and stores contacts from your communications (`extract_and_store_contacts()`) into a local database, enabling fast address auto-completion (`search_contacts()`).
+*   **Deep OS Integration**: Leverages Tauri for native system tray support (`spawn_tray_update_loop()`), background OS notifications (`show_new_emails()`), and "minimize to tray" functionality (`was_launched_minimized()`).
+*   **Instant Actions**: Perform standard email operations—like starring (`toggle_star()`), marking as read (`toggle_read()`), and deleting (`delete_message()`)—with immediate optimistic UI updates backed by robust local-to-remote sync.
 
 ---
 
