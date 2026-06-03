@@ -21,6 +21,8 @@ import { DetailToolbar } from './inbox/DetailToolbar';
 import { MessageHeader, AttachmentCard } from './inbox/MessageHeader';
 import { useEmailBody } from '@/hooks/useEmailBody';
 import OrbitLoader from './inbox/OrbitLoader';
+import { useOtpDetection } from '@/hooks/useOtpDetection';
+import { OtpBanner } from './inbox/OtpBanner';
 
 // --- Types ---
 
@@ -45,6 +47,8 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         email?.folder,
         onMarkAsRead
     );
+
+    const otpCode = useOtpDetection(bodyContent);
 
     if (!email) {
         return (
@@ -89,6 +93,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                         className="w-full max-w-5xl mx-auto"
                     >
                         <MessageHeader email={email} />
+
+                        {otpCode && (
+                            <OtpBanner code={otpCode} />
+                        )}
 
                         {isLoadingBody ? (
                             <div className="flex flex-col h-[60vh] items-center justify-center">
