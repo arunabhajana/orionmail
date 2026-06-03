@@ -179,6 +179,32 @@ const EmailList: React.FC<EmailListProps> = ({
                         This folder will be implemented soon!
                     </p>
                 </motion.div>
+            ) : emails.length === 0 && isSyncing ? (
+                // Loading skeleton shown while the folder is being fetched / synced
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.3 }}
+                    className="flex-1 flex flex-col px-3 pt-2 gap-2"
+                >
+                    {[...Array(7)].map((_, i) => (
+                        <div
+                            key={i}
+                            className="flex items-start gap-3 p-3 rounded-xl bg-white/30 dark:bg-white/5 animate-pulse"
+                            style={{ animationDelay: `${i * 80}ms` }}
+                        >
+                            <div className="w-9 h-9 rounded-full bg-gray-200/70 dark:bg-white/10 shrink-0" />
+                            <div className="flex-1 space-y-2 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="h-3 bg-gray-200/70 dark:bg-white/10 rounded-full w-28" />
+                                    <div className="h-2.5 bg-gray-200/50 dark:bg-white/5 rounded-full w-12" />
+                                </div>
+                                <div className="h-2.5 bg-gray-200/60 dark:bg-white/8 rounded-full w-3/4" />
+                                <div className="h-2 bg-gray-200/40 dark:bg-white/5 rounded-full w-1/2" />
+                            </div>
+                        </div>
+                    ))}
+                </motion.div>
             ) : emails.length === 0 && !isSyncing ? (
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} className="flex-1 flex flex-col items-center justify-center text-center px-4">
                     <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">

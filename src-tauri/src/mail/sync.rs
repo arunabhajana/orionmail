@@ -182,7 +182,8 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
 
             if num_new > 0 {
                 use tauri::Emitter;
-                if let Err(e) = app_handle_clone.emit("mail:updated", ()) {
+                // Include the folder name so the frontend can selectively refresh
+                if let Err(e) = app_handle_clone.emit("mail:updated", &folder_name_clone) {
                     log::error!("Failed to emit mail:updated event: {}", e);
                 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useLayoutEffect, useRef, useEffect } from 'react';
+import React, { useState, useLayoutEffect, useRef, useEffect, useCallback } from 'react';
 import { Email } from '@/lib/types';
 import { formatEmailTime } from '@/lib/utils';
 
@@ -22,9 +22,11 @@ export default function MainLayout() {
 
     // --- New State for Folders & Stars ---
     const [currentFolder, setCurrentFolder] = useState<string>("inbox");
+    const currentFolderRef = useRef<string>("inbox"); // Live reference to avoid stale closures in event listeners
     const [emails, setEmails] = useState<Email[]>([]);
     const { isSyncing, setIsSyncing, setSyncMessage, unreadCounts, setUnreadCounts, syncTriggerCount, triggerSync } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
+    const [isLoadingFolder, setIsLoadingFolder] = useState(false); // Loading skeleton when switching folders
     const [syncError, setSyncError] = useState<string | null>(null);
 
     const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -35,6 +37,11 @@ export default function MainLayout() {
     useEffect(() => {
         emailsRef.current = emails;
     }, [emails]);
+
+    // Keep currentFolderRef in sync so event listeners always read the latest folder
+    useEffect(() => {
+        currentFolderRef.current = currentFolder;
+    }, [currentFolder]);
 
     const layoutRef = useRef<HTMLDivElement>(null);
     const hasSyncedRef = useRef(false);
@@ -251,7 +258,7 @@ export default function MainLayout() {
         };
     };
 
-    const fetchCache = async (folderToFetch = currentFolder) => {
+    const fetchCache = async (folderToFetch = currentFolderRef.current) => {
         if (folderToFetch === "drafts" || folderToFetch === "trash") {
             setEmails([]);
             setHasMore(false);
@@ -281,7 +288,7 @@ export default function MainLayout() {
         }
     };
 
-    const refreshNewEmails = async (folderToFetch = currentFolder) => {
+    const refreshNewEmails = async (folderToFetch = currentFolderRef.current) => {
         if (folderToFetch === "drafts" || folderToFetch === "trash") return;
 
         try {
@@ -294,18 +301,19 @@ export default function MainLayout() {
                 return;
             }
 
-            const newMessages = cached;
+            const formattedEmails = cached.map(formatEmailFromMessage);
 
-            if (newMessages.length > 0) {
-                const formattedEmails = newMessages.map(formatEmailFromMessage);
+            setEmails(prev => {
+                // Only merge if the current folder matches what we fetched
+                // (guards against race conditions when switching folders)
+                if (currentFolderRef.current !== folderToFetch && folderToFetch !== "starred") {
+                    return prev;
+                }
+                const merged = [...formattedEmails, ...prev];
+                return dedupeEmails(merged);
+            });
 
-                setEmails(prev => {
-                    const merged = [...formattedEmails, ...prev];
-                    return dedupeEmails(merged);
-                });
-
-                fetchUnreadCounts();
-            }
+            fetchUnreadCounts();
         } catch (error) {
             console.error("Failed to refresh new emails", error);
             if (String(error).includes("No active account")) {
@@ -347,33 +355,33 @@ export default function MainLayout() {
     };
 
     const handleSync = (isBackground = false) => {
-        if (isSyncing || currentFolder === "drafts" || currentFolder === "trash") return Promise.resolve();
+        // Read currentFolder from ref to avoid stale closure issues
+        const folderAtSyncTime = currentFolderRef.current;
+        if (isSyncing || folderAtSyncTime === "drafts" || folderAtSyncTime === "trash") return Promise.resolve();
         setIsSyncing(true);
         setSyncError(null);
 
         // For Starred, we just need to ensure Inbox/Sent are relatively up-to-date.
         // We will opportunistically sync Inbox if they are on Starred view.
-        const syncTarget = currentFolder === "starred" ? "inbox" : currentFolder;
+        const syncTarget = folderAtSyncTime === "starred" ? "inbox" : folderAtSyncTime;
 
+        // NOTE: sync_mail_folder is fire-and-forget on the backend (enqueues async sync,
+        // returns 0 immediately). The real results arrive via the 'mail:updated' event.
+        // We still call fetchCache after a brief delay as a safety net for cases where
+        // the sync completes very quickly or the event is missed.
         return invoke('sync_mail_folder', { folder: syncTarget })
-            .then(async (newMessages: unknown) => {
-                const count = Number(newMessages);
-                console.log(`Synced: ${count} new emails`);
+            .then(async () => {
+                console.log(`Sync enqueued for: ${syncTarget}`);
 
                 if (!isBackground) {
-                    if (count > 0) {
-                        setSyncMessage(`${count} new email${count !== 1 ? 's' : ''}`);
-                    } else {
-                        setSyncMessage("No new emails");
-                    }
-                    setTimeout(() => setSyncMessage(null), 3000);
+                    setSyncMessage("Syncing...");
+                    // Clear syncing message after reasonable wait
+                    setTimeout(() => setSyncMessage(null), 4000);
                 }
 
-                if (emailsRef.current.length === 0) {
-                    await fetchCache();
-                } else if (count > 0) {
-                    await refreshNewEmails();
-                }
+                // Always re-fetch from the DB after enqueuing sync.
+                // This catches any messages the backend may have already written.
+                await fetchCache(folderAtSyncTime);
             })
             .catch((e) => {
                 console.error("Failed to sync messages:", e);
@@ -523,7 +531,10 @@ export default function MainLayout() {
     useEffect(() => {
         if (!isBootstrapping) {
             setSelectedEmailId(null);
+            setIsLoadingFolder(true);
+            setEmails([]); // Clear stale emails immediately to prevent wrong-folder flash
             fetchCache(currentFolder).then((hasCache) => {
+                setIsLoadingFolder(false);
                 if (hasCache) {
                     // Debounced background sync on folder entry
                     setTimeout(() => {
@@ -532,6 +543,8 @@ export default function MainLayout() {
                 } else {
                     handleSync(false);
                 }
+            }).catch(() => {
+                setIsLoadingFolder(false);
             });
         }
     }, [currentFolder, isBootstrapping]);
@@ -540,12 +553,26 @@ export default function MainLayout() {
         let unlisten: (() => void) | undefined;
 
         const setupListener = async () => {
-            unlisten = await listen('mail:updated', async () => {
-                console.log("mail:updated event received, refreshing cache.");
+            unlisten = await listen<string>('mail:updated', async (event) => {
+                // event.payload is the folder name that was synced (e.g. "inbox", "sent")
+                const syncedFolder = event.payload;
+                const activeFolder = currentFolderRef.current;
+
+                // For starred view, we refresh if inbox OR sent was synced (both contribute stars)
+                const isRelevant = 
+                    activeFolder === syncedFolder ||
+                    (activeFolder === 'starred' && (syncedFolder === 'inbox' || syncedFolder === 'sent'));
+
+                if (!isRelevant) {
+                    console.log(`mail:updated for '${syncedFolder}', but active folder is '${activeFolder}'. Skipping refresh.`);
+                    return;
+                }
+
+                console.log(`mail:updated for '${syncedFolder}' (active: '${activeFolder}'). Refreshing.`);
                 if (emailsRef.current.length === 0) {
-                    await fetchCache();
+                    await fetchCache(activeFolder);
                 } else {
-                    await refreshNewEmails();
+                    await refreshNewEmails(activeFolder);
                 }
             });
         };
@@ -724,7 +751,7 @@ export default function MainLayout() {
                 onToggleRead={toggleRead}
                 onDeleteMessage={deleteMessage}
                 onSync={handleSync}
-                isSyncing={isSyncing}
+                isSyncing={isSyncing || isLoadingFolder}
                 onLoadMore={loadMoreEmails}
                 hasMore={hasMore}
                 isLoadingMore={isLoadingMore}
