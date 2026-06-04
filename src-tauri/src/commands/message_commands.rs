@@ -403,3 +403,9 @@ pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<Diagno
         })
     }).await.map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub async fn open_url(url: String) -> Result<(), String> {
+    open::that(&url).map_err(|e| format!("Failed to open URL: {}", e))?;
+    Ok(())
+}

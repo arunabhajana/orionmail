@@ -23,6 +23,8 @@ import { useEmailBody } from '@/hooks/useEmailBody';
 import OrbitLoader from './inbox/OrbitLoader';
 import { useOtpDetection } from '@/hooks/useOtpDetection';
 import { OtpBanner } from './inbox/OtpBanner';
+import { useMeetingDetection } from '@/hooks/useMeetingDetection';
+import { MeetingBanner } from './inbox/MeetingBanner';
 
 // --- Types ---
 
@@ -49,6 +51,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     );
 
     const otpCode = useOtpDetection(bodyContent);
+    const meetings = useMeetingDetection(bodyContent, null, email?.subject, attachments);
 
     if (!email) {
         return (
@@ -93,6 +96,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                         className="w-full max-w-5xl mx-auto"
                     >
                         <MessageHeader email={email} />
+
+                        {meetings.map((meeting, index) => (
+                            <MeetingBanner key={`${meeting.url}-${index}`} meeting={meeting} />
+                        ))}
 
                         {otpCode && (
                             <OtpBanner code={otpCode} />

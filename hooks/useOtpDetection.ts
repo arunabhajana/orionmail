@@ -17,13 +17,13 @@ export function useOtpDetection(htmlBody: string | undefined | null): string | n
             /\b(G-\d{4,8})\b/i,
             
             // "code: 123456", "otp is 123456", etc.
-            /(?:code|otp|pin|verification|passcode|token)(?:\s+is)?\s*:?-?\s*([A-Z0-9]{4,8})\b/i,
+            /\b(?:code|otp|pin|verification)\b(?:\s+is)?\s*:?-?\s*([A-Z0-9]{4,8})\b/i,
             
             // "123456 is your code"
-            /\b([A-Z0-9]{4,8})\b(?=\s+(?:is your|is the)\s+(?:code|otp|pin|verification|passcode))/i,
+            /\b([A-Z0-9]{4,8})\b(?=\s+(?:is your|is the)\s+(?:code|otp|pin|verification)\b)/i,
             
             // Loose fallback: keyword nearby within 40 characters
-            /(?:code|otp|pin|verification|passcode|token)(?:.{0,40}?)\b([A-Z0-9]{4,8})\b/i
+            /\b(?:code|otp|pin|verification)\b(?:.{0,40}?)\b([A-Z0-9]{4,8})\b/i
         ];
 
         for (const p of patterns) {
