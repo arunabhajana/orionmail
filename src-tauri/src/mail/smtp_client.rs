@@ -46,6 +46,7 @@ pub async fn send_email(
     subject: &str,
     plain_body: &str,
     html_body: &str,
+    attachments: Vec<String>,
 ) -> Result<(), SendError> {
     // 1. Check if token needs refreshing (buffer of 5 minutes)
     if account.expires_at < Utc::now().timestamp() + 300 {
@@ -75,10 +76,30 @@ pub async fn send_email(
         builder = builder.reply_to(rt.parse().map_err(|_| SendError::InvalidRecipient)?);
     }
 
-    let multipart = MultiPart::alternative_plain_html(
-        String::from(plain_body),
-        String::from(html_body),
+    let mut multipart = MultiPart::mixed().multipart(
+        MultiPart::alternative_plain_html(
+            String::from(plain_body),
+            String::from(html_body),
+        )
     );
+
+    for path in attachments {
+        let path_obj = std::path::Path::new(&path);
+        let filename = path_obj.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        
+        let file_bytes = match tokio::fs::read(&path).await {
+            Ok(bytes) => bytes,
+            Err(_) => return Err(SendError::Other(format!("Could not read attachment: {}. The file may have been moved or deleted.", filename))),
+        };
+        
+        let content_type = mime_guess::from_path(&path).first_or_octet_stream();
+        let lettre_content_type = content_type.to_string().parse().unwrap_or_else(|_| "application/octet-stream".parse().unwrap());
+        
+        let attachment = lettre::message::Attachment::new(filename)
+            .body(file_bytes, lettre_content_type);
+            
+        multipart = multipart.singlepart(attachment);
+    }
     
     let email = builder.multipart(multipart).map_err(|e| SendError::Other(e.to_string()))?;
 
@@ -109,8 +130,8 @@ pub async fn send_email(
 
     let mailer = transport_builder.build();
 
-    // 4. Send with timeout
-    match timeout(Duration::from_secs(30), mailer.send(email)).await {
+    // 4. Send with timeout (increased to 120s for large attachments)
+    match timeout(Duration::from_secs(120), mailer.send(email)).await {
         Ok(Ok(_)) => {
             let mut all_recipients = to;
             all_recipients.extend(cc);

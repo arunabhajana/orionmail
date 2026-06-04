@@ -45,8 +45,9 @@ futures = "0.3"
 imap-proto = "0.10.2"
 dashmap = "6.1.0"
 itoa = "1.0.17"
-lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls", "builder", "smtp-transport"] }
+lettre = { version = "0.11", default-features = false, features = ["tokio1", "tokio1-rustls-tls", "builder", "smtp-transport", "hostname"] }
 anyhow = "1.0"
 mime = "0.3"
 uuid = { version = "1.0", features = ["v4"] }
 email_address = "0.2.9"
+mime_guess = "2"

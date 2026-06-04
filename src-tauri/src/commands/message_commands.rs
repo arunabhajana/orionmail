@@ -248,10 +248,76 @@ pub async fn download_attachment(
     
     let bytes = crate::mail::message_body::fetch_attachment_part(&account, &folder, uid, &part_id).await?;
     
-    std::fs::write(&save_path, bytes)
-        .map_err(|e| format!("Failed to write file to {}: {}", save_path, e))?;
-    
+    std::fs::write(&save_path, bytes).map_err(|e| e.to_string())?;
     Ok(save_path)
+}
+
+#[derive(serde::Serialize)]
+pub struct AttachmentMetadata {
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+    pub mime_type: String,
+}
+
+#[tauri::command]
+pub async fn get_attachment_metadata(paths: Vec<String>) -> Result<Vec<AttachmentMetadata>, String> {
+    let mut metadata_list = Vec::new();
+    
+    for path in paths {
+        let path_obj = std::path::Path::new(&path);
+        let name = path_obj.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        
+        let meta = tokio::fs::metadata(&path)
+            .await
+            .map_err(|e| format!("Could not read file metadata for {}: {}", name, e))?;
+            
+        let size = meta.len();
+        
+        // Use mime_guess for Content-Type, fallback to octet-stream
+        let mime_type = mime_guess::from_path(&path).first_or_octet_stream().to_string();
+        
+        metadata_list.push(AttachmentMetadata {
+            path,
+            name,
+            size,
+            mime_type,
+        });
+    }
+    
+    Ok(metadata_list)
+}
+
+#[tauri::command]
+pub async fn send_message(
+    app_handle: AppHandle,
+    to: Vec<String>,
+    cc: Vec<String>,
+    bcc: Vec<String>,
+    reply_to: Option<String>,
+    subject: String,
+    plain_body: String,
+    html_body: String,
+    attachments: Vec<String>,
+) -> Result<(), String> {
+    let mut account = get_active_account(&app_handle).ok_or("No active account")?;
+    
+    let res = crate::mail::smtp_client::send_email(
+        &app_handle,
+        &mut account,
+        to,
+        cc,
+        bcc,
+        reply_to,
+        &subject,
+        &plain_body,
+        &html_body,
+        attachments,
+    )
+    .await
+    .map_err(|e| e.to_string());
+    
+    res
 }
 
 #[tauri::command]
@@ -273,7 +339,7 @@ pub async fn show_in_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn show_main_window(app_handle: AppHandle) -> Result<(), String> {
+pub fn show_main_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = tauri::Manager::get_webview_window(&app_handle, "main") {
         let _ = window.show();
         let _ = window.set_focus();
@@ -282,50 +348,13 @@ pub fn show_main_window(app_handle: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn send_message(
-    app_handle: AppHandle,
-    to: Vec<String>,
-    cc: Vec<String>,
-    bcc: Vec<String>,
-    reply_to: Option<String>,
-    subject: String,
-    plain_body: String,
-    html_body: String,
-) -> Result<(), String> {
-    let mut account = get_active_account(&app_handle).ok_or("No active account")?;
-    let account_email = account.email.clone();
-
-    let res = crate::mail::smtp_client::send_email(
-        &app_handle,
-        &mut account,
-        to.clone(),
-        cc,
-        bcc,
-        reply_to,
-        &subject,
-        &plain_body,
-        &html_body,
-    )
-    .await
-    .map_err(|e| e.to_string());
-
-    // We do not manually insert the sent message into the local DB.
-    // Gmail's SMTP automatically appends sent emails to the "[Gmail]/Sent Mail" folder,
-    // and our IMAP IDLE connection will immediately detect and sync the real message
-    // with the correct IMAP UID and metadata.
-
-    res
-}
-
-#[tauri::command]
-pub async fn get_unread_counts(app_handle: AppHandle) -> Result<std::collections::HashMap<String, u32>, String> {
+pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::collections::HashMap<String, u32>, String> {
     tokio::task::spawn_blocking(move || {
         let db_path = crate::mail::database::get_db_path(&app_handle)?;
         let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
 
         let mut counts = std::collections::HashMap::new();
 
-        // 1. Unread counts for all folders
         let mut stmt = conn.prepare("SELECT folder, COUNT(*) FROM messages WHERE seen = 0 GROUP BY folder").unwrap();
         let rows = stmt.query_map([], |row| {
             let folder: String = row.get(0)?;
@@ -339,7 +368,6 @@ pub async fn get_unread_counts(app_handle: AppHandle) -> Result<std::collections
             }
         }
 
-        // 2. Unread count specifically for Starred
         let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE seen = 0 AND flagged = 1").unwrap();
         if let Ok(count) = stmt.query_row([], |row| row.get(0)) {
             counts.insert("starred".to_string(), count);
@@ -360,19 +388,14 @@ pub struct DiagnosticsSyncStatus {
 }
 
 #[tauri::command]
-pub async fn get_sync_diagnostics(app_handle: AppHandle) -> Result<DiagnosticsSyncStatus, String> {
+pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<DiagnosticsSyncStatus, String> {
     tokio::task::spawn_blocking(move || {
         let global_state = crate::mail::database::get_global_sync_state(&app_handle).unwrap_or_default();
         let unread = crate::mail::database::get_global_unread_count(&app_handle).unwrap_or(0);
-        
-        let mut in_progress = false;
-        if let Ok(Some(inbox_state)) = crate::mail::database::get_folder_sync_state(&app_handle, "inbox") {
-            in_progress = inbox_state.sync_in_progress;
-        }
 
         Ok(DiagnosticsSyncStatus {
             unread_count: unread,
-            sync_in_progress: in_progress,
+            sync_in_progress: false,
             last_sync_at: global_state.last_sync_at,
             last_successful_idle_at: global_state.last_successful_idle_at,
             last_notification_at: global_state.last_notification_at,

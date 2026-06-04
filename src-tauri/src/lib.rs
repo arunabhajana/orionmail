@@ -186,7 +186,8 @@ pub fn run() {
       get_sync_diagnostics,
       get_app_settings,
       set_app_settings,
-      was_launched_minimized
+      was_launched_minimized,
+      get_attachment_metadata
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

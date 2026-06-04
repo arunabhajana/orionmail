@@ -25,6 +25,7 @@ import {
   Redo2,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { cn } from "@/lib/utils";
 import { useRecipientAutocomplete } from "@/hooks/useRecipientAutocomplete";
 import RichTextEditor, {
@@ -41,6 +42,15 @@ import DOMPurify from "isomorphic-dompurify";
 
 interface ComposeModalProps {
   onClose: () => void;
+}
+
+export interface AttachmentFile {
+  id: string;
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  addedAt: number;
 }
 
 // --------------------------------------------------------------------------
@@ -333,6 +343,8 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
   const [subject, setSubject] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isSent, setIsSent] = useState(false);
+  const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
+  const [isAttaching, setIsAttaching] = useState(false);
 
   // Rich text editor state
   const [editorValue, setEditorValue] = useState<RichTextEditorValue>({
@@ -438,6 +450,7 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
         subject,
         plainBody,
         htmlBody,
+        attachments: attachments.map(a => a.path),
       });
 
       setIsSending(false);
@@ -451,6 +464,72 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
       alert(`Failed to send message: ${error}`);
       setIsSending(false);
     }
+  };
+
+  // --------------------------------------------------------------------------
+  // Attachment handlers
+  // --------------------------------------------------------------------------
+  const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024; // 18MB raw (~24MB base64)
+  const MAX_ATTACHMENTS = 25;
+
+  const handleAttachFiles = async () => {
+    try {
+      const selectedPaths = await open({
+        multiple: true,
+        directory: false,
+      });
+
+      if (!selectedPaths || selectedPaths.length === 0) return;
+
+      const paths = Array.isArray(selectedPaths) ? selectedPaths : [selectedPaths];
+
+      // Validate max count
+      if (attachments.length + paths.length > MAX_ATTACHMENTS) {
+        alert(`You can only attach up to ${MAX_ATTACHMENTS} files.`);
+        return;
+      }
+
+      setIsAttaching(true);
+
+      // Filter out already attached files
+      const newPaths = paths.filter(p => !attachments.some(a => a.path === p));
+      
+      if (newPaths.length === 0) {
+        setIsAttaching(false);
+        return;
+      }
+
+      // Get metadata from backend
+      const newAttachments: AttachmentFile[] = await invoke("get_attachment_metadata", {
+        paths: newPaths
+      });
+
+      const totalSize = attachments.reduce((sum, a) => sum + a.size, 0) + 
+                        newAttachments.reduce((sum, a) => sum + a.size, 0);
+
+      if (totalSize > MAX_ATTACHMENT_BYTES) {
+        alert("Total attachment size exceeds the 18MB limit (which encodes to ~24MB for SMTP).");
+        setIsAttaching(false);
+        return;
+      }
+
+      const attachmentsWithId = newAttachments.map(a => ({
+        ...a,
+        id: Math.random().toString(36).substring(7),
+        addedAt: Date.now()
+      }));
+
+      setAttachments(prev => [...prev, ...attachmentsWithId]);
+      setIsAttaching(false);
+    } catch (error) {
+      console.error("Failed to attach files:", error);
+      alert(`Failed to attach files: ${error}`);
+      setIsAttaching(false);
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id));
   };
 
   // --------------------------------------------------------------------------
@@ -487,6 +566,7 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
   const isSendDisabled =
     isSending ||
     isSent ||
+    isAttaching ||
     recipients.length === 0 ||
     editorValue.isEmpty;
 
@@ -494,6 +574,8 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
   const sendDisabledReason =
     isSending || isSent
       ? null
+      : isAttaching
+      ? "Please wait for attachments to process"
       : recipients.length === 0
       ? "Add at least one recipient"
       : editorValue.isEmpty
@@ -825,6 +907,75 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
         </div>
 
         {/* ---------------------------------------------------------------- */}
+        {/* Attachments Area */}
+        {/* ---------------------------------------------------------------- */}
+        {(attachments.length > 0 || isAttaching) && (
+          <div className="px-6 py-3 border-b border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02]">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-muted-foreground/80 dark:text-white/50 uppercase tracking-widest">
+                Attachments {attachments.length > 0 ? `(${attachments.length})` : ""}
+              </span>
+              {attachments.length > 0 && (
+                <span className="text-[11px] font-medium text-muted-foreground/60 dark:text-white/40">
+                  {(attachments.reduce((sum, a) => sum + a.size, 0) / (1024 * 1024)).toFixed(2)} MB / 18.00 MB
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {attachments.map((file) => (
+                <div
+                  key={file.id}
+                  className="flex items-center gap-2 bg-white dark:bg-[#2A2A32] border border-black/10 dark:border-white/10 rounded-lg pl-3 pr-1.5 py-1.5 shadow-sm w-fit"
+                >
+                  <div className="flex items-center justify-center w-6 h-6 rounded bg-primary/10 text-primary shrink-0">
+                    <Paperclip className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="flex flex-col max-w-[180px]">
+                    <span className="text-xs font-medium text-foreground dark:text-white/90 truncate">
+                      {file.name}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground dark:text-white/50">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isSending || isSent}
+                    onClick={() => removeAttachment(file.id)}
+                    className="ml-1 p-1.5 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-50 shrink-0"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              {isAttaching && (
+                <div className="flex items-center gap-3 bg-white/50 dark:bg-[#2A2A32]/50 border border-black/5 dark:border-white/5 rounded-lg px-3 py-1.5 shadow-sm w-[180px] overflow-hidden relative">
+                  <motion.div
+                    className="absolute inset-0 bg-primary/10"
+                    initial={{ x: "-100%" }}
+                    animate={{ x: "100%" }}
+                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                  />
+                  <div className="flex items-center justify-center w-6 h-6 rounded bg-primary/10 text-primary shrink-0 z-10">
+                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+                      <Paperclip className="w-3.5 h-3.5" />
+                    </motion.div>
+                  </div>
+                  <div className="flex flex-col z-10">
+                    <span className="text-xs font-medium text-foreground dark:text-white/90">
+                      Processing...
+                    </span>
+                    <span className="text-[10px] text-muted-foreground dark:text-white/50">
+                      Reading files
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ---------------------------------------------------------------- */}
         {/* Rich Text Editor Area */}
         {/* ---------------------------------------------------------------- */}
         <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col min-h-0 relative">
@@ -966,17 +1117,25 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
 
             <ToolbarDivider />
 
-            {/* Attachment — dummy until implemented */}
-            <Tooltip label="Attachments (Coming Soon)" align="end">
-              <button
-                type="button"
-                disabled
-                aria-label="Attach file (coming soon)"
-                className="p-1.5 rounded-md opacity-40 cursor-not-allowed text-foreground/40 dark:text-white/40"
-              >
+            {/* Attachment */}
+            <ToolbarButton
+              label={isAttaching ? "Attaching..." : "Attach files"}
+              onClick={handleAttachFiles}
+              disabled={isSending || isSent || isAttaching}
+              aria-label="Attach files"
+              tooltipAlign="end"
+            >
+              {isAttaching ? (
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                >
+                  <Paperclip className="w-4 h-4" />
+                </motion.div>
+              ) : (
                 <Paperclip className="w-4 h-4" />
-              </button>
-            </Tooltip>
+              )}
+            </ToolbarButton>
 
             {/* Image — dummy until implemented */}
             <Tooltip label="Insert Image (Coming Soon)" align="end">
