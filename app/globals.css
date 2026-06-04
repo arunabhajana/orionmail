@@ -137,3 +137,90 @@ html, body {
   --color-att-code: #818cf8;
   --color-att-image: #22d3ee;
 }
+
+/* =========================================================================
+   TipTap / ProseMirror Editor Styles
+   Scoped to .orion-editor so they don't bleed into email read pane.
+   ========================================================================= */
+
+/* Editor container */
+.orion-editor {
+  outline: none;
+  caret-color: var(--color-primary);
+  min-height: 100%;
+  width: 100%;
+  font-size: 0.9375rem; /* 15px — comfortable reading size */
+  line-height: 1.65;
+  color: var(--color-foreground);
+  word-break: break-word;
+}
+
+.dark .orion-editor {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Placeholder text */
+.orion-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--color-muted-foreground);
+  opacity: 0.5;
+  pointer-events: none;
+  height: 0;
+}
+
+.dark .orion-editor p.is-editor-empty:first-child::before {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* Paragraph spacing */
+.orion-editor p {
+  margin: 0 0 0.5em 0;
+}
+.orion-editor p:last-child {
+  margin-bottom: 0;
+}
+
+/* Bold / Italic / Underline rendered naturally by browser */
+
+/* Lists */
+.orion-editor ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin: 0.4em 0;
+}
+.orion-editor ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin: 0.4em 0;
+}
+.orion-editor li {
+  margin: 0.15em 0;
+}
+.orion-editor li p {
+  margin: 0;
+}
+
+/* Links */
+.orion-editor a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.orion-editor a:hover {
+  opacity: 0.8;
+}
+
+/* Text selection highlight */
+.orion-editor ::selection {
+  background-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+/* Dark mode scrollbar for the editor container */
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+.dark .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.22);
+}
