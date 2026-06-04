@@ -309,16 +309,10 @@ pub async fn send_message(
     .await
     .map_err(|e| e.to_string());
 
-    if res.is_ok() {
-        let _ = crate::mail::database::insert_sent_message(
-            &app_handle,
-            &account_email,
-            &to,
-            &subject,
-            &plain_body,
-            &html_body,
-        );
-    }
+    // We do not manually insert the sent message into the local DB.
+    // Gmail's SMTP automatically appends sent emails to the "[Gmail]/Sent Mail" folder,
+    // and our IMAP IDLE connection will immediately detect and sync the real message
+    // with the correct IMAP UID and metadata.
 
     res
 }
