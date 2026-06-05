@@ -188,7 +188,8 @@ pub fn run() {
       set_app_settings,
       was_launched_minimized,
       get_attachment_metadata,
-      open_url
+      open_url,
+      clear_local_cache
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

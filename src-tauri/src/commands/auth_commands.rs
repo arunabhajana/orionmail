@@ -139,3 +139,16 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
 pub fn get_cached_messages(app_handle: AppHandle) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
     crate::mail::database::load_cached_messages(&app_handle, 25)
 }
+
+#[tauri::command]
+pub async fn clear_local_cache(app_handle: AppHandle) -> Result<(), String> {
+    let db_path = crate::mail::database::get_db_path(&app_handle)?;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    // Wipe all tracked messages and sync states to force a clean bootstrap
+    conn.execute("DELETE FROM messages", ()).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM folder_sync_state", ()).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM global_sync_state", ()).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}

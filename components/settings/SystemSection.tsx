@@ -140,6 +140,36 @@ export function SystemSection() {
                     </div>
                 </div>
             </div>
+
+            <div className="bg-white/60 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-2xl p-6 shadow-sm border-red-500/20">
+                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-4">Data Management</h3>
+                
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
+                        <div>
+                            <p className="font-medium text-foreground dark:text-white/90">Clear Local Cache</p>
+                            <p className="text-sm text-muted-foreground mt-1">Delete all locally stored emails and force a complete resynchronization from the server.</p>
+                        </div>
+                        <button 
+                            onClick={async () => {
+                                if (confirm("Are you sure you want to clear your local email cache? This will force the app to re-download all your emails.")) {
+                                    try {
+                                        await invoke('clear_local_cache');
+                                        alert("Cache cleared successfully! The app will now resynchronize.");
+                                        window.location.href = "/inbox"; // Redirect to inbox to trigger resync
+                                    } catch (e) {
+                                        console.error(e);
+                                        alert("Failed to clear cache.");
+                                    }
+                                }
+                            }}
+                            className="px-4 py-2 bg-red-500/10 text-red-600 rounded-lg hover:bg-red-500/20 font-medium transition-colors"
+                        >
+                            Clear Cache
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }

@@ -102,24 +102,8 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             // 3. Strategy based on is_bootstrap
             let is_bootstrap = sync_state.last_uid == 0;
             let range = if is_bootstrap {
-                // For a fresh sync of a large mailbox (like Sent), use SEARCH ALL + window instead of grabbing everything
-                if folder != MailFolder::Inbox {
-                    let uids = session.uid_search("ALL").map_err(|e| format!("IMAP SEARCH ALL Error: {}", e))?;
-                    if uids.is_empty() {
-                        return Ok(0);
-                    }
-                    let mut sorted_uids = uids.into_iter().collect::<Vec<_>>();
-                    sorted_uids.sort_unstable();
-                    let start_idx = sorted_uids.len().saturating_sub(50);
-                    let window = &sorted_uids[start_idx..];
-                    if window.is_empty() {
-                        return Ok(0);
-                    }
-                    format!("{}:{}", window.first().unwrap(), window.last().unwrap())
-                } else {
-                    let end = uid_next.saturating_sub(1);
-                    format!("{}:{}", 1, end)
-                }
+                let end = uid_next.saturating_sub(1);
+                format!("{}:{}", 1, end)
             } else {
                 let end = uid_next.saturating_sub(1);
                 let start_uid = sync_state.last_uid + 1;

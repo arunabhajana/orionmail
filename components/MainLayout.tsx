@@ -549,11 +549,15 @@ export default function MainLayout() {
         }
     }, [currentFolder, isBootstrapping]);
 
+    const [syncingFolders, setSyncingFolders] = useState<Set<string>>(new Set());
+
     useEffect(() => {
-        let unlisten: (() => void) | undefined;
+        let unlistenUpdated: (() => void) | undefined;
+        let unlistenStarted: (() => void) | undefined;
+        let unlistenFinished: (() => void) | undefined;
 
         const setupListener = async () => {
-            unlisten = await listen<string>('mail:updated', async (event) => {
+            unlistenUpdated = await listen<string>('mail:updated', async (event) => {
                 // event.payload is the folder name that was synced (e.g. "inbox", "sent")
                 const syncedFolder = event.payload;
                 const activeFolder = currentFolderRef.current;
@@ -575,12 +579,32 @@ export default function MainLayout() {
                     await refreshNewEmails(activeFolder);
                 }
             });
+
+            unlistenStarted = await listen<string>('mail:sync_started', (event) => {
+                setSyncingFolders(prev => new Set(prev).add(event.payload));
+            });
+
+            unlistenFinished = await listen<string>('mail:sync_finished', async (event) => {
+                setSyncingFolders(prev => {
+                    const next = new Set(prev);
+                    next.delete(event.payload);
+                    return next;
+                });
+                
+                // If the folder that finished is the active folder and we somehow still have 0 emails
+                // (e.g., mail:updated didn't fire because num_new was 0, but maybe some older cache exists?)
+                if (event.payload === currentFolderRef.current && emailsRef.current.length === 0) {
+                    await fetchCache(event.payload);
+                }
+            });
         };
 
         setupListener();
 
         return () => {
-            if (unlisten) unlisten();
+            if (unlistenUpdated) unlistenUpdated();
+            if (unlistenStarted) unlistenStarted();
+            if (unlistenFinished) unlistenFinished();
         };
     }, []);
 
@@ -751,7 +775,7 @@ export default function MainLayout() {
                 onToggleRead={toggleRead}
                 onDeleteMessage={deleteMessage}
                 onSync={handleSync}
-                isSyncing={isSyncing || isLoadingFolder}
+                isSyncing={isSyncing || isLoadingFolder || syncingFolders.has(currentFolder)}
                 onLoadMore={loadMoreEmails}
                 hasMore={hasMore}
                 isLoadingMore={isLoadingMore}
