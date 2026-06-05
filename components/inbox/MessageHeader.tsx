@@ -64,7 +64,7 @@ export const MessageHeader = memo(({ email }: { email: Email }) => {
                         </div>
                         <div className="flex items-center gap-2 mt-0.5 px-0">
                             <span className="text-sm text-muted-foreground dark:text-white/50">To:</span>
-                            <span className="text-sm font-medium text-foreground/80 dark:text-white/70">Arunabha Jana</span>
+                            <span className="text-sm font-medium text-foreground/80 dark:text-white/70">{email.to || "Me"}</span>
                         </div>
                     </div>
                 </div>

@@ -71,6 +71,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             uid_validity INTEGER, -- Left for generic IMAP parity
             subject TEXT,
             sender TEXT,
+            recipient TEXT,
             date INTEGER NOT NULL,
             snippet TEXT,
             body TEXT,
@@ -126,6 +127,25 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
         conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT", ()).map_err(|e| e.to_string())?;
     }
 
+    let mut stmt = conn.prepare("PRAGMA table_info(messages)").unwrap();
+    let mut has_recipient = false;
+    let rows = stmt.query_map([], |row| {
+        let name: String = row.get(1)?;
+        Ok(name)
+    }).unwrap();
+
+    for name in rows {
+        if let Ok(col_name) = name {
+            if col_name == "recipient" {
+                has_recipient = true;
+                break;
+            }
+        }
+    }
+
+    if !has_recipient {
+        conn.execute("ALTER TABLE messages ADD COLUMN recipient TEXT", ()).map_err(|e| e.to_string())?;
+    }
 
     // Performance Indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_folder_uid_desc ON messages(folder, uid DESC)", ()).map_err(|e| e.to_string())?;
@@ -243,11 +263,12 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO messages (folder, uid, uid_validity, subject, sender, date, seen, flagged, snippet)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO messages (folder, uid, uid_validity, subject, sender, recipient, date, seen, flagged, snippet)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(folder, uid) DO UPDATE SET
                 subject = excluded.subject,
                 sender = excluded.sender,
+                recipient = excluded.recipient,
                 date = excluded.date,
                 seen = excluded.seen,
                 flagged = excluded.flagged,
@@ -261,6 +282,7 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
                 msg.uid_validity,
                 msg.subject,
                 msg.from,
+                msg.to,
                 msg.date,
                 if msg.seen { 1 } else { 0 },
                 if msg.flagged { 1 } else { 0 },
@@ -294,6 +316,7 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
             folder: row.get(8).unwrap_or_else(|_| "INBOX".to_string()),
             has_attachments: row.get::<_, i32>(9).unwrap_or(0) != 0,
             thread_id: row.get(10).unwrap_or(None),
+            to: row.get(11).unwrap_or(None),
         })
     };
 
@@ -301,7 +324,7 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
 
     if folder.to_lowercase() == "starred" {
         // Starred uses date-based sorting and pagination
-        let mut query = "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id
+        let mut query = "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient
              FROM messages 
              WHERE flagged = 1".to_string();
              
@@ -342,7 +365,7 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
     } else {
         if let Some(uid) = before_uid {
             let mut stmt = conn.prepare(
-                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id
+                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient
                  FROM messages 
                  WHERE folder = ?1 AND uid < ?2
                  ORDER BY uid DESC 
@@ -355,7 +378,7 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id
+                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient
                  FROM messages 
                  WHERE folder = ?1
                  ORDER BY uid DESC 

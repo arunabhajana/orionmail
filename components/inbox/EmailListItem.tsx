@@ -6,6 +6,22 @@ import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
 import { motion } from 'framer-motion';
 
+const formatRecipient = (toHeader: string | undefined): string => {
+    if (!toHeader) return "";
+    const recipients = toHeader.split(',').map(r => r.trim());
+    const parsed = recipients.map(r => {
+        let name = r.split('<')[0].trim();
+        name = name.replace(/^["']|["']$/g, '');
+        if (name) return name;
+        
+        const emailMatch = r.match(/<([^>]+)>/);
+        if (emailMatch) return emailMatch[1].split('@')[0];
+        
+        return r.split('@')[0];
+    });
+    return parsed.filter(p => p).join(', ');
+};
+
 export const EmailListItem = memo(({
     email,
     isSelected,
@@ -26,6 +42,9 @@ export const EmailListItem = memo(({
     useEffect(() => {
         setPreviewText(email.preview || "No preview available");
     }, [email.preview]);
+
+    const isSent = email.folder === 'sent';
+    const displaySender = isSent && email.to ? formatRecipient(email.to) : email.sender;
 
     return (
         <div
@@ -67,7 +86,8 @@ export const EmailListItem = memo(({
                                 ? "font-semibold text-foreground dark:text-white/90"
                                 : "font-medium text-foreground/80 dark:text-white/70"
                         )}>
-                            {email.sender}
+                            {isSent && <span className="text-muted-foreground/60 mr-1 font-normal">To:</span>}
+                            {displaySender}
                         </span>
                     </div>
                     <span className={cn(

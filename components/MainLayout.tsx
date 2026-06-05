@@ -243,6 +243,7 @@ export default function MainLayout() {
             uid: msg.uid,
             sender: senderName,
             senderEmail: msg.from,
+            to: msg.to || undefined,
             subject: msg.subject || '(No Subject)',
             preview: msg.snippet?.trim() || msg.subject?.substring(0, 100) || 'No preview available',
             avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`,

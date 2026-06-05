@@ -245,6 +245,7 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folde
     
     let mut subject = String::new();
     let mut from = String::new();
+    let mut to_recipient = String::new();
     let mut date = String::new();
 
     for header in parsed.get_headers() {
@@ -254,6 +255,7 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folde
         match key.as_str() {
             "subject" => subject = val,
             "from" => from = val,
+            "to" => to_recipient = val,
             "date" => date = val,
             _ => {}
         }
@@ -281,6 +283,8 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folde
         None
     };
 
+    let to_opt = if to_recipient.is_empty() { None } else { Some(to_recipient.trim().to_string()) };
+
     Some(MessageHeader {
         folder: folder_name.to_string(),
         uid: actual_uid,
@@ -293,5 +297,6 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folde
         has_attachments: false,
         thread_id: None,
         snippet,
+        to: to_opt,
     })
 }

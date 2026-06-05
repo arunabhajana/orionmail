@@ -10,6 +10,7 @@ export interface Email {
     uid: number;
     sender: string;
     senderEmail: string;
+    to?: string;
     subject: string;
     preview: string;
     date: string;

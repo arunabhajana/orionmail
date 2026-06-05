@@ -17,6 +17,7 @@ pub struct MessageHeader {
     pub has_attachments: bool,
     pub thread_id: Option<String>,
     pub snippet: Option<String>,
+    pub to: Option<String>,
 }
 
 pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Result<Vec<MessageHeader>, String> {
@@ -70,7 +71,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
             }
 
             let uids_str = recent_uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-            let fetches = session.uid_fetch(uids_str, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])")
+            let fetches = session.uid_fetch(uids_str, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO)])")
                 .map_err(|e| format!("IMAP UID Fetch Error: {}", e))?;
 
             let mut messages = Vec::new();
@@ -83,6 +84,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                 if let Some(body) = content {
                     let mut subject = String::new();
                     let mut from = String::new();
+                    let mut to_recipient = String::new();
                     let mut date = String::new();
                     let mut seen = false;
                     let mut flagged = false;
@@ -104,6 +106,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                             match key.as_str() {
                                 "subject" => subject = value,
                                 "from" => from = value,
+                                "to" => to_recipient = value,
                                 "date" => date = value,
                                 _ => {}
                             }
@@ -129,6 +132,8 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                         None
                     };
 
+                    let to_opt = if to_recipient.is_empty() { None } else { Some(to_recipient.trim().to_string()) };
+
                     messages.push(MessageHeader {
                         folder: "inbox".to_string(),
                         uid: actual_uid,
@@ -141,6 +146,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                         has_attachments: false, // For future IMAP multi-part traversal implementation
                         thread_id: None,        // For future IMAP THREAD correlation
                         snippet,
+                        to: to_opt,
                     });
                 }
             }
