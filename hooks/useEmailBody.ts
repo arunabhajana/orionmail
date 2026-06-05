@@ -107,11 +107,15 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         }
     }, [emailId, emailUnread, onMarkAsRead]);
 
-    // Handle iframe resize messages sent from the injected srcDoc script
+    // Handle iframe messages sent from the injected srcDoc script
     useEffect(() => {
         const handleMessage = (event: MessageEvent) => {
-            if (event.data?.type === 'resize' && event.data?.id === emailId) {
-                setIframeHeight(event.data.height + 30); // Add a small buffer
+            if (event.data?.id === emailId) {
+                if (event.data?.type === 'resize') {
+                    setIframeHeight(event.data.height + 30); // Add a small buffer
+                } else if (event.data?.type === 'open_url' && event.data.url) {
+                    invoke('open_url', { url: event.data.url }).catch(console.error);
+                }
             }
         };
 

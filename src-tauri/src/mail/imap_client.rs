@@ -93,7 +93,7 @@ pub async fn get_mailboxes(account: Account) -> Result<Vec<Mailbox>, String> {
     // --------------------------------------------------
     // 7. TIMEOUT PROTECTION
     // --------------------------------------------------
-    match tokio::time::timeout(Duration::from_secs(15), handle).await {
+    match tokio::time::timeout(Duration::from_secs(30), handle).await {
         Ok(join_result) => join_result.map_err(|e| e.to_string())?,
         Err(_) => Err("IMAP Connection Timeout".to_string()),
     }

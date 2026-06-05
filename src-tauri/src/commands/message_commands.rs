@@ -1,4 +1,3 @@
-use crate::auth::session::get_active_account;
 use crate::mail::database;
 use crate::mail::imap_session::{execute_with_session, SessionKind};
 use tauri::AppHandle;
@@ -7,7 +6,7 @@ use crate::BootError;
 #[tauri::command]
 pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
     log::info!("mark_as_read command invoked for UID {}", uid);
-    let account = get_active_account(&app_handle).ok_or("No active account")?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     let folder_str = folder.map(|f| f.to_lowercase()).unwrap_or_else(|| "inbox".to_string());
 
     // Idempotency Check: Don't hit IMAP if already updated locally
@@ -65,7 +64,7 @@ pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String
 
 #[tauri::command]
 pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, folder: Option<String>) -> Result<(), String> {
-    let account = get_active_account(&app_handle).ok_or("No active account")?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     let folder_str = folder.map(|f| f.to_lowercase()).unwrap_or_else(|| "inbox".to_string());
 
     let app_handle_clone = app_handle.clone();
@@ -103,7 +102,7 @@ pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, fol
 
 #[tauri::command]
 pub async fn toggle_star(app_handle: AppHandle, uid: u32, should_star: bool, folder: Option<String>) -> Result<(), String> {
-    let account = get_active_account(&app_handle).ok_or("No active account")?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     let folder_str = folder.map(|f| f.to_lowercase()).unwrap_or_else(|| "inbox".to_string());
 
     if folder_str != "inbox" {
@@ -136,7 +135,7 @@ pub async fn toggle_star(app_handle: AppHandle, uid: u32, should_star: bool, fol
 
 #[tauri::command]
 pub async fn delete_message(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
-    let account = get_active_account(&app_handle).ok_or("No active account")?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     let folder_str = folder.map(|f| f.to_lowercase()).unwrap_or_else(|| "inbox".to_string());
 
     let app_handle_clone = app_handle.clone();
@@ -193,7 +192,7 @@ pub async fn get_messages_page(
     .map_err(|e| e.to_string())??;
 
     if folder == "inbox" {
-        if let Some(account) = get_active_account(&app_handle) {
+        if let Ok(account) = crate::auth::bootstrap::ensure_active_account(&app_handle).await {
             let uids_to_prefetch = pages.iter().take(8).map(|m| m.uid).collect::<Vec<_>>();
             let app_handle_pf = app_handle.clone();
             
@@ -219,7 +218,7 @@ pub async fn prefetch_messages(
     app_handle: tauri::AppHandle,
     requests: Vec<crate::mail::body_prefetch_manager::PrefetchRequest>,
 ) -> Result<(), String> {
-    let account = get_active_account(&app_handle).ok_or("No active account")?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
     // Clear old background queue before queueing the new viewport items
     crate::mail::body_prefetch_manager::PREFETCH_MANAGER.clear_background_queue().await;
@@ -244,7 +243,7 @@ pub async fn download_attachment(
     part_id: String,
     save_path: String,
 ) -> Result<String, String> {
-    let account = get_active_account(&app_handle).ok_or("No active account")?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     let folder = folder.to_lowercase();
     
     let bytes = crate::mail::message_body::fetch_attachment_part(&account, &folder, uid, &part_id).await?;
@@ -301,7 +300,7 @@ pub async fn send_message(
     html_body: String,
     attachments: Vec<String>,
 ) -> Result<(), String> {
-    let mut account = get_active_account(&app_handle).ok_or("No active account")?;
+    let mut account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
     let res = crate::mail::smtp_client::send_email(
         &app_handle,

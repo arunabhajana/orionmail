@@ -2,7 +2,9 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useRouter } from "next/navigation";
+import { SessionExpiredPopup } from "./SessionExpiredPopup";
 
 export interface User {
     id: string;
@@ -40,10 +42,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [mailboxLoading, setMailboxLoading] = useState(false);
     const [mailboxConnected, setMailboxConnected] = useState(false);
     const [isBootstrappingInbox, setBootstrappingInbox] = useState(false);
+    const [sessionExpired, setSessionExpired] = useState(false);
     const router = useRouter();
 
     useEffect(() => {
         bootstrap();
+
+        const unlisten = listen("auth:session_expired", () => {
+            setSessionExpired(true);
+        });
+
+        return () => {
+            unlisten.then(f => f());
+        };
     }, []);
 
     /**
@@ -162,6 +173,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             }}
         >
             {children}
+            <SessionExpiredPopup 
+                isOpen={sessionExpired} 
+                onClose={() => setSessionExpired(false)} 
+                onLogin={() => {
+                    setSessionExpired(false);
+                    loginWithGoogle().catch(console.error);
+                }} 
+            />
         </AuthContext.Provider>
     );
 };

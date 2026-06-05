@@ -1,6 +1,5 @@
 use crate::auth::account::Account;
 use crate::mail::sync::sync_inbox;
-use crate::auth::bootstrap::bootstrap_accounts;
 use tauri::AppHandle;
 
 use std::sync::Mutex;
@@ -108,11 +107,8 @@ async fn run_idle_loop(
     mut last_exists: u32,
 ) -> Result<u32, String> {
 
-    // Refresh tokens if needed
-    bootstrap_accounts(app_handle).await;
-
-    let current_account = crate::auth::session::get_active_account(app_handle)
-        .ok_or("No active account found")?;
+    let current_account = crate::auth::bootstrap::ensure_active_account(app_handle).await
+        .map_err(|_| "No active account found or token refresh failed")?;
 
     let email = current_account.email;
     let access_token = current_account.access_token;

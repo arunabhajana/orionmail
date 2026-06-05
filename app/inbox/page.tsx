@@ -5,6 +5,7 @@ import MainLayout from "@/components/MainLayout";
 import { useAuth } from "@/components/AuthContext";
 import LogoSpinner from "@/components/LogoSpinner";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 
 interface Mailbox {
   name: string;
@@ -14,7 +15,6 @@ interface Mailbox {
 export default function InboxPage() {
   const { user, loading, mailboxLoading, setMailboxLoading, mailboxConnected, setMailboxConnected, needsRefresh, isBootstrappingInbox } = useAuth();
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Only connect to the mailbox once per session.
@@ -28,7 +28,6 @@ export default function InboxPage() {
 
   const fetchMailboxes = async () => {
     setMailboxLoading(true);
-    setError(null);
     try {
       const result = await invoke<Mailbox[]>("get_mailboxes");
       setMailboxes(result);
@@ -36,7 +35,10 @@ export default function InboxPage() {
       console.log("IMAP: Mailboxes fetched successfully", result);
     } catch (err: any) {
       console.error("IMAP: Connection failed", err);
-      setError("Mailbox connection failed. Please check your internet or refresh token.");
+      toast.error("Mailbox connection failed", {
+        description: "Please check your internet connection and try again.",
+        duration: 5000,
+      });
     } finally {
       setMailboxLoading(false);
     }
@@ -72,12 +74,6 @@ export default function InboxPage() {
 
   return (
     <div className="relative h-screen w-screen flex flex-col">
-      {error && (
-        <div className="absolute top-4 right-4 z-50 bg-red-50 border border-red-100 text-red-600 px-4 py-2 rounded-lg shadow-sm text-sm">
-          {error}
-        </div>
-      )}
-
       <MainLayout />
     </div>
   );

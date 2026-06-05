@@ -247,6 +247,16 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                             pollCount++;
                                             if (pollCount > 50) clearInterval(pollInterval);
                                         }, 100);
+
+                                        // 4. Intercept link clicks
+                                        document.addEventListener('click', function(e) {
+                                            const target = e.target;
+                                            const a = target && target.closest ? target.closest('a') : null;
+                                            if (a && a.href) {
+                                                e.preventDefault();
+                                                window.parent.postMessage({ type: 'open_url', url: a.href, id: '${email.id}' }, '*');
+                                            }
+                                        });
                                     </script>
                                 </body>
                                 </html>

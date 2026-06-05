@@ -54,24 +54,21 @@ pub async fn bootstrap_accounts(app_handle: AppHandle) -> Result<crate::auth::bo
 
 #[command]
 pub async fn get_mailboxes(app_handle: AppHandle) -> Result<Vec<crate::mail::imap_client::Mailbox>, String> {
-    let account = session::get_active_account(&app_handle)
-        .ok_or_else(|| "No active account".to_string())?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
     crate::mail::imap_client::get_mailboxes(account).await
 }
 
 #[command]
 pub async fn get_inbox_messages(app_handle: AppHandle) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
-    let account = session::get_active_account(&app_handle)
-        .ok_or_else(|| "No active account".to_string())?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
     crate::mail::message_list::get_inbox_messages(&app_handle, account).await
 }
 
 #[command]
 pub async fn sync_inbox(app_handle: AppHandle) -> Result<u32, String> {
-    let account = session::get_active_account(&app_handle)
-        .ok_or_else(|| "No active account".to_string())?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
 
     crate::mail::sync_manager::enqueue_sync(app_handle, account, crate::mail::folder::MailFolder::Inbox).await;
     Ok(0) // enqueue is async, returning 0 immediately
@@ -79,8 +76,7 @@ pub async fn sync_inbox(app_handle: AppHandle) -> Result<u32, String> {
 
 #[command]
 pub async fn sync_mail_folder(app_handle: AppHandle, folder: String) -> Result<u32, String> {
-    let account = session::get_active_account(&app_handle)
-        .ok_or_else(|| "No active account".to_string())?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
 
     let mail_folder = folder.parse::<crate::mail::folder::MailFolder>().map_err(|e| e.to_string())?;
 
@@ -96,8 +92,7 @@ pub fn get_folder_messages(app_handle: AppHandle, folder: String, before_uid: Op
 
 #[command]
 pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -> Result<crate::mail::message_body::MessageDetail, String> {
-    let account = session::get_active_account(&app_handle)
-        .ok_or_else(|| "No active account".to_string())?;
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
     let folder = folder.to_lowercase();
     
