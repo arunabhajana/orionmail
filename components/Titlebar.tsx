@@ -2,9 +2,11 @@
 
 
 import { Window as TauriWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, RefreshCw, CheckCircle2, Download, AlertCircle, File, FolderOpen } from "lucide-react";
+import { Minus, Square, X, RefreshCw, CheckCircle2, Download, AlertCircle, File, FolderOpen, Terminal, Database, ShieldAlert, FileText } from "lucide-react";
 import { useEffect, useState, memo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useSync } from "@/components/SyncContext";
 import { useDownloads } from "@/components/DownloadContext";
@@ -141,6 +143,109 @@ function SyncIndicator() {
                         <span className="text-[10px] font-medium text-foreground/70 tracking-tight">
                             Online
                         </span>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
+
+/**
+ * Developer Tools Popover
+ */
+function DevToolsPopover() {
+    const [isOpen, setIsOpen] = useState(false);
+    const [enabled, setEnabled] = useState(false);
+    const popoverRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        // Hydrate
+        if (typeof window !== 'undefined') {
+            setEnabled(localStorage.getItem("orion_dev_tools_enabled") === "true");
+            
+            const handleToggle = (e: any) => {
+                setEnabled(e.detail);
+                if (!e.detail) setIsOpen(false);
+            };
+            window.addEventListener("orion:dev_tools_toggled", handleToggle);
+            return () => window.removeEventListener("orion:dev_tools_toggled", handleToggle);
+        }
+    }, []);
+
+    // Close when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        if (isOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isOpen]);
+
+    if (!enabled) return null;
+
+    const simulateError = (type: string) => {
+        setIsOpen(false);
+        switch(type) {
+            case 'session':
+                emit("auth:session_expired");
+                break;
+            case 'sync':
+                emit("mail:sync_error", { folder: "inbox", error: "Simulated SQLite database connection drop or network failure during IMAP sync." });
+                break;
+            case 'body':
+                toast.error("Body Fetch Error", { description: "Failed to download email body content. Connection reset by peer." });
+                break;
+            case 'db':
+                toast.error("Database Corruption Detected", { description: "Simulated SQLite structural error in messages table." });
+                break;
+        }
+    };
+
+    return (
+        <div ref={popoverRef} className="relative flex items-center h-full mr-2" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className={cn(
+                    "p-1.5 rounded-md transition-colors relative",
+                    "hover:bg-black/5 dark:hover:bg-white/10 text-orange-500",
+                    isOpen && "bg-black/5 dark:bg-white/10"
+                )}
+                title="Developer Tools"
+            >
+                <Terminal size={14} strokeWidth={2} />
+            </button>
+
+            <AnimatePresence>
+                {isOpen && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 5, scale: 0.95 }}
+                        transition={{ duration: 0.2 }}
+                        className="absolute top-full right-0 mt-2 w-64 bg-white/90 dark:bg-[#1C1C21]/90 backdrop-blur-2xl rounded-xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden z-[100]"
+                    >
+                        <div className="px-4 py-3 border-b border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5">
+                            <h3 className="text-sm font-semibold text-foreground dark:text-white tracking-tight">Error Simulation</h3>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">Trigger application error states</p>
+                        </div>
+                        <div className="p-2 flex flex-col gap-1">
+                            <button onClick={() => simulateError('session')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
+                                <ShieldAlert size={14} className="text-red-500" /> Session Expired
+                            </button>
+                            <button onClick={() => simulateError('sync')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
+                                <RefreshCw size={14} className="text-orange-500" /> Sync Error
+                            </button>
+                            <button onClick={() => simulateError('body')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
+                                <FileText size={14} className="text-yellow-500" /> Body Fetch Error
+                            </button>
+                            <button onClick={() => simulateError('db')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
+                                <Database size={14} className="text-purple-500" /> Database Error
+                            </button>
+                        </div>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -308,6 +413,7 @@ export default function Titlebar() {
                 >
                     <RefreshCw size={14} strokeWidth={2} className={cn(isSyncing && "animate-spin text-primary")} />
                 </button>
+                <DevToolsPopover />
                 <DownloadManagerPopover />
                 <div className="flex gap-1">
                     <WindowControl

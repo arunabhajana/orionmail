@@ -9,7 +9,8 @@ import {
     Info,
     LogOut,
     ChevronLeft,
-    MonitorSmartphone
+    MonitorSmartphone,
+    Terminal
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -21,11 +22,12 @@ import { AppearanceSection } from '@/components/settings/AppearanceSection';
 import { NotificationsSection } from '@/components/settings/NotificationsSection';
 import { SecuritySection } from '@/components/settings/SecuritySection';
 import { SystemSection } from '@/components/settings/SystemSection';
+import { DeveloperSection } from '@/components/settings/DeveloperSection';
 import { useAuth } from '@/components/AuthContext';
 
 // --- Types ---
 
-type SettingsTab = 'account' | 'appearance' | 'notifications' | 'security' | 'system' | 'about';
+type SettingsTab = 'account' | 'appearance' | 'notifications' | 'security' | 'system' | 'developer' | 'about';
 
 interface SettingsTabConfig {
     id: SettingsTab;
@@ -39,6 +41,7 @@ const SETTINGS_TABS: SettingsTabConfig[] = [
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'security', label: 'Privacy & Security', icon: Shield },
     { id: 'system', label: 'System & Behavior', icon: MonitorSmartphone },
+    { id: 'developer', label: 'Developer', icon: Terminal },
 ];
 
 // --- Main Page Component ---
@@ -165,8 +168,18 @@ export default function SettingsPage() {
                             </motion.div>
                         )}
 
+                        {activeTab === 'developer' && (
+                            <motion.div key="developer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                <SectionHeader
+                                    title="Developer Settings"
+                                    description="Advanced configuration and testing tools."
+                                />
+                                <DeveloperSection />
+                            </motion.div>
+                        )}
+
                         {/* Placeholders for other tabs */}
-                        {(!['account', 'appearance', 'notifications', 'security', 'system'].includes(activeTab)) && (
+                        {(!['account', 'appearance', 'notifications', 'security', 'system', 'developer'].includes(activeTab)) && (
                             <motion.div key="placeholder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                                 <SectionHeader
                                     title={SETTINGS_TABS.find(t => t.id === activeTab)?.label || 'Settings'}

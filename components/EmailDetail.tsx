@@ -9,7 +9,8 @@ import {
     AlertOctagon,
     File,
     Download,
-    Star
+    Star,
+    Clock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
@@ -105,16 +106,24 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                             <OtpBanner code={otpCode} />
                         )}
 
-                        {error ? (
-                            <div className="flex flex-col h-[40vh] items-center justify-center border border-red-500/20 bg-red-500/5 rounded-2xl mx-auto my-8 max-w-2xl">
-                                <AlertOctagon className="w-10 h-10 text-red-500 mb-4 opacity-80" />
-                                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">Message Body Unavailable</h3>
-                                <p className="text-sm text-red-600/70 dark:text-red-400/70 mb-6 text-center px-8 line-clamp-3" title={error}>{error}</p>
-                                <button onClick={retry} className="px-6 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-lg font-medium transition-colors">
-                                    Try Again
-                                </button>
-                            </div>
-                        ) : isLoadingBody ? (
+                        {error ? (() => {
+                            const isTimeout = error.includes("Timeout");
+                            const Icon = isTimeout ? Clock : AlertOctagon;
+                            return (
+                                <div className={cn("flex flex-col h-[40vh] items-center justify-center border rounded-2xl mx-auto my-8 max-w-2xl", isTimeout ? "border-orange-500/20 bg-orange-500/5" : "border-red-500/20 bg-red-500/5")}>
+                                    <Icon className={cn("w-10 h-10 mb-4 opacity-80", isTimeout ? "text-orange-500" : "text-red-500")} />
+                                    <h3 className={cn("text-lg font-semibold mb-2", isTimeout ? "text-orange-600 dark:text-orange-400" : "text-red-600 dark:text-red-400")}>
+                                        {isTimeout ? "Connection Timeout" : "Message Body Unavailable"}
+                                    </h3>
+                                    <p className={cn("text-sm mb-6 text-center px-8 line-clamp-3", isTimeout ? "text-orange-600/70 dark:text-orange-400/70" : "text-red-600/70 dark:text-red-400/70")} title={error}>
+                                        {isTimeout ? "The server took too long to fetch the email content. This may be due to a slow network or large email size." : error}
+                                    </p>
+                                    <button onClick={retry} className={cn("px-6 py-2 rounded-lg font-medium transition-colors", isTimeout ? "bg-orange-500/10 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400" : "bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400")}>
+                                        Try Again
+                                    </button>
+                                </div>
+                            );
+                        })() : isLoadingBody ? (
                             <div className="flex flex-col h-[60vh] items-center justify-center">
                                 <OrbitLoader
                                     message="Receiving transmission..."

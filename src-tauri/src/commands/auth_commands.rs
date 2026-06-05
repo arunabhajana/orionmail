@@ -115,7 +115,7 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
     ).await;
 
     // Poll cache
-    for _ in 0..100 { // 5 second timeout (100 * 50ms)
+    for _ in 0..600 { // 30 second timeout (600 * 50ms)
         if let Ok(Some((cached_body, attachments_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
             let attachments = if let Some(json) = attachments_json {
                 serde_json::from_str(&json).unwrap_or_default()
