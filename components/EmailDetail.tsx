@@ -42,7 +42,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === 'dark';
 
-    const { bodyContent, attachments, isLoadingBody, iframeHeight } = useEmailBody(
+    const { bodyContent, attachments, isLoadingBody, iframeHeight, error, retry } = useEmailBody(
         email?.id,
         email?.uid,
         email?.unread,
@@ -105,7 +105,16 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                             <OtpBanner code={otpCode} />
                         )}
 
-                        {isLoadingBody ? (
+                        {error ? (
+                            <div className="flex flex-col h-[40vh] items-center justify-center border border-red-500/20 bg-red-500/5 rounded-2xl mx-auto my-8 max-w-2xl">
+                                <AlertOctagon className="w-10 h-10 text-red-500 mb-4 opacity-80" />
+                                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">Message Body Unavailable</h3>
+                                <p className="text-sm text-red-600/70 dark:text-red-400/70 mb-6 text-center px-8 line-clamp-3" title={error}>{error}</p>
+                                <button onClick={retry} className="px-6 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-lg font-medium transition-colors">
+                                    Try Again
+                                </button>
+                            </div>
+                        ) : isLoadingBody ? (
                             <div className="flex flex-col h-[60vh] items-center justify-center">
                                 <OrbitLoader
                                     message="Receiving transmission..."

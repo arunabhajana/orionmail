@@ -3,6 +3,7 @@
 import React, { useState, useLayoutEffect, useRef, useEffect, useCallback } from 'react';
 import { Email } from '@/lib/types';
 import { formatEmailTime } from '@/lib/utils';
+import { AlertCircle } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import ComposeModal from '@/components/ComposeModal';
@@ -28,6 +29,7 @@ export default function MainLayout() {
     const [isBootstrapping, setIsBootstrapping] = useState(true);
     const [isLoadingFolder, setIsLoadingFolder] = useState(false); // Loading skeleton when switching folders
     const [syncError, setSyncError] = useState<string | null>(null);
+    const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
 
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(true);
@@ -400,6 +402,10 @@ export default function MainLayout() {
                 setIsSyncing(false);
             });
     };
+    
+    const handleForceSync = () => {
+        triggerSync();
+    };
 
     useEffect(() => {
         if (syncTriggerCount > 0) {
@@ -556,24 +562,19 @@ export default function MainLayout() {
         let unlistenUpdated: (() => void) | undefined;
         let unlistenStarted: (() => void) | undefined;
         let unlistenFinished: (() => void) | undefined;
+        let unlistenError: (() => void) | undefined;
 
         const setupListener = async () => {
             unlistenUpdated = await listen<string>('mail:updated', async (event) => {
-                // event.payload is the folder name that was synced (e.g. "inbox", "sent")
                 const syncedFolder = event.payload;
                 const activeFolder = currentFolderRef.current;
 
-                // For starred view, we refresh if inbox OR sent was synced (both contribute stars)
                 const isRelevant = 
                     activeFolder === syncedFolder ||
                     (activeFolder === 'starred' && (syncedFolder === 'inbox' || syncedFolder === 'sent'));
 
-                if (!isRelevant) {
-                    console.log(`mail:updated for '${syncedFolder}', but active folder is '${activeFolder}'. Skipping refresh.`);
-                    return;
-                }
+                if (!isRelevant) return;
 
-                console.log(`mail:updated for '${syncedFolder}' (active: '${activeFolder}'). Refreshing.`);
                 if (emailsRef.current.length === 0) {
                     await fetchCache(activeFolder);
                 } else {
@@ -582,7 +583,13 @@ export default function MainLayout() {
             });
 
             unlistenStarted = await listen<string>('mail:sync_started', (event) => {
-                setSyncingFolders(prev => new Set(prev).add(event.payload));
+                const folder = event.payload;
+                setSyncingFolders(prev => new Set(prev).add(folder));
+                setSyncErrors(prev => {
+                    const next = { ...prev };
+                    delete next[folder];
+                    return next;
+                });
             });
 
             unlistenFinished = await listen<string>('mail:sync_finished', async (event) => {
@@ -592,11 +599,16 @@ export default function MainLayout() {
                     return next;
                 });
                 
-                // If the folder that finished is the active folder and we somehow still have 0 emails
-                // (e.g., mail:updated didn't fire because num_new was 0, but maybe some older cache exists?)
                 if (event.payload === currentFolderRef.current && emailsRef.current.length === 0) {
                     await fetchCache(event.payload);
                 }
+            });
+            
+            unlistenError = await listen<any>('mail:sync_error', (event) => {
+                setSyncErrors(prev => ({
+                    ...prev,
+                    [event.payload.folder]: event.payload.error
+                }));
             });
         };
 
@@ -606,6 +618,7 @@ export default function MainLayout() {
             if (unlistenUpdated) unlistenUpdated();
             if (unlistenStarted) unlistenStarted();
             if (unlistenFinished) unlistenFinished();
+            if (unlistenError) unlistenError();
         };
     }, []);
 
@@ -767,10 +780,36 @@ export default function MainLayout() {
             />
 
             {/* Column 2: Message List */}
-            <EmailList
-                className="list-anim w-[380px] flex flex-col shrink-0"
-                emails={filteredEmails}
-                selectedEmailId={selectedEmailId}
+            <div className="list-anim w-[380px] flex flex-col shrink-0 border-r border-black/5 dark:border-white/5">
+                {/* Sync Error Banner */}
+                <AnimatePresence>
+                    {Object.entries(syncErrors).length > 0 && (
+                        <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="bg-red-500/10 border-b border-red-500/20 text-red-600 dark:text-red-400 px-4 py-2.5 flex items-center justify-between z-10"
+                        >
+                            <div className="flex items-center gap-2 overflow-hidden">
+                                <AlertCircle className="w-4 h-4 shrink-0" />
+                                <span className="text-xs font-medium truncate">
+                                    Sync failed. Check connection.
+                                </span>
+                            </div>
+                            <button
+                                onClick={handleForceSync}
+                                className="text-xs font-bold hover:text-red-700 dark:hover:text-red-300 ml-4 shrink-0 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                            >
+                                RETRY
+                            </button>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                <EmailList
+                    className="flex-1 overflow-hidden"
+                    emails={filteredEmails}
+                    selectedEmailId={selectedEmailId}
                 onSelectEmail={(id) => setSelectedEmailId(id)}
                 onToggleStar={toggleStar}
                 onToggleRead={toggleRead}
@@ -783,6 +822,7 @@ export default function MainLayout() {
                 listRef={emailListContainerRef}
                 currentFolder={currentFolder}
             />
+            </div>
 
             {/* Column 3: Reading Pane */}
             <EmailDetail

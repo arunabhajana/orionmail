@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { enable, isEnabled, disable } from '@tauri-apps/plugin-autostart';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
-// Actually, let's build custom nicely styled toggles for this since we don't know if Switch exists.
+import { toast } from 'sonner';
 
 interface SystemSettings {
     minimize_to_tray: boolean;
@@ -151,17 +151,27 @@ export function SystemSection() {
                             <p className="text-sm text-muted-foreground mt-1">Delete all locally stored emails and force a complete resynchronization from the server.</p>
                         </div>
                         <button 
-                            onClick={async () => {
-                                if (confirm("Are you sure you want to clear your local email cache? This will force the app to re-download all your emails.")) {
-                                    try {
-                                        await invoke('clear_local_cache');
-                                        alert("Cache cleared successfully! The app will now resynchronize.");
-                                        window.location.href = "/inbox"; // Redirect to inbox to trigger resync
-                                    } catch (e) {
-                                        console.error(e);
-                                        alert("Failed to clear cache.");
+                            onClick={() => {
+                                toast("Clear local cache?", {
+                                    description: "This will force the app to re-download all your emails.",
+                                    action: {
+                                        label: "Confirm",
+                                        onClick: async () => {
+                                            try {
+                                                await invoke('clear_local_cache');
+                                                toast.success("Cache cleared successfully!");
+                                                window.location.href = "/inbox"; // Redirect to inbox to trigger resync
+                                            } catch (e) {
+                                                console.error(e);
+                                                toast.error("Failed to clear cache.");
+                                            }
+                                        }
+                                    },
+                                    cancel: {
+                                        label: "Cancel",
+                                        onClick: () => {}
                                     }
-                                }
+                                });
                             }}
                             className="px-4 py-2 bg-red-500/10 text-red-600 rounded-lg hover:bg-red-500/20 font-medium transition-colors"
                         >

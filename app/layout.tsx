@@ -7,6 +7,7 @@ import { SyncProvider } from "@/components/SyncContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AccentColorProvider } from "@/components/AccentColorProvider";
 import { DownloadProvider } from "@/components/DownloadContext";
+import { Toaster } from "sonner";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -46,6 +47,7 @@ export default function RootLayout({
                     <div className="pt-[30px] h-full w-full overflow-hidden">
                       {children}
                     </div>
+                    <Toaster theme="system" richColors position="top-center" />
                   </div>
                 </DownloadProvider>
               </SyncProvider>

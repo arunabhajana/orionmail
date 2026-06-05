@@ -58,6 +58,10 @@ pub async fn enqueue_sync(app_handle: AppHandle, account: Account, folder: MailF
         if let Err(e) = crate::mail::sync::sync_folder(&app_handle, account, folder.clone()).await {
             log::error!("Sync failed for folder {}: {}", folder, e);
             let _ = crate::mail::database::set_folder_sync_error(&app_handle, &folder.to_string(), &e);
+            let _ = app_handle.emit("mail:sync_error", serde_json::json!({
+                "folder": folder.to_string(),
+                "error": e.to_string()
+            }));
         }
         
         let _ = app_handle.emit("mail:sync_finished", folder.to_string());

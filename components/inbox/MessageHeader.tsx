@@ -8,6 +8,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { cn } from '@/lib/utils';
 import { Email, Attachment } from '@/lib/types';
 import { useDownloads } from '@/components/DownloadContext';
+import { toast } from 'sonner';
 
 export const MessageHeader = memo(({ email }: { email: Email }) => {
     const [showToast, setShowToast] = useState(false);
@@ -179,10 +180,10 @@ export const AttachmentCard = memo(({ uid, folder, attachment }: { uid: number, 
             });
             console.log(`Downloaded to ${resultPath}`);
             updateDownloadStatus(downloadId, 'completed', resultPath);
+            toast.success("Attachment downloaded successfully");
         } catch (err) {
             console.error("Download failed:", err);
-            alert(`Download failed: ${err}`);
-            // If we had the downloadId here, we could mark it as error it, but addDownload might not have fired if dialog failed.
+            toast.error("Failed to download attachment", { description: String(err) });
         } finally {
             setIsDownloading(false);
         }

@@ -16,6 +16,8 @@ use std::sync::Mutex;
 use crate::config::{AppSettings, get_app_settings, set_app_settings, was_launched_minimized};
 use tauri_plugin_autostart::MacosLauncher;
 
+pub struct BootError(pub Mutex<Option<String>>);
+
 
 #[cfg(target_os = "windows")]
 use window_vibrancy::apply_mica;
@@ -151,14 +153,21 @@ pub fn run() {
         let _ = std::fs::remove_dir_all(&inline_dir);
       }
 
-      crate::mail::database::init_db(app.handle())?;
-      crate::contacts::contact_store::init_contacts_db(app.handle())?;
+      let boot_err = match crate::mail::database::init_db(app.handle()) {
+          Ok(_) => match crate::contacts::contact_store::init_contacts_db(app.handle()) {
+              Ok(_) => None,
+              Err(e) => Some(format!("Contacts Database Error: {}", e)),
+          },
+          Err(e) => Some(format!("Mail Database Error: {}", e)),
+      };
+      app.manage(BootError(Mutex::new(boot_err)));
 
       crate::tray_state::spawn_tray_update_loop(app.handle().clone());
 
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+      get_boot_error,
       login_google,
       get_current_user,
       list_accounts,

@@ -14,6 +14,32 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     const [attachments, setAttachments] = useState<Attachment[]>([]);
     const [isLoadingBody, setIsLoadingBody] = useState<boolean>(false);
     const [iframeHeight, setIframeHeight] = useState<number>(400);
+    const [error, setError] = useState<string | null>(null);
+
+    const fetchBody = async () => {
+        if (!emailUid) return;
+        setIsLoadingBody(true);
+        setError(null);
+        setIframeHeight(400); // Reset height on new email
+        try {
+            const dbFolder = folder === "sent" ? "sent" : "INBOX";
+            const detail: MessageDetail = await invoke('get_message_body', { folder: dbFolder, uid: emailUid });
+            setBodyContent(detail.body || "<p>Message has no content.</p>");
+            setAttachments(detail.attachments || []);
+        } catch (err) {
+            console.error("Failed to load message body:", err);
+            if (String(err).includes("No active account")) {
+                localStorage.removeItem("orion_user");
+                window.location.href = "/";
+                return;
+            }
+            setError(String(err));
+            setBodyContent("");
+            setAttachments([]);
+        } finally {
+            setIsLoadingBody(false);
+        }
+    };
 
     // Fetch the email body content via IPC
     useEffect(() => {
@@ -21,12 +47,14 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         if (!emailId || emailUid === undefined) {
             setBodyContent("");
             setAttachments([]);
+            setError(null);
             return;
         }
 
-        const fetchBody = async () => {
+        const runFetch = async () => {
             setIsLoadingBody(true);
-            setIframeHeight(400); // Reset height on new email
+            setError(null);
+            setIframeHeight(400);
             try {
                 const dbFolder = folder === "sent" ? "sent" : "INBOX";
                 const detail: MessageDetail = await invoke('get_message_body', { folder: dbFolder, uid: emailUid });
@@ -42,7 +70,8 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
                     return;
                 }
                 if (isMounted) {
-                    setBodyContent(`<p class="text-red-500">Error loading message body: ${err}</p>`);
+                    setError(String(err));
+                    setBodyContent("");
                     setAttachments([]);
                 }
             } finally {
@@ -52,7 +81,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             }
         };
 
-        fetchBody();
+        runFetch();
 
         // Listen for background prefetch completion
         const unlisten = listen('mail:body_cached', (event) => {
@@ -90,5 +119,5 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         return () => window.removeEventListener('message', handleMessage);
     }, [emailId]);
 
-    return { bodyContent, attachments, isLoadingBody, iframeHeight };
+    return { bodyContent, attachments, isLoadingBody, iframeHeight, error, retry: fetchBody };
 }

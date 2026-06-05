@@ -2,6 +2,7 @@ use crate::auth::session::get_active_account;
 use crate::mail::database;
 use crate::mail::imap_session::{execute_with_session, SessionKind};
 use tauri::AppHandle;
+use crate::BootError;
 
 #[tauri::command]
 pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
@@ -408,4 +409,9 @@ pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<Diagno
 pub async fn open_url(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| format!("Failed to open URL: {}", e))?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_boot_error(state: tauri::State<'_, BootError>) -> Option<String> {
+    state.0.lock().unwrap().clone()
 }
