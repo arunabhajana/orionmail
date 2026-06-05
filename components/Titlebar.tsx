@@ -2,7 +2,7 @@
 
 
 import { Window as TauriWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, RefreshCw, CheckCircle2, Download, AlertCircle, File, FolderOpen, Terminal, Database, ShieldAlert, FileText } from "lucide-react";
+import { Minus, Square, X, RefreshCw, CheckCircle2, Download, AlertCircle, File, FolderOpen, Terminal, Database, ShieldAlert, FileText, WifiOff, Clock } from "lucide-react";
 import { useEffect, useState, memo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
@@ -156,6 +156,7 @@ function SyncIndicator() {
 function DevToolsPopover() {
     const [isOpen, setIsOpen] = useState(false);
     const [enabled, setEnabled] = useState(false);
+    const [isSimulatedOffline, setIsSimulatedOffline] = useState(false);
     const popoverRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -202,6 +203,16 @@ function DevToolsPopover() {
             case 'db':
                 toast.error("Database Corruption Detected", { description: "Simulated SQLite structural error in messages table." });
                 break;
+            case 'timeout':
+                // Custom event for useEmailBody.ts to catch and render the orange clock UI
+                window.dispatchEvent(new CustomEvent("orion:simulate_error", { detail: "Timeout waiting for message body to fetch" }));
+                break;
+            case 'offline':
+                const newOfflineState = !isSimulatedOffline;
+                setIsSimulatedOffline(newOfflineState);
+                window.dispatchEvent(new Event(newOfflineState ? 'offline' : 'online'));
+                toast.info(newOfflineState ? "Simulated Offline Mode Enabled" : "Simulated Offline Mode Disabled");
+                break;
         }
     };
 
@@ -242,8 +253,16 @@ function DevToolsPopover() {
                             <button onClick={() => simulateError('body')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
                                 <FileText size={14} className="text-yellow-500" /> Body Fetch Error
                             </button>
+                            <button onClick={() => simulateError('timeout')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
+                                <Clock size={14} className="text-orange-400" /> Simulate Timeout UI
+                            </button>
                             <button onClick={() => simulateError('db')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
                                 <Database size={14} className="text-purple-500" /> Database Error
+                            </button>
+                            <div className="h-px bg-black/5 dark:bg-white/5 my-1 mx-2" />
+                            <button onClick={(e) => { e.stopPropagation(); simulateError('offline'); }} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
+                                <WifiOff size={14} className={isSimulatedOffline ? "text-red-500" : "text-muted-foreground"} /> 
+                                {isSimulatedOffline ? "Disable Offline Mode" : "Enable Offline Mode"}
                             </button>
                         </div>
                     </motion.div>

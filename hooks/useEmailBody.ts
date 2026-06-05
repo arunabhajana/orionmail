@@ -94,9 +94,21 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             }
         });
 
+        // Listen for dev tools simulate error event
+        const handleSimulateError = (e: Event) => {
+            const customEvent = e as CustomEvent;
+            if (isMounted && customEvent.detail) {
+                setError(customEvent.detail);
+                setBodyContent("");
+                setAttachments([]);
+            }
+        };
+        window.addEventListener("orion:simulate_error", handleSimulateError);
+
         return () => {
             isMounted = false;
             unlisten.then(f => f());
+            window.removeEventListener("orion:simulate_error", handleSimulateError);
         };
     }, [emailId, emailUid, folder]);
 
