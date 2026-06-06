@@ -23,7 +23,9 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
 
     let current_time = Utc::now().timestamp();
     
-    if account.expires_at <= current_time && !account.refresh_token.is_empty() {
+    // Proactively refresh the token 5 minutes before it actually expires to prevent
+    // mid-flight authentication failures on long-running IMAP connections.
+    if account.expires_at <= current_time + 300 && !account.refresh_token.is_empty() {
         let client_id = env!("GOOGLE_CLIENT_ID");
         let client_secret = env!("GOOGLE_CLIENT_SECRET");
         
