@@ -5,6 +5,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { enable, isEnabled, disable } from '@tauri-apps/plugin-autostart';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { toast } from 'sonner';
+import { useSettings } from './SettingsContext';
+import { deepEqual } from '@/lib/deepEqual';
 
 interface SystemSettings {
     minimize_to_tray: boolean;
@@ -14,6 +16,15 @@ interface SystemSettings {
 }
 
 export function SystemSection() {
+    const { registerSection, unregisterSection, markDirty } = useSettings();
+
+    const [originalSettings, setOriginalSettings] = useState<SystemSettings>({
+        minimize_to_tray: true,
+        start_hidden: true,
+        launch_at_startup: false,
+        app_lock_enabled: false,
+    });
+
     const [settings, setSettings] = useState<SystemSettings>({
         minimize_to_tray: true,
         start_hidden: true,
@@ -27,12 +38,14 @@ export function SystemSection() {
             try {
                 const rustSettings: any = await invoke('get_app_settings');
                 const autostartEnabled = await isEnabled();
-                setSettings({
+                const loadedSettings = {
                     minimize_to_tray: rustSettings.minimize_to_tray,
                     start_hidden: rustSettings.start_hidden,
                     launch_at_startup: autostartEnabled,
                     app_lock_enabled: rustSettings.app_lock_enabled === true,
-                });
+                };
+                setOriginalSettings(loadedSettings);
+                setSettings(loadedSettings);
             } catch (err) {
                 console.error("Failed to load system settings", err);
             } finally {
@@ -42,55 +55,63 @@ export function SystemSection() {
         fetchSettings();
     }, []);
 
-    const toggleMinimizeToTray = async () => {
-        const newVal = !settings.minimize_to_tray;
-        setSettings(s => ({ ...s, minimize_to_tray: newVal }));
-        try {
-            await invoke('set_app_settings', { minimizeToTray: newVal, startHidden: settings.start_hidden, appLockEnabled: settings.app_lock_enabled });
-        } catch (e) {
-            console.error("Failed to update minimize_to_tray", e);
-            // revert
-            setSettings(s => ({ ...s, minimize_to_tray: !newVal }));
-        }
-    };
-
-    const toggleStartHidden = async () => {
-        const newVal = !settings.start_hidden;
-        setSettings(s => ({ ...s, start_hidden: newVal }));
-        try {
-            await invoke('set_app_settings', { minimizeToTray: settings.minimize_to_tray, startHidden: newVal, appLockEnabled: settings.app_lock_enabled });
-        } catch (e) {
-            console.error("Failed to update start_hidden", e);
-            // revert
-            setSettings(s => ({ ...s, start_hidden: !newVal }));
-        }
-    };
-
-    const toggleLaunchAtStartup = async () => {
-        const newVal = !settings.launch_at_startup;
-        setSettings(s => ({ ...s, launch_at_startup: newVal }));
-        try {
-            if (newVal) {
-                await enable();
-                let permissionGranted = await isPermissionGranted();
-                if (!permissionGranted) {
-                    const permission = await requestPermission();
-                    permissionGranted = permission === 'granted';
+    // Register section
+    useEffect(() => {
+        const isDirty = !deepEqual(originalSettings, settings);
+        
+        registerSection({
+            id: 'system',
+            isDirty,
+            save: async () => {
+                await invoke('set_app_settings', { 
+                    minimizeToTray: settings.minimize_to_tray, 
+                    startHidden: settings.start_hidden, 
+                    appLockEnabled: settings.app_lock_enabled 
+                });
+                
+                if (settings.launch_at_startup !== originalSettings.launch_at_startup) {
+                    if (settings.launch_at_startup) {
+                        await enable();
+                        let permissionGranted = await isPermissionGranted();
+                        if (!permissionGranted) {
+                            const permission = await requestPermission();
+                            permissionGranted = permission === 'granted';
+                        }
+                        if (permissionGranted) {
+                            sendNotification({
+                                title: 'Autostart Enabled',
+                                body: 'OrionMail will now launch automatically when Windows starts.'
+                            });
+                        }
+                    } else {
+                        await disable();
+                    }
                 }
-                if (permissionGranted) {
-                    sendNotification({
-                        title: 'Autostart Enabled',
-                        body: 'OrionMail will now launch automatically when Windows starts.'
-                    });
-                }
-            } else {
-                await disable();
+                
+                setOriginalSettings(settings);
+            },
+            reset: () => {
+                setSettings(originalSettings);
             }
-        } catch (e) {
-            console.error("Failed to update autostart", e);
-            // revert
-            setSettings(s => ({ ...s, launch_at_startup: !newVal }));
-        }
+        });
+
+        return () => unregisterSection('system');
+    }, [originalSettings, settings, registerSection, unregisterSection]);
+
+    useEffect(() => {
+        markDirty('system', !deepEqual(originalSettings, settings));
+    }, [settings, originalSettings, markDirty]);
+
+    const toggleMinimizeToTray = () => {
+        setSettings(s => ({ ...s, minimize_to_tray: !s.minimize_to_tray }));
+    };
+
+    const toggleStartHidden = () => {
+        setSettings(s => ({ ...s, start_hidden: !s.start_hidden }));
+    };
+
+    const toggleLaunchAtStartup = () => {
+        setSettings(s => ({ ...s, launch_at_startup: !s.launch_at_startup }));
     };
 
     if (isLoading) {

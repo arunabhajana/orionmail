@@ -24,6 +24,10 @@ import { SecuritySection } from '@/components/settings/SecuritySection';
 import { SystemSection } from '@/components/settings/SystemSection';
 import { DeveloperSection } from '@/components/settings/DeveloperSection';
 import { useAuth } from '@/components/AuthContext';
+import { SettingsProvider, useSettings } from '@/components/settings/SettingsContext';
+import { UnsavedChangesBar } from '@/components/settings/UnsavedChangesBar';
+import { ConfirmNavigationDialog } from '@/components/settings/ConfirmNavigationDialog';
+import { useRouter } from 'next/navigation';
 
 // --- Types ---
 
@@ -46,9 +50,24 @@ const SETTINGS_TABS: SettingsTabConfig[] = [
 
 // --- Main Page Component ---
 
-export default function SettingsPage() {
+function SettingsPageInner() {
     const [activeTab, setActiveTab] = useState<SettingsTab>('account');
     const { user, logout } = useAuth();
+    const router = useRouter();
+    const { dirtySections, requestNavigation } = useSettings();
+
+    const handleTabClick = (tabId: SettingsTab) => {
+        if (tabId === activeTab) return;
+        requestNavigation(() => {
+            setActiveTab(tabId);
+        });
+    };
+
+    const handleBackClick = () => {
+        requestNavigation(() => {
+            router.push('/inbox');
+        });
+    };
 
     return (
         <div className="flex h-full w-full bg-[#FAFAFA] dark:bg-black text-slate-900 dark:text-white transition-colors duration-200">
@@ -62,10 +81,10 @@ export default function SettingsPage() {
                 {/* Content Wrapper */}
                 <div className="relative z-10 flex flex-col h-full w-full p-4">
                     <div className="mb-8 px-2">
-                        <Link href="/inbox" className="flex items-center gap-2 text-muted-foreground dark:text-white/60 hover:text-foreground dark:hover:text-white/90 transition-colors mb-6 font-medium dark:font-normal">
+                        <button onClick={handleBackClick} className="flex items-center gap-2 text-muted-foreground dark:text-white/60 hover:text-foreground dark:hover:text-white/90 transition-colors mb-6 font-medium dark:font-normal">
                             <ChevronLeft className="w-4 h-4" />
                             <span className="text-sm">Back to Inbox</span>
-                        </Link>
+                        </button>
                         <h1 className="text-2xl font-bold tracking-tight text-foreground dark:text-white/90">Settings</h1>
                     </div>
 
@@ -73,19 +92,25 @@ export default function SettingsPage() {
                         {SETTINGS_TABS.map((tab) => {
                             const Icon = tab.icon;
                             const isActive = activeTab === tab.id;
+                            const isDirty = dirtySections[tab.id]?.isDirty;
                             return (
                                 <button
                                     key={tab.id}
-                                    onClick={() => setActiveTab(tab.id)}
+                                    onClick={() => handleTabClick(tab.id)}
                                     className={cn(
-                                        "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200",
+                                        "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all duration-200",
                                         isActive
                                             ? "bg-white/60 dark:bg-white/10 text-foreground dark:text-white/90 font-medium shadow-sm ring-1 ring-black/5 dark:ring-white/5"
                                             : "text-muted-foreground dark:text-white/60 hover:text-foreground dark:hover:text-white/90 hover:bg-white/40 dark:hover:bg-white/5 font-medium"
                                     )}
                                 >
-                                    <Icon className={cn("w-5 h-5", isActive ? "text-primary" : "text-muted-foreground")} strokeWidth={2} />
-                                    {tab.label}
+                                    <div className="flex items-center gap-3">
+                                        <Icon className={cn("w-5 h-5", isActive ? "text-primary" : "text-muted-foreground")} strokeWidth={2} />
+                                        {tab.label}
+                                    </div>
+                                    {isDirty && (
+                                        <span className="text-orange-500 font-bold px-2 text-lg leading-none">•</span>
+                                    )}
                                 </button>
                             );
                         })}
@@ -192,7 +217,28 @@ export default function SettingsPage() {
                         )}
                     </AnimatePresence>
                 </div>
+                
+                <UnsavedChangesBar />
             </main>
         </div>
+    );
+}
+
+export default function SettingsPage() {
+    const [pendingCallback, setPendingCallback] = useState<(() => void) | null>(null);
+
+    const handleInterceptNavigation = (cb: () => void) => {
+        // Must wrap in a thunk so React doesn't execute cb as a state updater
+        setPendingCallback(() => cb);
+    };
+
+    return (
+        <SettingsProvider onInterceptNavigation={handleInterceptNavigation}>
+            <SettingsPageInner />
+            <ConfirmNavigationDialog
+                pendingCallback={pendingCallback}
+                onResolve={() => setPendingCallback(null)}
+            />
+        </SettingsProvider>
     );
 }

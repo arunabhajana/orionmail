@@ -3,25 +3,49 @@
 import React, { useState, useEffect } from 'react';
 import { Terminal, BugPlay } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useSettings } from './SettingsContext';
 
 export function DeveloperSection() {
+    const { registerSection, unregisterSection, markDirty } = useSettings();
+    const [originalDevToolsEnabled, setOriginalDevToolsEnabled] = useState(false);
     const [devToolsEnabled, setDevToolsEnabled] = useState(false);
 
     useEffect(() => {
         // Hydrate from localStorage
         const stored = localStorage.getItem("orion_dev_tools_enabled");
         if (stored === "true") {
+            setOriginalDevToolsEnabled(true);
             setDevToolsEnabled(true);
         }
     }, []);
 
+    // Register section
+    useEffect(() => {
+        const isDirty = originalDevToolsEnabled !== devToolsEnabled;
+
+        registerSection({
+            id: 'developer',
+            isDirty,
+            save: async () => {
+                localStorage.setItem("orion_dev_tools_enabled", String(devToolsEnabled));
+                // Dispatch custom event so the Titlebar can react instantly
+                window.dispatchEvent(new CustomEvent("orion:dev_tools_toggled", { detail: devToolsEnabled }));
+                setOriginalDevToolsEnabled(devToolsEnabled);
+            },
+            reset: () => {
+                setDevToolsEnabled(originalDevToolsEnabled);
+            }
+        });
+
+        return () => unregisterSection('developer');
+    }, [originalDevToolsEnabled, devToolsEnabled, registerSection, unregisterSection]);
+
+    useEffect(() => {
+        markDirty('developer', originalDevToolsEnabled !== devToolsEnabled);
+    }, [originalDevToolsEnabled, devToolsEnabled, markDirty]);
+
     const toggleDevTools = () => {
-        const newState = !devToolsEnabled;
-        setDevToolsEnabled(newState);
-        localStorage.setItem("orion_dev_tools_enabled", String(newState));
-        
-        // Dispatch custom event so the Titlebar can react instantly
-        window.dispatchEvent(new CustomEvent("orion:dev_tools_toggled", { detail: newState }));
+        setDevToolsEnabled(!devToolsEnabled);
     };
 
     return (

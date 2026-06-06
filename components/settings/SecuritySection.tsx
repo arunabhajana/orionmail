@@ -3,9 +3,13 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
+import { useSettings } from './SettingsContext';
 
 export const SecuritySection = () => {
+    const { registerSection, unregisterSection, markDirty } = useSettings();
     const [helloAvailable, setHelloAvailable] = useState(false);
+    
+    const [originalAppLockEnabled, setOriginalAppLockEnabled] = useState(false);
     const [appLockEnabled, setAppLockEnabled] = useState(false);
 
     useEffect(() => {
@@ -13,6 +17,7 @@ export const SecuritySection = () => {
         invoke<any>('get_app_settings')
             .then(settings => {
                 const stored = settings.app_lock_enabled === true;
+                setOriginalAppLockEnabled(stored);
                 setAppLockEnabled(stored);
 
                 // Check availability
@@ -20,13 +25,9 @@ export const SecuritySection = () => {
                     .then(available => {
                         setHelloAvailable(available);
                         if (!available && stored) {
-                            // Disable it if somehow enabled but no longer available
+                            // If disabled by unavailability, we force update it immediately in backend just to be safe
+                            // But let's just mark it in local state
                             setAppLockEnabled(false);
-                            invoke('set_app_settings', {
-                                minimizeToTray: settings.minimize_to_tray,
-                                startHidden: settings.start_hidden,
-                                appLockEnabled: false
-                            });
                         }
                     })
                     .catch(console.error);
@@ -34,19 +35,36 @@ export const SecuritySection = () => {
             .catch(console.error);
     }, []);
 
-    const handleAppLockChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const newState = e.target.checked;
-        setAppLockEnabled(newState);
-        try {
-            const settings = await invoke<any>('get_app_settings');
-            await invoke('set_app_settings', {
-                minimizeToTray: settings.minimize_to_tray,
-                startHidden: settings.start_hidden,
-                appLockEnabled: newState
-            });
-        } catch (e) {
-            console.error("Failed to save app_lock_enabled", e);
-        }
+    // Register section
+    useEffect(() => {
+        const isDirty = originalAppLockEnabled !== appLockEnabled;
+
+        registerSection({
+            id: 'security',
+            isDirty,
+            save: async () => {
+                const settings = await invoke<any>('get_app_settings');
+                await invoke('set_app_settings', {
+                    minimizeToTray: settings.minimize_to_tray,
+                    startHidden: settings.start_hidden,
+                    appLockEnabled: appLockEnabled
+                });
+                setOriginalAppLockEnabled(appLockEnabled);
+            },
+            reset: () => {
+                setAppLockEnabled(originalAppLockEnabled);
+            }
+        });
+
+        return () => unregisterSection('security');
+    }, [originalAppLockEnabled, appLockEnabled, registerSection, unregisterSection]);
+
+    useEffect(() => {
+        markDirty('security', originalAppLockEnabled !== appLockEnabled);
+    }, [originalAppLockEnabled, appLockEnabled, markDirty]);
+
+    const handleAppLockChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setAppLockEnabled(e.target.checked);
     };
 
     return (
