@@ -28,7 +28,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             setAttachments(detail.attachments || []);
         } catch (err) {
             console.error("Failed to load message body:", err);
-            if (String(err).includes("No active account")) {
+            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
                 window.location.href = "/";
                 return;
@@ -64,7 +64,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
                 }
             } catch (err) {
                 console.error("Failed to load message body:", err);
-                if (String(err).includes("No active account")) {
+                if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                     localStorage.removeItem("orion_user");
                     window.location.href = "/";
                     return;

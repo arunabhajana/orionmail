@@ -47,7 +47,6 @@ fn connect_and_authenticate(
     let port = 993;
 
     let tls = TlsConnector::builder()
-        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| format!("TLS Builder Error: {}", e))?;
 

@@ -111,7 +111,7 @@ export default function MainLayout() {
             fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to toggle star", err);
-            if (String(err).includes("No active account")) {
+            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
                 window.location.href = "/";
                 return;
@@ -142,7 +142,7 @@ export default function MainLayout() {
             fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to toggle read", err);
-            if (String(err).includes("No active account")) {
+            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
                 window.location.href = "/";
                 return;
@@ -171,7 +171,7 @@ export default function MainLayout() {
             fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to mark as read", err);
-            if (String(err).includes("No active account")) {
+            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
                 window.location.href = "/";
                 return;
@@ -203,7 +203,7 @@ export default function MainLayout() {
             fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to delete message", err);
-            if (String(err).includes("No active account")) {
+            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
                 window.location.href = "/";
                 return;
@@ -283,7 +283,7 @@ export default function MainLayout() {
             return false;
         } catch (error) {
             console.error("Failed to load cache", error);
-            if (String(error).includes("No active account")) {
+            if (String(error).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
                 window.location.href = "/";
             }
@@ -319,7 +319,7 @@ export default function MainLayout() {
             fetchUnreadCounts();
         } catch (error) {
             console.error("Failed to refresh new emails", error);
-            if (String(error).includes("No active account")) {
+            if (String(error).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
                 window.location.href = "/";
             }
@@ -349,7 +349,7 @@ export default function MainLayout() {
             }
         } catch (err) {
             console.error("Failed to load more emails", err);
-            if (String(err).includes("No active account")) {
+            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 window.location.href = "/";
             }
         } finally {
@@ -388,7 +388,7 @@ export default function MainLayout() {
             })
             .catch((e) => {
                 console.error("Failed to sync messages:", e);
-                if (String(e).includes("No active account")) {
+                if (String(e).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                     localStorage.removeItem("orion_user");
                     window.location.href = "/";
                     return;

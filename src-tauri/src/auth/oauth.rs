@@ -19,6 +19,8 @@ use url::Url;
 /// 4. Exchanges the received code for access/refresh tokens.
 /// 5. Fetches the user profile from Google's UserInfo API.
 pub async fn start_google_login() -> Result<Account, String> {
+    crate::auth::token_store::health_check()?;
+    
     dotenvy::dotenv().ok();
 
     let google_client_id = ClientId::new(
@@ -110,6 +112,8 @@ pub async fn start_google_login() -> Result<Account, String> {
         .ok_or("Failed to identify user (missing id/sub)")?
         .to_string();
 
+    crate::auth::token_store::persist_tokens(&id, &access_token, &refresh_token)?;
+
     let success_response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><script>window.close()</script><h1>Authentication Successful</h1><p>You can close this window now.</p></body></html>";
     stream.write_all(success_response.as_bytes()).ok();
 
@@ -119,6 +123,7 @@ pub async fn start_google_login() -> Result<Account, String> {
         provider: crate::auth::account::MailProvider::Google,
         access_token: access_token.to_string(),
         refresh_token,
+        needs_reauth: false,
         expires_at,
         last_sync: None,
         profile_name: user_info["name"].as_str().unwrap_or_default().to_string(),
@@ -162,6 +167,11 @@ pub async fn refresh_google_token(account: &mut Account) -> anyhow::Result<()> {
     
     let expires_in = token_result.expires_in().map(|d| d.as_secs()).unwrap_or(3600);
     account.expires_at = chrono::Utc::now().timestamp() + expires_in as i64;
+
+    crate::auth::token_store::persist_tokens(&account.id, &account.access_token, &account.refresh_token)
+        .map_err(|e| anyhow::anyhow!("Failed to persist refreshed tokens: {}", e))?;
+        
+    account.needs_reauth = false;
 
     Ok(())
 }

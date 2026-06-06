@@ -38,8 +38,14 @@ pub struct Account {
     pub id: String,
     pub email: String,
     pub provider: MailProvider,
+    #[serde(default)]
+    #[serde(skip_serializing)]
     pub access_token: String,
+    #[serde(default)]
+    #[serde(skip_serializing)]
     pub refresh_token: String,
+    #[serde(default)]
+    pub needs_reauth: bool,
     pub expires_at: i64,
     pub last_sync: Option<i64>,
     pub profile_name: String,

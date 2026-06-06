@@ -15,6 +15,12 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
     let mut account = session::get_active_account(app_handle)
         .ok_or_else(|| "No active account".to_string())?;
 
+    if account.needs_reauth {
+        use tauri::Emitter;
+        let _ = app_handle.emit("auth:session_expired", ());
+        return Err("NEEDS_REAUTH".to_string());
+    }
+
     let current_time = Utc::now().timestamp();
     
     if account.expires_at <= current_time && !account.refresh_token.is_empty() {
@@ -42,6 +48,12 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
                     account.access_token = access_token.to_string();
                     let expires_in = json["expires_in"].as_i64().unwrap_or(3600);
                     account.expires_at = Utc::now().timestamp() + expires_in;
+
+                    if let Err(e) = crate::auth::token_store::persist_tokens(&account.id, &account.access_token, &account.refresh_token) {
+                        log::error!("Failed to persist tokens during bootstrap refresh: {}", e);
+                    } else {
+                        account.needs_reauth = false;
+                    }
 
                     let _ = session::save_account(app_handle, account.clone(), true);
                     refresh_failed = false;
