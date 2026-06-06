@@ -13,8 +13,8 @@ struct StoredToken {
 /// Atomic persistence.
 /// Returns success only if both tokens are stored and explicitly verified.
 pub fn persist_tokens(account_id: &str, access_token: &str, refresh_token: &str) -> Result<(), String> {
-    let mut at = StoredToken { token: access_token.to_string() };
-    let mut rt = StoredToken { token: refresh_token.to_string() };
+    let at = StoredToken { token: access_token.to_string() };
+    let rt = StoredToken { token: refresh_token.to_string() };
 
     let target_access = format!("{}_{}", SERVICE_ACCESS, account_id);
     let target_refresh = format!("{}_{}", SERVICE_REFRESH, account_id);

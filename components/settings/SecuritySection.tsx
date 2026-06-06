@@ -1,9 +1,55 @@
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { invoke } from '@tauri-apps/api/core';
 
-export const SecuritySection = () => (
+export const SecuritySection = () => {
+    const [helloAvailable, setHelloAvailable] = useState(false);
+    const [appLockEnabled, setAppLockEnabled] = useState(false);
+
+    useEffect(() => {
+        // Hydrate from Tauri settings
+        invoke<any>('get_app_settings')
+            .then(settings => {
+                const stored = settings.app_lock_enabled === true;
+                setAppLockEnabled(stored);
+
+                // Check availability
+                invoke<boolean>('check_hello_availability')
+                    .then(available => {
+                        setHelloAvailable(available);
+                        if (!available && stored) {
+                            // Disable it if somehow enabled but no longer available
+                            setAppLockEnabled(false);
+                            invoke('set_app_settings', {
+                                minimizeToTray: settings.minimize_to_tray,
+                                startHidden: settings.start_hidden,
+                                appLockEnabled: false
+                            });
+                        }
+                    })
+                    .catch(console.error);
+            })
+            .catch(console.error);
+    }, []);
+
+    const handleAppLockChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newState = e.target.checked;
+        setAppLockEnabled(newState);
+        try {
+            const settings = await invoke<any>('get_app_settings');
+            await invoke('set_app_settings', {
+                minimizeToTray: settings.minimize_to_tray,
+                startHidden: settings.start_hidden,
+                appLockEnabled: newState
+            });
+        } catch (e) {
+            console.error("Failed to save app_lock_enabled", e);
+        }
+    };
+
+    return (
     <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -28,16 +74,23 @@ export const SecuritySection = () => (
 
                 <div className="h-px bg-white/10 dark:bg-white/5 w-full" />
 
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h4 className="font-semibold text-foreground">Require Password on App Launch</h4>
-                        <p className="text-sm text-muted-foreground mt-1">Prompt for password or biometrics when opening OrbitMail.</p>
+                {helloAvailable && (
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h4 className="font-semibold text-foreground">Require Password on App Launch</h4>
+                            <p className="text-sm text-muted-foreground mt-1">Prompt for Windows Hello when opening OrionMail.</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                className="sr-only peer" 
+                                checked={appLockEnabled}
+                                onChange={handleAppLockChange}
+                            />
+                            <div className="w-11 h-6 bg-black/10 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" className="sr-only peer" />
-                        <div className="w-11 h-6 bg-black/10 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
-                </div>
+                )}
             </div>
         </div>
 
@@ -78,5 +131,6 @@ export const SecuritySection = () => (
             </div>
         </div>
     </motion.div>
-);
+    );
+};
 SecuritySection.displayName = "SecuritySection";

@@ -26,10 +26,11 @@ use window_vibrancy::apply_mica;
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
-      let (min_to_tray, start_hidden) = config::load_settings(app.handle());
+      let (min_to_tray, start_hidden, app_lock) = config::load_settings(app.handle());
       app.manage(AppSettings { 
           minimize_to_tray: Mutex::new(min_to_tray),
           start_hidden: Mutex::new(start_hidden),
+          app_lock_enabled: Mutex::new(app_lock),
       });
 
       let show_i = MenuItem::with_id(app, "show", "Show Orion Mail", true, None::<&str>)?;
@@ -198,7 +199,9 @@ pub fn run() {
       was_launched_minimized,
       get_attachment_metadata,
       open_url,
-      clear_local_cache
+      clear_local_cache,
+      crate::auth::hello::check_hello_availability,
+      crate::auth::hello::authenticate_hello
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

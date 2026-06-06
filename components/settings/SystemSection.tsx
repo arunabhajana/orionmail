@@ -10,6 +10,7 @@ interface SystemSettings {
     minimize_to_tray: boolean;
     start_hidden: boolean;
     launch_at_startup: boolean;
+    app_lock_enabled: boolean;
 }
 
 export function SystemSection() {
@@ -17,6 +18,7 @@ export function SystemSection() {
         minimize_to_tray: true,
         start_hidden: true,
         launch_at_startup: false,
+        app_lock_enabled: false,
     });
     const [isLoading, setIsLoading] = useState(true);
 
@@ -29,6 +31,7 @@ export function SystemSection() {
                     minimize_to_tray: rustSettings.minimize_to_tray,
                     start_hidden: rustSettings.start_hidden,
                     launch_at_startup: autostartEnabled,
+                    app_lock_enabled: rustSettings.app_lock_enabled === true,
                 });
             } catch (err) {
                 console.error("Failed to load system settings", err);
@@ -43,7 +46,7 @@ export function SystemSection() {
         const newVal = !settings.minimize_to_tray;
         setSettings(s => ({ ...s, minimize_to_tray: newVal }));
         try {
-            await invoke('set_app_settings', { minimizeToTray: newVal, startHidden: settings.start_hidden });
+            await invoke('set_app_settings', { minimizeToTray: newVal, startHidden: settings.start_hidden, appLockEnabled: settings.app_lock_enabled });
         } catch (e) {
             console.error("Failed to update minimize_to_tray", e);
             // revert
@@ -55,7 +58,7 @@ export function SystemSection() {
         const newVal = !settings.start_hidden;
         setSettings(s => ({ ...s, start_hidden: newVal }));
         try {
-            await invoke('set_app_settings', { minimizeToTray: settings.minimize_to_tray, startHidden: newVal });
+            await invoke('set_app_settings', { minimizeToTray: settings.minimize_to_tray, startHidden: newVal, appLockEnabled: settings.app_lock_enabled });
         } catch (e) {
             console.error("Failed to update start_hidden", e);
             // revert
@@ -96,7 +99,7 @@ export function SystemSection() {
 
     return (
         <div className="space-y-6">
-            <div className="bg-white/60 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-2xl p-6 shadow-sm">
+            <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
                 <h3 className="text-lg font-semibold text-foreground dark:text-white/90 mb-4">Startup Behavior</h3>
                 
                 <div className="space-y-4">
@@ -124,7 +127,7 @@ export function SystemSection() {
                 </div>
             </div>
 
-            <div className="bg-white/60 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-2xl p-6 shadow-sm">
+            <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
                 <h3 className="text-lg font-semibold text-foreground dark:text-white/90 mb-4">Window Behavior</h3>
                 
                 <div className="space-y-4">
@@ -141,7 +144,7 @@ export function SystemSection() {
                 </div>
             </div>
 
-            <div className="bg-white/60 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-2xl p-6 shadow-sm border-red-500/20">
+            <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-red-500/20 backdrop-blur-md">
                 <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-4">Data Management</h3>
                 
                 <div className="space-y-4">
