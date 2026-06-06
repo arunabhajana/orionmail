@@ -8,11 +8,21 @@ pub struct SmtpConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ImapConfig {
+    pub host: String,
+    pub port: u16,
+    pub tls: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum MailProvider {
     Google,
     Outlook,
-    Custom(SmtpConfig),
+    Custom {
+        imap: ImapConfig,
+        smtp: SmtpConfig,
+    },
 }
 
 impl MailProvider {
@@ -28,7 +38,23 @@ impl MailProvider {
                 port: 587,
                 starttls: true,
             },
-            MailProvider::Custom(config) => config.clone(),
+            MailProvider::Custom { smtp, .. } => smtp.clone(),
+        }
+    }
+
+    pub fn imap_config(&self) -> ImapConfig {
+        match self {
+            MailProvider::Google => ImapConfig {
+                host: "imap.gmail.com".to_string(),
+                port: 993,
+                tls: true,
+            },
+            MailProvider::Outlook => ImapConfig {
+                host: "outlook.office365.com".to_string(),
+                port: 993,
+                tls: true,
+            },
+            MailProvider::Custom { imap, .. } => imap.clone(),
         }
     }
 }

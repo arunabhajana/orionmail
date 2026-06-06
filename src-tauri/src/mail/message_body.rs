@@ -371,10 +371,11 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     log::debug!("IMAP fetch start: uid={}, active_permits={}", uid, 3 - CONCURRENT_FETCH_LIMIT.available_permits());
     
     let folder_clone = folder.to_string();
+    let provider_clone = account.provider.clone();
     let imap_result = imap_session::execute_with_session(&account, imap_session::SessionKind::Prefetch, move |session| {
         use std::str::FromStr;
         let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
-            Ok(mf) => match mf.to_imap_mailbox() {
+            Ok(mf) => match mf.to_imap_mailbox(&provider_clone) {
                 Some(mb) => mb.to_string(),
                 None => return Err("Cannot fetch from virtual folder".to_string()),
             },
@@ -473,6 +474,7 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, folder: 
 pub async fn fetch_attachment_part(account: &Account, folder: &str, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {
     let part_id_clone = part_id.to_string();
     let folder_clone = folder.to_string();
+    let provider_clone = account.provider.clone();
     
     // -- SEMAPHORE ACQUIRE --
     let _permit = CONCURRENT_FETCH_LIMIT.clone().acquire_owned().await.map_err(|e| e.to_string())?;
@@ -480,7 +482,7 @@ pub async fn fetch_attachment_part(account: &Account, folder: &str, uid: u32, pa
     let imap_result = imap_session::execute_with_session(account, imap_session::SessionKind::Primary, move |session| {
         use std::str::FromStr;
         let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
-            Ok(mf) => match mf.to_imap_mailbox() {
+            Ok(mf) => match mf.to_imap_mailbox(&provider_clone) {
                 Some(mb) => mb.to_string(),
                 None => return Err("Cannot fetch from virtual folder".to_string()),
             },

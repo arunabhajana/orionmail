@@ -15,7 +15,7 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
 }
 
 pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailFolder) -> Result<u32, String> {
-    let imap_mailbox = match folder.to_imap_mailbox() {
+    let imap_mailbox = match folder.to_imap_mailbox(&account.provider) {
         Some(mb) => mb.to_string(),
         None => {
             log::info!("Folder {} is virtual. Skipping IMAP sync.", folder);
@@ -28,6 +28,9 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
     let access_token = account.access_token.clone();
     let app_handle_clone = app_handle.clone();
     let folder_name_clone = folder_name.clone();
+    let imap_config = account.provider.imap_config();
+    let domain = imap_config.host;
+    let port = imap_config.port;
 
     let new_messages_count = tokio::task::spawn_blocking(move || {
         // Use the drop guard to automatically clear sync_in_progress if we panic
@@ -47,14 +50,11 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
         // We also need uid_validity which is still stored in mailbox_state (per plan)
         let stored_validity = database::get_mailbox_validity(&app_handle_clone, &imap_mailbox).unwrap_or(None);
 
-        let domain = "imap.gmail.com";
-        let port = 993;
-
         let tls = TlsConnector::builder()
             .build()
             .map_err(|e| format!("TLS Builder Error: {}", e))?;
 
-        let client = imap::connect((domain, port), domain, &tls)
+        let client = imap::connect((domain.as_str(), port), domain.as_str(), &tls)
             .map_err(|e| format!("IMAP Connection Error: {}", e))?;
 
         let auth_raw = format!(

@@ -8,16 +8,17 @@ pub struct Mailbox {
     pub delimiter: String,
 }
 
-/// Establishes an IMAP connection to Gmail using XOAUTH2
+/// Establishes an IMAP connection using XOAUTH2
 /// and fetches mailbox list (read-only validation step).
 pub async fn get_mailboxes(account: Account) -> Result<Vec<Mailbox>, String> {
     let email = account.email.clone();
     let access_token = account.access_token.clone();
+    let imap_config = account.provider.imap_config();
+    let domain = imap_config.host;
+    let port = imap_config.port;
 
     // IMAP crate is blocking → run in blocking thread
     let handle = tokio::task::spawn_blocking(move || {
-        let domain = "imap.gmail.com";
-        let port = 993;
 
         // --------------------------------------------------
         // 1. TLS CONNECTION
@@ -26,7 +27,7 @@ pub async fn get_mailboxes(account: Account) -> Result<Vec<Mailbox>, String> {
             .build()
             .map_err(|e| format!("TLS Error: {}", e))?;
 
-        let client = imap::connect((domain, port), domain, &tls)
+        let client = imap::connect((domain.as_str(), port), domain.as_str(), &tls)
             .map_err(|e| format!("IMAP Connection Error: {}", e))?;
 
         // --------------------------------------------------

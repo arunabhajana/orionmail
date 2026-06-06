@@ -147,15 +147,23 @@ pub async fn delete_message(app_handle: AppHandle, uid: u32, folder: Option<Stri
         return Ok(());
     }
 
+    let provider_clone = account.provider.clone();
     // IMAP Action: Try MOVE, fallback to Label + Deleted Flag
     execute_with_session(&account, SessionKind::Primary, move |session| {
-        // Attempt standard IMAP MOVE to Gmail trash
-        let move_result = session.uid_mv(uid.to_string(), "[Gmail]/Trash");
+        let trash_folder = match provider_clone {
+            crate::auth::account::MailProvider::Google => "[Gmail]/Trash",
+            crate::auth::account::MailProvider::Outlook => "Deleted Items",
+            crate::auth::account::MailProvider::Custom { .. } => "Trash",
+        };
+        // Attempt standard IMAP MOVE to provider's trash
+        let move_result = session.uid_mv(uid.to_string(), trash_folder);
         
         if let Err(e) = move_result {
             log::warn!("MOVE to Trash failed, attempting fallback: {}", e);
-            // Fallback: Gmail Labels extension + \Deleted
-            let _ = session.uid_store(uid.to_string(), "+X-GM-LABELS (\\Trash)");
+            // Fallback: Gmail Labels extension (if Google) + \Deleted
+            if matches!(provider_clone, crate::auth::account::MailProvider::Google) {
+                let _ = session.uid_store(uid.to_string(), "+X-GM-LABELS (\\Trash)");
+            }
             let _ = session.uid_store(uid.to_string(), "+FLAGS.SILENT (\\Deleted)");
         }
         

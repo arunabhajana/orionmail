@@ -43,14 +43,15 @@ pub fn create_session(account: &Account) -> Result<ImapSession, String> {
 fn connect_and_authenticate(
     account: &Account,
 ) -> Result<imap::Session<native_tls::TlsStream<std::net::TcpStream>>, String> {
-    let domain = "imap.gmail.com";
-    let port = 993;
+    let imap_config = account.provider.imap_config();
+    let domain = imap_config.host;
+    let port = imap_config.port;
 
     let tls = TlsConnector::builder()
         .build()
         .map_err(|e| format!("TLS Builder Error: {}", e))?;
 
-    let client = imap::connect((domain, port), domain, &tls)
+    let client = imap::connect((domain.as_str(), port), domain.as_str(), &tls)
         .map_err(|e| format!("IMAP Connection Error: {}", e))?;
 
     let auth_raw = format!(

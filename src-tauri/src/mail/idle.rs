@@ -112,6 +112,9 @@ async fn run_idle_loop(
 
     let email = current_account.email;
     let access_token = current_account.access_token;
+    let imap_config = current_account.provider.imap_config();
+    let domain = imap_config.host;
+    let port = imap_config.port;
 
     tokio::task::spawn_blocking(move || {
 
@@ -122,7 +125,7 @@ async fn run_idle_loop(
             .build()
             .map_err(|e| format!("TLS Error: {}", e))?;
 
-        let client = imap::connect(("imap.gmail.com", 993), "imap.gmail.com", &tls)
+        let client = imap::connect((domain.as_str(), port), domain.as_str(), &tls)
             .map_err(|e| format!("Connect Error: {}", e))?;
 
         let auth_raw = format!("user={}\x01auth=Bearer {}\x01\x01", email, access_token);

@@ -24,16 +24,17 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
     let email = account.email.clone();
     let access_token = account.access_token.clone();
     let app_handle_clone = app_handle.clone();
+    let imap_config = account.provider.imap_config();
+    let domain = imap_config.host;
+    let port = imap_config.port;
 
     let handle = tokio::task::spawn_blocking(move || {
-        let domain = "imap.gmail.com";
-        let port = 993;
 
         let tls = TlsConnector::builder()
             .build()
             .map_err(|e| format!("TLS Error: {}", e))?;
 
-        let client = imap::connect((domain, port), domain, &tls)
+        let client = imap::connect((domain.as_str(), port), domain.as_str(), &tls)
             .map_err(|e| format!("IMAP Connection Error: {}", e))?;
 
         let auth_raw = format!(

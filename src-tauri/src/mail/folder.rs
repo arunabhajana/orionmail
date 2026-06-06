@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
+use crate::auth::account::MailProvider;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -36,11 +37,14 @@ impl FromStr for MailFolder {
 impl MailFolder {
     /// Returns the corresponding IMAP mailbox name for the folder.
     /// Returns None for local virtual folders (e.g. Starred).
-    pub fn to_imap_mailbox(&self) -> Option<&'static str> {
+    pub fn to_imap_mailbox(&self, provider: &MailProvider) -> Option<&'static str> {
         match self {
             MailFolder::Inbox => Some("INBOX"),
-            // Default mapping for Gmail
-            MailFolder::Sent => Some("[Gmail]/Sent Mail"),
+            MailFolder::Sent => match provider {
+                MailProvider::Google => Some("[Gmail]/Sent Mail"),
+                MailProvider::Outlook => Some("Sent Items"),
+                MailProvider::Custom { .. } => Some("Sent"),
+            },
             MailFolder::Starred => None,
         }
     }
