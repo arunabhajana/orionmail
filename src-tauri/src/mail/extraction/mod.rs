@@ -7,8 +7,10 @@ pub mod otp;
 pub mod tracking;
 pub mod invoice;
 pub mod account;
+pub mod provider_registry;
+pub mod commerce;
 
-pub const CURRENT_EXTRACTOR_VERSION: u32 = 4;
+pub const CURRENT_EXTRACTOR_VERSION: u32 = 9;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ExtractionSource {
@@ -26,6 +28,10 @@ pub enum EntityType {
     CalendarEvent,
     TrackingNumber,
     InvoiceReference,
+    ReceiptReference,
+    OrderReference,
+    TransactionReference,
+    SubscriptionReference,
     SchemaOrgObject,
 }
 
@@ -69,6 +75,7 @@ pub fn run_extraction_pipeline(html: &str, text: &str) -> ExtractedData {
     entities.extend(links::extract(html, text));
     entities.extend(otp::extract(html, text));
     entities.extend(tracking::extract(html, text));
+    entities.extend(commerce::extract(html, text));
     entities.extend(invoice::extract(html, text));
     entities.extend(account::extract(html, text));
 

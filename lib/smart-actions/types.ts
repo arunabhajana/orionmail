@@ -10,6 +10,12 @@ export enum SmartActionKind {
     MEETING = 'MEETING',
     DELIVERY = 'DELIVERY',
     PAYMENT = 'PAYMENT',
+    PURCHASE = 'PURCHASE',
+    ORDER = 'ORDER',
+    INVOICE = 'INVOICE',
+    REFUND = 'REFUND',
+    SUBSCRIPTION = 'SUBSCRIPTION',
+    TRANSACTION = 'TRANSACTION',
     TRAVEL = 'TRAVEL',
     SECURITY = 'SECURITY',
 }
@@ -18,7 +24,11 @@ export enum SmartActionCommand {
     CopyOtp = 'CopyOtp',
     JoinMeeting = 'JoinMeeting',
     TrackPackage = 'TrackPackage',
+    ViewReceipt = 'ViewReceipt',
     ViewInvoice = 'ViewInvoice',
+    TrackOrder = 'TrackOrder',
+    ViewTransaction = 'ViewTransaction',
+    ManageSubscription = 'ManageSubscription',
     OpenReservation = 'OpenReservation',
     AddToCalendar = 'AddToCalendar',
     VerifyAccount = 'VerifyAccount',
@@ -51,6 +61,10 @@ export enum EntityType {
     CalendarEvent = 'CalendarEvent',
     TrackingNumber = 'TrackingNumber',
     InvoiceReference = 'InvoiceReference',
+    ReceiptReference = 'ReceiptReference',
+    OrderReference = 'OrderReference',
+    TransactionReference = 'TransactionReference',
+    SubscriptionReference = 'SubscriptionReference',
     SchemaOrgObject = 'SchemaOrgObject',
 }
 
@@ -67,7 +81,7 @@ export interface ExtractedEntity {
     confidence: number;
     provenance: Provenance;
     evidence?: string;
-    metadata: any;
+    metadata: Record<string, unknown>;
 }
 
 export interface ExtractedData {
@@ -86,7 +100,7 @@ export interface DetectorContext {
 export interface SmartActionButton {
     label: string;
     command: SmartActionCommand;
-    data?: any;
+    data?: Record<string, unknown>;
     primary?: boolean;
 }
 
@@ -99,7 +113,7 @@ export interface SmartAction {
     title: string;
     subtitle?: string;
     actions: SmartActionButton[];
-    metadata?: any;
+    metadata?: Record<string, unknown>;
     confidence: number;
     timestamp: number;
 }

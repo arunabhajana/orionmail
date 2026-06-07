@@ -32,7 +32,7 @@ class SmartActionsEngineClass {
             if (btn.data?.url) {
                 try {
                     const url = new URL(btn.data.url);
-                    if (url.protocol !== 'https:' && url.protocol !== 'http:' && url.protocol !== 'mailto:') {
+                    if (url.protocol !== 'https:') {
                         return null; // Reject unsafe protocols entirely
                     }
                     
@@ -68,6 +68,16 @@ class SmartActionsEngineClass {
             } else if (action.kind === SmartActionKind.OTP) {
                 const code = action.actions.find(a => a.command === SmartActionCommand.CopyOtp)?.data?.code;
                 if (code) key = `otp:${code}`;
+            } else if (
+                action.kind === SmartActionKind.PURCHASE ||
+                action.kind === SmartActionKind.ORDER ||
+                action.kind === SmartActionKind.INVOICE ||
+                action.kind === SmartActionKind.REFUND ||
+                action.kind === SmartActionKind.SUBSCRIPTION ||
+                action.kind === SmartActionKind.TRANSACTION
+            ) {
+                const ref = action.metadata?.reference || action.metadata?.entityId;
+                if (ref) key = `commerce:${action.kind}:${ref}`;
             }
 
             if (!seenKeys.has(key)) {
@@ -81,6 +91,16 @@ class SmartActionsEngineClass {
                     }
                     if (a.kind === SmartActionKind.OTP) {
                         return a.actions.some(btn => btn.data?.code === action.actions.find(b => b.command === SmartActionCommand.CopyOtp)?.data?.code);
+                    }
+                    if (
+                        a.kind === SmartActionKind.PURCHASE ||
+                        a.kind === SmartActionKind.ORDER ||
+                        a.kind === SmartActionKind.INVOICE ||
+                        a.kind === SmartActionKind.REFUND ||
+                        a.kind === SmartActionKind.SUBSCRIPTION ||
+                        a.kind === SmartActionKind.TRANSACTION
+                    ) {
+                        return a.metadata?.reference === action.metadata?.reference && a.kind === action.kind;
                     }
                     return a.id === action.id;
                 });
@@ -100,7 +120,7 @@ class SmartActionsEngineClass {
     detect(ctx: DetectorContext): SmartAction[] {
         if (!ctx.extractedData || !ctx.extractedData.entities) return [];
 
-        let rawActions: SmartAction[] = [];
+        const rawActions: SmartAction[] = [];
         this.metrics = [];
 
         for (const detector of this.detectors) {
