@@ -147,6 +147,26 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
         conn.execute("ALTER TABLE messages ADD COLUMN recipient TEXT", ()).map_err(|e| e.to_string())?;
     }
 
+    let mut stmt = conn.prepare("PRAGMA table_info(messages)").unwrap();
+    let mut has_extracted_data = false;
+    let rows = stmt.query_map([], |row| {
+        let name: String = row.get(1)?;
+        Ok(name)
+    }).unwrap();
+
+    for name in rows {
+        if let Ok(col_name) = name {
+            if col_name == "extracted_data" {
+                has_extracted_data = true;
+                break;
+            }
+        }
+    }
+
+    if !has_extracted_data {
+        conn.execute("ALTER TABLE messages ADD COLUMN extracted_data TEXT", ()).map_err(|e| e.to_string())?;
+    }
+
     // Performance Indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_folder_uid_desc ON messages(folder, uid DESC)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_folder_date ON messages(folder, date DESC)", ()).map_err(|e| e.to_string())?;
@@ -482,25 +502,25 @@ impl Drop for SyncProgressGuard {
 }
 
 
-pub fn get_message_body_cache(app_handle: &AppHandle, folder: &str, uid: u32) -> Result<Option<(String, Option<String>)>, String> {
+pub fn get_message_body_cache(app_handle: &AppHandle, folder: &str, uid: u32) -> Result<Option<(String, Option<String>, Option<String>)>, String> {
     let db_path = get_db_path(app_handle)?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT processed_html, attachments_json FROM messages WHERE folder = ?1 AND uid = ?2 AND body_fetched = 1 AND processed_html IS NOT NULL").unwrap();
+    let mut stmt = conn.prepare("SELECT processed_html, attachments_json, extracted_data FROM messages WHERE folder = ?1 AND uid = ?2 AND body_fetched = 1 AND processed_html IS NOT NULL").unwrap();
     let result = stmt.query_row(rusqlite::params![folder, uid], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))
     }).ok();
 
     Ok(result)
 }
 
-pub fn update_message_body(app_handle: &AppHandle, folder: &str, uid: u32, body: &str, snippet: &str, attachments_json: Option<String>) -> Result<(), String> {
+pub fn update_message_body(app_handle: &AppHandle, folder: &str, uid: u32, body: &str, snippet: &str, attachments_json: Option<String>, extracted_data: Option<String>) -> Result<(), String> {
     let db_path = get_db_path(app_handle)?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     conn.execute(
-        "UPDATE messages SET processed_html = ?1, snippet = ?2, attachments_json = ?3, body_fetched = 1 WHERE folder = ?4 AND uid = ?5",
-        rusqlite::params![body, snippet, attachments_json, folder, uid],
+        "UPDATE messages SET processed_html = ?1, snippet = ?2, attachments_json = ?3, extracted_data = ?4, body_fetched = 1 WHERE folder = ?5 AND uid = ?6",
+        rusqlite::params![body, snippet, attachments_json, extracted_data, folder, uid],
     ).map_err(|e| e.to_string())?;
 
     Ok(())

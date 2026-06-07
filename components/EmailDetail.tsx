@@ -22,10 +22,8 @@ import { DetailToolbar } from './inbox/DetailToolbar';
 import { MessageHeader, AttachmentCard } from './inbox/MessageHeader';
 import { useEmailBody } from '@/hooks/useEmailBody';
 import OrbitLoader from './inbox/OrbitLoader';
-import { useOtpDetection } from '@/hooks/useOtpDetection';
-import { OtpBanner } from './inbox/OtpBanner';
-import { useMeetingDetection } from '@/hooks/useMeetingDetection';
-import { MeetingBanner } from './inbox/MeetingBanner';
+import { SmartActionsEngine } from '@/lib/smart-actions';
+import { SmartActionCard } from './inbox/SmartActionCard';
 
 // --- Types ---
 
@@ -43,7 +41,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === 'dark';
 
-    const { bodyContent, attachments, isLoadingBody, iframeHeight, error, retry } = useEmailBody(
+    const { bodyContent, attachments, extractedData, isLoadingBody, iframeHeight, error, retry } = useEmailBody(
         email?.id,
         email?.uid,
         email?.unread,
@@ -51,8 +49,15 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         onMarkAsRead
     );
 
-    const otpCode = useOtpDetection(bodyContent);
-    const meetings = useMeetingDetection(bodyContent, null, email?.subject, attachments);
+    const smartActions = React.useMemo(() => {
+        if (!extractedData || isLoadingBody) return [];
+        return SmartActionsEngine.detect({
+            extractedData,
+            receivedAt: email?.timestamp || Date.now(),
+            subject: email?.subject || '',
+            sender: email?.sender || ''
+        });
+    }, [extractedData, isLoadingBody, email?.timestamp, email?.subject, email?.sender]);
 
     if (!email) {
         return (
@@ -98,13 +103,9 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                     >
                         <MessageHeader email={email} />
 
-                        {meetings.map((meeting, index) => (
-                            <MeetingBanner key={`${meeting.url}-${index}`} meeting={meeting} />
+                        {smartActions.map((action) => (
+                            <SmartActionCard key={action.id} action={action} />
                         ))}
-
-                        {otpCode && (
-                            <OtpBanner code={otpCode} />
-                        )}
 
                         {error ? (() => {
                             const isTimeout = error.includes("Timeout");

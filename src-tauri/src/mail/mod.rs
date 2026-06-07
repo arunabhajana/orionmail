@@ -12,3 +12,4 @@ pub mod notifications;
 pub mod smtp_client;
 pub mod folder;
 pub mod sync_manager;
+pub mod extraction;

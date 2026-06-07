@@ -4,14 +4,18 @@ import { listen } from "@tauri-apps/api/event";
 
 import { Attachment } from "@/lib/types";
 
+import { ExtractedData } from "@/lib/smart-actions";
+
 interface MessageDetail {
     body: string;
     attachments: Attachment[];
+    extractedData?: ExtractedData;
 }
 
 export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, onMarkAsRead?: (id: string) => void) {
     const [bodyContent, setBodyContent] = useState<string>("");
     const [attachments, setAttachments] = useState<Attachment[]>([]);
+    const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
     const [isLoadingBody, setIsLoadingBody] = useState<boolean>(false);
     const [iframeHeight, setIframeHeight] = useState<number>(400);
     const [error, setError] = useState<string | null>(null);
@@ -26,6 +30,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             const detail: MessageDetail = await invoke('get_message_body', { folder: dbFolder, uid: emailUid });
             setBodyContent(detail.body || "<p>Message has no content.</p>");
             setAttachments(detail.attachments || []);
+            setExtractedData(detail.extractedData || null);
         } catch (err) {
             console.error("Failed to load message body:", err);
             if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
@@ -36,6 +41,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             setError(String(err));
             setBodyContent("");
             setAttachments([]);
+            setExtractedData(null);
         } finally {
             setIsLoadingBody(false);
         }
@@ -47,6 +53,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         if (!emailId || emailUid === undefined) {
             setBodyContent("");
             setAttachments([]);
+            setExtractedData(null);
             setError(null);
             return;
         }
@@ -61,6 +68,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
                 if (isMounted) {
                     setBodyContent(detail.body || "<p>Message has no content.</p>");
                     setAttachments(detail.attachments || []);
+                    setExtractedData(detail.extractedData || null);
                 }
             } catch (err) {
                 console.error("Failed to load message body:", err);
@@ -73,6 +81,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
                     setError(String(err));
                     setBodyContent("");
                     setAttachments([]);
+                    setExtractedData(null);
                 }
             } finally {
                 if (isMounted) {
@@ -88,9 +97,17 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             const payload = event.payload as { folder: string; uid: number };
             const dbFolder = folder === "sent" ? "sent" : "inbox";
             if (payload.folder === dbFolder && payload.uid === emailUid) {
-                // Background fetch finished for the email we are currently looking at!
-                // Re-fetch to grab the newly cached content from SQLite
                 fetchBody();
+            }
+        });
+
+        const unlistenExtracted = listen('mail:re_extracted', (event) => {
+            const payload = event.payload as { folder: string; uid: number; extractedData: ExtractedData };
+            const dbFolder = folder === "sent" ? "sent" : "inbox";
+            if (payload.folder === dbFolder && payload.uid === emailUid) {
+                if (isMounted) {
+                    setExtractedData(payload.extractedData);
+                }
             }
         });
 
@@ -101,6 +118,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
                 setError(customEvent.detail);
                 setBodyContent("");
                 setAttachments([]);
+                setExtractedData(null);
             }
         };
         window.addEventListener("orion:simulate_error", handleSimulateError);
@@ -108,6 +126,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         return () => {
             isMounted = false;
             unlisten.then(f => f());
+            unlistenExtracted.then(f => f());
             window.removeEventListener("orion:simulate_error", handleSimulateError);
         };
     }, [emailId, emailUid, folder]);
@@ -135,5 +154,5 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         return () => window.removeEventListener('message', handleMessage);
     }, [emailId]);
 
-    return { bodyContent, attachments, isLoadingBody, iframeHeight, error, retry: fetchBody };
+    return { bodyContent, attachments, extractedData, isLoadingBody, iframeHeight, error, retry: fetchBody };
 }

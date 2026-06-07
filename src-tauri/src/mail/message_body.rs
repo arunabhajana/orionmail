@@ -2,8 +2,10 @@ use crate::auth::account::Account;
 use crate::mail::database;
 use crate::mail::imap_session;
 use imap_proto::types::BodyStructure;
+use crate::mail::extraction;
+use crate::mail::extraction::ExtractedData;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Emitter};
 use mailparse::{parse_mail, ParsedMail};
 use tokio::sync::Semaphore;
 use std::sync::Arc;
@@ -43,6 +45,7 @@ pub struct MessageAttachment {
 pub struct MessageDetail {
     pub body: String,
     pub attachments: Vec<MessageAttachment>,
+    pub extracted_data: Option<serde_json::Value>,
 }
 
 struct CidCandidate {
@@ -342,22 +345,61 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
             .unwrap_or_default()
             .unwrap_or(1);
 
-        if let Ok(Some((cached_body, attachments_json))) = database::get_message_body_cache(&app_handle_cache, &folder_cache, uid) {
+        if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle_cache, &folder_cache, uid) {
             let attachments = if let Some(json) = attachments_json {
                 serde_json::from_str(&json).unwrap_or_default()
             } else {
                 Vec::new()
             };
-            return Ok((Some(MessageDetail { body: cached_body, attachments }), stored_validity));
+            
+            let mut extracted_data: Option<serde_json::Value> = None;
+            let mut needs_reextract = false;
+            
+            if let Some(ref ext_str) = extracted_data_json {
+                if let Ok(ext) = serde_json::from_str::<ExtractedData>(ext_str) {
+                    if ext.version < extraction::CURRENT_EXTRACTOR_VERSION {
+                        needs_reextract = true;
+                    }
+                    if let Ok(val) = serde_json::from_str(ext_str) {
+                        extracted_data = Some(val);
+                    }
+                } else {
+                    needs_reextract = true;
+                }
+            } else {
+                needs_reextract = true;
+            }
+
+            return Ok((Some(MessageDetail { body: cached_body, attachments, extracted_data }), stored_validity, needs_reextract, extracted_data_json.is_none()));
         }
 
-        Ok::<_, String>((None, stored_validity))
+        Ok::<_, String>((None, stored_validity, false, true))
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))??;
 
-    let (cached_opt, _stored_validity) = cache_result;
+    let (cached_opt, _stored_validity, needs_reextract, _was_missing) = cache_result;
     if let Some(detail) = cached_opt {
+        if needs_reextract {
+            let app_clone = app_handle.clone();
+            let folder_clone = folder.to_string();
+            let body_clone = detail.body.clone();
+            let attachments_clone = detail.attachments.clone();
+            
+            tokio::spawn(async move {
+                let text = String::from_utf8_lossy(body_clone.as_bytes()).to_string();
+                let extracted = extraction::run_extraction_pipeline(&body_clone, &text);
+                if let Ok(ext_json) = serde_json::to_string(&extracted) {
+                    let attachments_json = serde_json::to_string(&attachments_clone).ok();
+                    let _ = database::update_message_body(&app_clone, &folder_clone, uid, &body_clone, "", attachments_json, Some(ext_json.clone()));
+                    let _ = app_clone.emit("mail:re_extracted", serde_json::json!({
+                        "folder": folder_clone,
+                        "uid": uid,
+                        "extractedData": extracted
+                    }));
+                }
+            });
+        }
         return Ok(detail);
     }
 
@@ -459,11 +501,34 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     let preview = generate_preview(&parsed_body);
     let attachments_json = serde_json::to_string(&fetched_attachments).ok();
     
-    let _ = database::update_message_body(app_handle, folder, uid, &parsed_body, &preview, attachments_json);
+    let mut text = String::from_utf8_lossy(&fetched_full_payload).to_string();
+    
+    // Pass decoded calendar items to the extractor
+    if let Ok(parsed) = mailparse::parse_mail(&fetched_full_payload) {
+        fn extract_ics_text(part: &mailparse::ParsedMail, text_acc: &mut String) {
+            let ctype = part.ctype.mimetype.to_lowercase();
+            if ctype == "text/calendar" {
+                if let Ok(body) = part.get_body() {
+                    text_acc.push_str("\n\n");
+                    text_acc.push_str(&body);
+                }
+            }
+            for subpart in &part.subparts {
+                extract_ics_text(subpart, text_acc);
+            }
+        }
+        extract_ics_text(&parsed, &mut text);
+    }
+
+    let extracted = extraction::run_extraction_pipeline(&parsed_body, &text);
+    let extracted_json = serde_json::to_string(&extracted).ok();
+    
+    let _ = database::update_message_body(app_handle, folder, uid, &parsed_body, &preview, attachments_json, extracted_json.clone());
     
     Ok(MessageDetail {
         body: parsed_body,
         attachments: fetched_attachments,
+        extracted_data: extracted_json.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 

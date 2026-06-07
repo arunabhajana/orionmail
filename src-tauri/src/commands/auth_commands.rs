@@ -97,13 +97,24 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
     let folder = folder.to_lowercase();
     
     // Check cache first before enqueueing
-    if let Ok(Some((cached_body, attachments_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
-        let attachments = if let Some(json) = attachments_json {
-            serde_json::from_str(&json).unwrap_or_default()
-        } else {
-            Vec::new()
+    if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
+        let needs_reextraction = match &extracted_data_json {
+            Some(json) => match serde_json::from_str::<crate::mail::extraction::ExtractedData>(json) {
+                Ok(data) => data.version < crate::mail::extraction::CURRENT_EXTRACTOR_VERSION,
+                Err(_) => true,
+            },
+            None => true, // If we don't have extracted data, we need it!
         };
-        return Ok(crate::mail::message_body::MessageDetail { body: cached_body, attachments });
+
+        if !needs_reextraction {
+            let attachments = if let Some(json) = attachments_json {
+                serde_json::from_str(&json).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let extracted_data = extracted_data_json.and_then(|json| serde_json::from_str(&json).ok());
+            return Ok(crate::mail::message_body::MessageDetail { body: cached_body, attachments, extracted_data });
+        }
     }
 
     // Delegate to Manager
@@ -116,13 +127,14 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
 
     // Poll cache
     for _ in 0..600 { // 30 second timeout (600 * 50ms)
-        if let Ok(Some((cached_body, attachments_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
+        if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
             let attachments = if let Some(json) = attachments_json {
                 serde_json::from_str(&json).unwrap_or_default()
             } else {
                 Vec::new()
             };
-            return Ok(crate::mail::message_body::MessageDetail { body: cached_body, attachments });
+            let extracted_data = extracted_data_json.and_then(|json| serde_json::from_str(&json).ok());
+            return Ok(crate::mail::message_body::MessageDetail { body: cached_body, attachments, extracted_data });
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
@@ -147,3 +159,5 @@ pub async fn clear_local_cache(app_handle: AppHandle) -> Result<(), String> {
     
     Ok(())
 }
+
+
