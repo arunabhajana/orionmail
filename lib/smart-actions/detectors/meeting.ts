@@ -31,8 +31,8 @@ export const MeetingDetector: Detector = {
             let title = ctx.subject || 'Virtual Meeting';
             
             if (entity.entityType === EntityType.CalendarEvent) {
-                url = entity.metadata?.url || url;
-                title = entity.metadata?.summary || title;
+                url = (entity.metadata?.url as string) || url;
+                title = (entity.metadata?.summary as string) || title;
             }
 
             let statusLabel = 'Upcoming';

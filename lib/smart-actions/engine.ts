@@ -31,7 +31,7 @@ class SmartActionsEngineClass {
         for (const btn of action.actions) {
             if (btn.data?.url) {
                 try {
-                    const url = new URL(btn.data.url);
+                    const url = new URL(btn.data.url as string);
                     if (url.protocol !== 'https:') {
                         return null; // Reject unsafe protocols entirely
                     }
