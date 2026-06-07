@@ -8,7 +8,7 @@ pub mod tracking;
 pub mod invoice;
 pub mod account;
 
-pub const CURRENT_EXTRACTOR_VERSION: u32 = 3;
+pub const CURRENT_EXTRACTOR_VERSION: u32 = 4;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ExtractionSource {
