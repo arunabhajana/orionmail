@@ -7,6 +7,8 @@ import { SyncProvider } from "@/components/SyncContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AccentColorProvider } from "@/components/AccentColorProvider";
 import { DownloadProvider } from "@/components/DownloadContext";
+import { AppPreferencesProvider } from "@/components/AppPreferencesContext";
+import { BackgroundTasksProvider } from "@/components/BackgroundTasksContext";
 import { Toaster } from "sonner";
 
 const inter = Inter({
@@ -39,19 +41,23 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AccentColorProvider>
-            <AuthProvider>
-              <SyncProvider>
-                <DownloadProvider>
-                  <div className="app-window">
-                    <TitlebarWrapper />
-                    <div className="pt-[30px] h-full w-full overflow-hidden">
-                      {children}
-                    </div>
-                    <Toaster theme="system" richColors position="top-center" />
-                  </div>
-                </DownloadProvider>
-              </SyncProvider>
-            </AuthProvider>
+            <AppPreferencesProvider>
+              <BackgroundTasksProvider>
+                <AuthProvider>
+                  <SyncProvider>
+                    <DownloadProvider>
+                      <div className="app-window">
+                        <TitlebarWrapper />
+                        <div className="pt-[30px] h-full w-full overflow-hidden">
+                          {children}
+                        </div>
+                        <Toaster theme="system" richColors position="top-center" />
+                      </div>
+                    </DownloadProvider>
+                  </SyncProvider>
+                </AuthProvider>
+              </BackgroundTasksProvider>
+            </AppPreferencesProvider>
           </AccentColorProvider>
         </ThemeProvider>
       </body>

@@ -22,8 +22,9 @@ import { DetailToolbar } from './inbox/DetailToolbar';
 import { MessageHeader, AttachmentCard } from './inbox/MessageHeader';
 import { useEmailBody } from '@/hooks/useEmailBody';
 import OrbitLoader from './inbox/OrbitLoader';
-import { SmartActionsEngine } from '@/lib/smart-actions';
+import { SmartActionsEngine, SmartActionKind } from '@/lib/smart-actions';
 import { SmartActionCard } from './inbox/SmartActionCard';
+import { useAppPreferences } from '@/components/AppPreferencesContext';
 
 // --- Types ---
 
@@ -40,6 +41,7 @@ interface EmailDetailProps {
 const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onMarkAsRead }) => {
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === 'dark';
+    const { preferences } = useAppPreferences();
 
     const { bodyContent, attachments, extractedData, isLoadingBody, iframeHeight, error, retry } = useEmailBody(
         email?.id,
@@ -50,14 +52,32 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     );
 
     const smartActions = React.useMemo(() => {
+        if (!preferences.smartActionsGlobal) return [];
         if (!extractedData || isLoadingBody) return [];
-        return SmartActionsEngine.detect({
+        
+        const actions = SmartActionsEngine.detect({
             extractedData,
             receivedAt: email?.timestamp || Date.now(),
             subject: email?.subject || '',
             sender: email?.sender || ''
         });
-    }, [extractedData, isLoadingBody, email?.timestamp, email?.subject, email?.sender]);
+
+        return actions.filter(action => {
+            if (action.kind === SmartActionKind.OTP && !preferences.smartActionsOtp) return false;
+            if (action.kind === SmartActionKind.MEETING && !preferences.smartActionsMeetings) return false;
+            
+            const commerceKinds = [
+                SmartActionKind.PURCHASE, SmartActionKind.ORDER, SmartActionKind.INVOICE, 
+                SmartActionKind.REFUND, SmartActionKind.SUBSCRIPTION, SmartActionKind.TRANSACTION, 
+                SmartActionKind.DELIVERY, SmartActionKind.PAYMENT
+            ];
+            if (commerceKinds.includes(action.kind) && !preferences.smartActionsCommerce) return false;
+            
+            if (action.kind === SmartActionKind.TRAVEL && !preferences.smartActionsTravel) return false;
+            
+            return true;
+        });
+    }, [extractedData, isLoadingBody, email?.timestamp, email?.subject, email?.sender, preferences]);
 
     if (!email) {
         return (

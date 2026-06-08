@@ -10,7 +10,8 @@ import {
     LogOut,
     ChevronLeft,
     MonitorSmartphone,
-    Terminal
+    Terminal,
+    Sparkles
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -23,6 +24,7 @@ import { NotificationsSection } from '@/components/settings/NotificationsSection
 import { SecuritySection } from '@/components/settings/SecuritySection';
 import { SystemSection } from '@/components/settings/SystemSection';
 import { DeveloperSection } from '@/components/settings/DeveloperSection';
+import { SmartActionsSection } from '@/components/settings/SmartActionsSection';
 import { useAuth } from '@/components/AuthContext';
 import { SettingsProvider, useSettings } from '@/components/settings/SettingsContext';
 import { UnsavedChangesBar } from '@/components/settings/UnsavedChangesBar';
@@ -31,7 +33,7 @@ import { useRouter } from 'next/navigation';
 
 // --- Types ---
 
-type SettingsTab = 'account' | 'appearance' | 'notifications' | 'security' | 'system' | 'developer' | 'about';
+type SettingsTab = 'account' | 'appearance' | 'notifications' | 'smartactions' | 'security' | 'system' | 'developer' | 'about';
 
 interface SettingsTabConfig {
     id: SettingsTab;
@@ -43,6 +45,7 @@ const SETTINGS_TABS: SettingsTabConfig[] = [
     { id: 'account', label: 'Account', icon: User },
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'notifications', label: 'Notifications', icon: Bell },
+    { id: 'smartactions', label: 'Smart Actions', icon: Sparkles },
     { id: 'security', label: 'Privacy & Security', icon: Shield },
     { id: 'system', label: 'System & Behavior', icon: MonitorSmartphone },
     { id: 'developer', label: 'Developer', icon: Terminal },
@@ -173,6 +176,16 @@ function SettingsPageInner() {
                             </motion.div>
                         )}
 
+                        {activeTab === 'smartactions' && (
+                            <motion.div key="smartactions" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                <SectionHeader
+                                    title="Smart Actions"
+                                    description="Automate and extract actionable data from your emails."
+                                />
+                                <SmartActionsSection />
+                            </motion.div>
+                        )}
+
                         {activeTab === 'security' && (
                             <motion.div key="security" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                                 <SectionHeader
@@ -204,7 +217,7 @@ function SettingsPageInner() {
                         )}
 
                         {/* Placeholders for other tabs */}
-                        {(!['account', 'appearance', 'notifications', 'security', 'system', 'developer'].includes(activeTab)) && (
+                        {(!['account', 'appearance', 'notifications', 'smartactions', 'security', 'system', 'developer'].includes(activeTab)) && (
                             <motion.div key="placeholder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                                 <SectionHeader
                                     title={SETTINGS_TABS.find(t => t.id === activeTab)?.label || 'Settings'}

@@ -2,7 +2,7 @@
 
 
 import { Window as TauriWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, RefreshCw, CheckCircle2, Download, AlertCircle, File, FolderOpen, Terminal, Database, ShieldAlert, FileText, WifiOff, Clock } from "lucide-react";
+import { Minus, Square, X, RefreshCw, CheckCircle2, Download, AlertCircle, File, FolderOpen, Terminal, Database, ShieldAlert, FileText, WifiOff, Clock, Bell, BellOff, Activity } from "lucide-react";
 import { useEffect, useState, memo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
@@ -10,6 +10,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useSync } from "@/components/SyncContext";
 import { useDownloads } from "@/components/DownloadContext";
+import { useAppPreferences } from "@/components/AppPreferencesContext";
+import { useBackgroundTasks } from "@/components/BackgroundTasksContext";
 import { motion, AnimatePresence } from "framer-motion";
 
 // --- Types & Interfaces ---
@@ -56,6 +58,52 @@ const WindowControl = memo(({
     </button>
 ));
 WindowControl.displayName = "WindowControl";
+
+/**
+ * Background Task Indicator
+ * Shows currently running background tasks.
+ */
+function BackgroundTaskIndicator() {
+    const { tasks } = useBackgroundTasks();
+    if (tasks.length === 0) return null;
+
+    const taskName = tasks[tasks.length - 1].name;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, scale: 0.8, width: 0, marginLeft: -8 }}
+            animate={{ opacity: 1, scale: 1, width: "auto", marginLeft: 0 }}
+            exit={{ opacity: 0, scale: 0.8, width: 0, marginLeft: -8 }}
+            className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap ml-2"
+        >
+            <RefreshCw size={10} className="text-blue-500 animate-spin" />
+            <span className="text-[10px] font-medium text-foreground/70 tracking-tight">
+                {taskName}
+            </span>
+        </motion.div>
+    );
+}
+
+/**
+ * Do Not Disturb Toggle
+ */
+function DndToggle() {
+    const { preferences, updatePreferences } = useAppPreferences();
+    return (
+        <button
+            onClick={() => updatePreferences({ dndEnabled: !preferences.dndEnabled })}
+            className={cn(
+                "p-1.5 rounded-md transition-colors relative mr-1",
+                "hover:bg-black/5 dark:hover:bg-white/10 text-foreground/70 dark:text-white/70",
+                preferences.dndEnabled && "text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-400/10"
+            )}
+            title={preferences.dndEnabled ? "Do Not Disturb: On" : "Do Not Disturb: Off"}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
+            {preferences.dndEnabled ? <BellOff size={14} strokeWidth={2} /> : <Bell size={14} strokeWidth={2} />}
+        </button>
+    );
+}
 
 /**
  * Sync Status Indicator
@@ -160,6 +208,7 @@ function SyncIndicator() {
  * Developer Tools Popover
  */
 function DevToolsPopover() {
+    const { startTask, endTask } = useBackgroundTasks();
     const [isOpen, setIsOpen] = useState(false);
     const [enabled, setEnabled] = useState(false);
     const [isSimulatedOffline, setIsSimulatedOffline] = useState(false);
@@ -219,6 +268,13 @@ function DevToolsPopover() {
                 window.dispatchEvent(new Event(newOfflineState ? 'offline' : 'online'));
                 toast.info(newOfflineState ? "Simulated Offline Mode Enabled" : "Simulated Offline Mode Disabled");
                 break;
+            case 'background_task': {
+                const id = "sim-" + Date.now();
+                startTask(id, "Processing Task...");
+                setTimeout(() => endTask(id), 5000);
+                toast.info("Simulated background task started for 5s");
+                break;
+            }
         }
     };
 
@@ -269,6 +325,9 @@ function DevToolsPopover() {
                             <button onClick={(e) => { e.stopPropagation(); simulateError('offline'); }} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
                                 <WifiOff size={14} className={isSimulatedOffline ? "text-red-500" : "text-muted-foreground"} /> 
                                 {isSimulatedOffline ? "Disable Offline Mode" : "Enable Offline Mode"}
+                            </button>
+                            <button onClick={() => simulateError('background_task')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
+                                <Activity size={14} className="text-blue-500" /> Simulate Background Task
                             </button>
                         </div>
                     </motion.div>
@@ -415,6 +474,7 @@ export default function Titlebar() {
             {/* Left: Status & Utilities */}
             <div className="flex items-center gap-1.5 pl-1">
                 <SyncIndicator />
+                <BackgroundTaskIndicator />
             </div>
 
             {/* Center: Brand Identity */}
@@ -426,6 +486,7 @@ export default function Titlebar() {
 
             {/* Right: Window Controls */}
             <div className="justify-self-end flex items-center pr-1">
+                <DndToggle />
                 <button
                     onClick={triggerSync}
                     disabled={isSyncing}
