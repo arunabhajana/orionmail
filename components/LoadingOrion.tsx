@@ -94,7 +94,7 @@ const LoadingOrion = ({
     }, [isPreview, onClose]);
 
     return (
-        <div ref={containerRef} className="fixed inset-0 z-[100] bg-white dark:bg-[#0f172a] flex flex-col items-center justify-center overflow-hidden perspective-1000">
+        <div ref={containerRef} className="fixed inset-0 z-[50] bg-white dark:bg-[#0f172a] flex flex-col items-center justify-center overflow-hidden perspective-1000">
             {isPreview && onClose && (
                 <button
                     onClick={onClose}

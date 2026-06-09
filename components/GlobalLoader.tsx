@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 
 export function GlobalLoader() {
-    const { loading, mailboxLoading, isBootstrappingInbox } = useAuth();
+    const { loading, mailboxLoading, isBootstrappingInbox, user } = useAuth();
     const pathname = usePathname();
 
     // Initially true to cover the boot process seamlessly
@@ -30,9 +30,9 @@ export function GlobalLoader() {
             isAnyLoading = true;
             setMessage("Initializing");
             setSubMessage("Downloading your recent emails...");
-        } else if (pathname === "/" && !loading) {
-            // Special case: we are on the boot screen and about to redirect,
-            // or waiting for Windows Hello lock. Keep it visible.
+        } else if (pathname === "/" && user && !loading) {
+            // Special case: we are on the boot screen and about to redirect.
+            // Keep it visible until pathname changes to /inbox.
             isAnyLoading = true;
             setMessage("Launching Orion");
             setSubMessage("Preparing your workspace...");
@@ -58,7 +58,7 @@ export function GlobalLoader() {
                     initial={{ opacity: 1 }}
                     exit={{ opacity: 0, filter: "blur(20px)", scale: 1.05 }}
                     transition={{ duration: 0.8, ease: "easeInOut" }}
-                    style={{ position: "fixed", inset: 0, zIndex: 999 }}
+                    style={{ position: "fixed", inset: 0, zIndex: 50 }}
                 >
                     <LoadingOrion message={message} subMessage={subMessage} />
                 </motion.div>

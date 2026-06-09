@@ -13,6 +13,7 @@ import { useSync } from "@/components/SyncContext";
 import { useDownloads } from "@/components/DownloadContext";
 import { useAppPreferences } from "@/components/AppPreferencesContext";
 import { useBackgroundTasks } from "@/components/BackgroundTasksContext";
+import { useAuth } from "@/components/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import LoadingOrion from "./LoadingOrion";
 
@@ -113,6 +114,7 @@ function DndToggle() {
  */
 function SyncIndicator() {
     const { isSyncing, syncMessage, unreadCounts } = useSync();
+    const { loading, mailboxLoading, isBootstrappingInbox } = useAuth();
     const unreadCount = unreadCounts['inbox'] || 0;
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
@@ -129,6 +131,12 @@ function SyncIndicator() {
         };
     }, []);
 
+    const isLoadingState = loading || mailboxLoading || isBootstrappingInbox;
+    let loadingMsg = "";
+    if (loading) loadingMsg = "Verifying Session";
+    else if (mailboxLoading) loadingMsg = "Connecting to Mailbox";
+    else if (isBootstrappingInbox) loadingMsg = "Initializing Inbox";
+
     return (
         <div
             className={cn(
@@ -139,7 +147,21 @@ function SyncIndicator() {
         >
             <div className="flex items-center h-full">
                 <AnimatePresence mode="wait">
-                    {!isOnline ? (
+                    {isLoadingState ? (
+                        <motion.div
+                            key="app-loading"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            transition={{ duration: 0.2 }}
+                            className="flex items-center gap-1.5"
+                        >
+                            <RefreshCw size={12} className="text-primary animate-spin" />
+                            <span className="text-[10px] font-semibold text-primary/90 tracking-tight uppercase">
+                                {loadingMsg}
+                            </span>
+                        </motion.div>
+                    ) : !isOnline ? (
                         <motion.div
                             key="offline"
                             initial={{ opacity: 0, y: 10 }}
@@ -481,7 +503,7 @@ export default function Titlebar() {
     return (
         <header
             className={cn(
-                "fixed top-0 left-0 right-0 h-[30px] z-50",
+                "fixed top-0 left-0 right-0 h-[30px] z-[60]",
                 "grid grid-cols-[1fr_auto_1fr] items-center px-2.5",
                 "bg-background/80 backdrop-blur-xl border-b border-border",
                 "select-none"
