@@ -4,7 +4,7 @@ use crate::mail::database;
 use crate::mail::notifications;
 use crate::mail::folder::MailFolder;
 use mailparse::parse_mail;
-use native_tls::TlsConnector;
+
 use tauri::AppHandle;
 
 // Re-export the SYNC_LOCK from sync_manager for backwards compatibility with poll/idle
@@ -24,58 +24,31 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
     };
 
     let folder_name = folder.to_string();
-    let email = account.email.clone();
-    let access_token = account.access_token.clone();
     let app_handle_clone = app_handle.clone();
     let folder_name_clone = folder_name.clone();
-    let imap_config = account.provider.imap_config();
-    let domain = imap_config.host;
-    let port = imap_config.port;
+    let folder_clone = folder.clone();
 
-    let new_messages_count = tokio::task::spawn_blocking(move || {
-        // Use the drop guard to automatically clear sync_in_progress if we panic
-        let _progress_guard = database::SyncProgressGuard::new(app_handle_clone.clone(), folder_name_clone.clone())?;
+    let new_messages_count_future = crate::mail::imap_session::execute_with_session(
+        &account,
+        crate::mail::imap_session::SessionKind::Sync,
+        move |session| {
+            // Use the drop guard to automatically clear sync_in_progress if we panic
+            let _progress_guard = database::SyncProgressGuard::new(app_handle_clone.clone(), folder_name_clone.clone())?;
 
-        let mut sync_state = database::get_folder_sync_state(&app_handle_clone, &folder_name_clone)
-            .unwrap_or(None)
-            .unwrap_or_else(|| database::FolderSyncState {
-                folder: folder_name_clone.clone(),
-                last_uid: 0,
-                last_synced_at: 0,
-                sync_in_progress: true, // Already set by guard
-                last_full_sync_at: 0,
-                last_error: None,
-            });
+            let mut sync_state = database::get_folder_sync_state(&app_handle_clone, &folder_name_clone)
+                .unwrap_or(None)
+                .unwrap_or_else(|| database::FolderSyncState {
+                    folder: folder_name_clone.clone(),
+                    last_uid: 0,
+                    last_synced_at: 0,
+                    sync_in_progress: true,
+                    last_full_sync_at: 0,
+                    last_error: None,
+                });
 
-        // We also need uid_validity which is still stored in mailbox_state (per plan)
-        let stored_validity = database::get_mailbox_validity(&app_handle_clone, &imap_mailbox).unwrap_or(None);
+            let stored_validity = database::get_mailbox_validity(&app_handle_clone, &imap_mailbox).unwrap_or(None);
 
-        let tls = TlsConnector::builder()
-            .build()
-            .map_err(|e| format!("TLS Builder Error: {}", e))?;
-
-        let client = imap::connect((domain.as_str(), port), domain.as_str(), &tls)
-            .map_err(|e| format!("IMAP Connection Error: {}", e))?;
-
-        let auth_raw = format!(
-            "user={}\x01auth=Bearer {}\x01\x01",
-            email, access_token
-        );
-
-        struct XoAuth2 { auth_string: String }
-        impl imap::Authenticator for XoAuth2 {
-            type Response = String;
-            fn process(&self, _: &[u8]) -> Self::Response { self.auth_string.clone() }
-        }
-
-        let auth = XoAuth2 { auth_string: auth_raw };
-
-        let mut session = client
-            .authenticate("XOAUTH2", &auth)
-            .map_err(|(e, _)| format!("IMAP Authentication Failed: {}", e))?;
-
-        let result = (|| -> Result<u32, String> {
-            let mailbox = if folder == MailFolder::Inbox {
+            let mailbox = if folder_clone == MailFolder::Inbox {
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?
             } else {
                 session.examine(&imap_mailbox).map_err(|e| format!("IMAP Examine Error: {}", e))?
@@ -87,8 +60,8 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             // 1. UIDVALIDITY Check
             if stored_validity != Some(server_validity) {
                 log::info!("UIDVALIDITY changed ({} -> {}). Clearing cache.", stored_validity.unwrap_or(0), server_validity);
-                database::clear_messages(&app_handle_clone, &folder_name_clone)?;
-                database::update_mailbox_validity(&app_handle_clone, &imap_mailbox, server_validity)?;
+                database::clear_messages(&app_handle_clone, &folder_name_clone).map_err(|e| e.to_string())?;
+                database::update_mailbox_validity(&app_handle_clone, &imap_mailbox, server_validity).map_err(|e| e.to_string())?;
                 sync_state.last_uid = 0;
             }
 
@@ -115,7 +88,7 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             log::info!("Fetching interval for {}: {}", folder_name_clone, range);
 
             // --- DEFENSIVE RE-SELECT ---
-            if folder == MailFolder::Inbox {
+            if folder_clone == MailFolder::Inbox {
                 let _ = session.select(&imap_mailbox).map_err(|e| format!("IMAP Re-Select Error: {}", e))?;
             } else {
                 let _ = session.examine(&imap_mailbox).map_err(|e| format!("IMAP Re-Examine Error: {}", e))?;
@@ -155,7 +128,7 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             }
 
             log::info!("Grabbed {} new messages for {}!", num_new, folder_name_clone);
-            database::insert_or_update_messages(&app_handle_clone, &messages)?;
+            database::insert_or_update_messages(&app_handle_clone, &messages).map_err(|e| e.to_string())?;
             
             if !raw_headers.is_empty() {
                 if let Err(e) = crate::contacts::contact_indexer::extract_and_store_contacts(&app_handle_clone, &raw_headers) {
@@ -165,12 +138,11 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
 
             if num_new > 0 {
                 use tauri::Emitter;
-                // Include the folder name so the frontend can selectively refresh
                 if let Err(e) = app_handle_clone.emit("mail:updated", &folder_name_clone) {
                     log::error!("Failed to emit mail:updated event: {}", e);
                 }
 
-                if !is_bootstrap && folder == MailFolder::Inbox {
+                if !is_bootstrap && folder_clone == MailFolder::Inbox {
                     let mut notif_batch = Vec::new();
                     for msg in &messages {
                         notif_batch.push((msg.from.clone(), msg.subject.clone(), msg.uid));
@@ -179,36 +151,36 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
                 }
             }
 
-            if folder == MailFolder::Inbox {
+            if folder_clone == MailFolder::Inbox {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
                 let _ = crate::mail::database::update_global_sync_time(&app_handle_clone, Some(now), None);
                 crate::tray_state::set_last_sync_time(&app_handle_clone);
                 crate::tray_state::refresh_unread_count_from_db(&app_handle_clone);
             }
 
-            // Update sync state
             sync_state.last_uid = std::cmp::max(sync_state.last_uid, max_fetched_uid);
             sync_state.last_synced_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
             sync_state.last_error = None;
             let _ = database::update_folder_sync_state(&app_handle_clone, &sync_state);
 
             Ok(num_new)
-        })();
-
-        let _ = session.logout();
-        
-        if let Err(ref e) = result {
-            sync_state.last_error = Some(e.clone());
-            let _ = database::update_folder_sync_state(&app_handle_clone, &sync_state);
-            if folder == MailFolder::Inbox {
-                let _ = crate::mail::database::update_global_sync_time(&app_handle_clone, None, Some(e.clone()));
-            }
         }
+    );
 
-        result
-    })
-    .await
-    .map_err(|e| format!("Task failed: {}", e))?;
+    let new_messages_count = match tokio::time::timeout(std::time::Duration::from_secs(120), new_messages_count_future).await {
+        Ok(Ok(count)) => count,
+        Ok(Err(e)) => {
+            // Error handling
+            let mut sync_state = database::get_folder_sync_state(&app_handle, &folder_name).unwrap_or(None).unwrap_or_default();
+            sync_state.last_error = Some(e.clone());
+            let _ = database::update_folder_sync_state(&app_handle, &sync_state);
+            if folder == MailFolder::Inbox {
+                let _ = crate::mail::database::update_global_sync_time(&app_handle, None, Some(e.clone()));
+            }
+            return Err(e);
+        },
+        Err(_) => return Err("Sync Connection Timeout".to_string()),
+    };
 
     // Enqueue top 10 most recent UIDs for prefetching immediately after sync
     let uids = database::get_unfetched_recent_uids(app_handle, &folder_name, 10).unwrap_or_default();
@@ -229,7 +201,7 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
         });
     }
 
-    new_messages_count
+    Ok(new_messages_count)
 }
 
 fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folder_name: &str) -> Option<MessageHeader> {

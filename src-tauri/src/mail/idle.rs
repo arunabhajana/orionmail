@@ -9,7 +9,7 @@ use once_cell::sync::Lazy;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc;
 
-use native_tls::TlsConnector;
+
 
 static IDLE_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> =
     Lazy::new(|| Mutex::new(None));
@@ -129,43 +129,18 @@ async fn run_idle_loop(
     let current_account = crate::auth::bootstrap::ensure_active_account(app_handle).await
         .map_err(|_| "No active account found or token refresh failed")?;
 
-    let email = current_account.email;
-    let access_token = current_account.access_token;
-    let imap_config = current_account.provider.imap_config();
-    let domain = imap_config.host;
-    let port = imap_config.port;
+    let current_account_clone = current_account.clone();
 
     tokio::task::spawn_blocking(move || {
 
         // ===============================
         // Connect
         // ===============================
-        let tls = TlsConnector::builder()
-            .build()
-            .map_err(|e| format!("TLS Error: {}", e))?;
-
-        let client = imap::connect((domain.as_str(), port), domain.as_str(), &tls)
-            .map_err(|e| format!("Connect Error: {}", e))?;
-
-        let auth_raw = format!("user={}\x01auth=Bearer {}\x01\x01", email, access_token);
-
-        struct XoAuth2 {
-            auth_string: String,
-        }
-
-        impl imap::Authenticator for XoAuth2 {
-            type Response = String;
-
-            fn process(&self, _: &[u8]) -> Self::Response {
-                self.auth_string.clone()
-            }
-        }
-
-        let auth = XoAuth2 { auth_string: auth_raw };
-
-        let mut session = client
-            .authenticate("XOAUTH2", &auth)
-            .map_err(|(e, _)| format!("Auth Error: {}", e))?;
+        let session_wrapper = match crate::mail::imap_session::create_session(&current_account_clone, crate::mail::imap_session::SessionKind::Idle) {
+            Ok(s) => s,
+            Err(e) => return Err(format!("IMAP Connection Error: {}", e)),
+        };
+        let mut session = session_wrapper.session;
 
         let mailbox = session
             .select("INBOX")

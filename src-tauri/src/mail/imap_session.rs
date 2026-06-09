@@ -10,12 +10,15 @@ use native_tls::TlsConnector;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionKind {
     Primary,
+    Sync,
     Prefetch,
+    Idle,
 }
 
 pub struct ImapSession {
     pub session: imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
     pub last_used: Instant,
+    pub created_at: Instant,
 }
 
 pub struct ManagedSession {
@@ -25,8 +28,8 @@ pub struct ManagedSession {
 pub static SESSION_MANAGER: Lazy<StdMutex<HashMap<(String, SessionKind), Arc<ManagedSession>>>> = 
     Lazy::new(|| StdMutex::new(HashMap::new()));
 
-pub fn create_session(account: &Account) -> Result<ImapSession, String> {
-    let mut session = connect_and_authenticate(account)?;
+pub fn create_session(account: &Account, kind: SessionKind) -> Result<ImapSession, String> {
+    let mut session = connect_and_authenticate(account, kind)?;
 
     // GUARANTEE: Always select INBOX on fresh creation
     session.select("INBOX").map_err(|e| format!("IMAP Select Error: {}", e))?;
@@ -36,13 +39,16 @@ pub fn create_session(account: &Account) -> Result<ImapSession, String> {
     Ok(ImapSession {
         session,
         last_used: Instant::now(),
+        created_at: Instant::now(),
     })
 }
 
 /// Helper function to establish a fresh, authenticated connection to the IMAP server.
-fn connect_and_authenticate(
+pub fn connect_and_authenticate(
     account: &Account,
+    kind: SessionKind,
 ) -> Result<imap::Session<native_tls::TlsStream<std::net::TcpStream>>, String> {
+    log::info!("Creating new IMAP session {:?}", kind);
     let imap_config = account.provider.imap_config();
     let domain = imap_config.host;
     let port = imap_config.port;
@@ -105,26 +111,28 @@ where
         
         let mut is_healthy = false;
         if let Some(s) = owned_guard.as_mut() {
-            if s.last_used.elapsed().as_secs() > 30 {
+            if s.created_at.elapsed().as_secs() > 1800 {
+                log::info!("[SessionStats] Session TTL exceeded (30m). Destroying stale session for {:?}", kind);
+                let _ = s.session.logout();
+            } else if s.last_used.elapsed().as_secs() > 30 {
                 log::info!("Session idle > 30s, validating health...");
-                // 1. Send NOOP to verify TCP connection is alive
-                // 2. Send SELECT INBOX to guarantee mailbox context is valid and not reclaimed
                 if s.session.noop().is_ok() && s.session.select("INBOX").is_ok() {
                     is_healthy = true;
                     s.last_used = Instant::now();
-                    log::info!("Session health validation passed. Reusing session.");
+                    log::info!("[SessionStats] Session health validation passed. Reusing session for {:?}", kind);
                 } else {
-                    log::info!("Session health validation failed. Destroying stale session.");
+                    log::info!("[SessionStats] Session health validation failed. Destroying stale session for {:?}", kind);
                     let _ = s.session.logout();
                 }
             } else {
                 is_healthy = true;
+                log::debug!("[SessionStats] Reusing active session for {:?}", kind);
             }
         }
 
         if !is_healthy {
-            // Overwrite with a fresh session
-            *owned_guard = Some(create_session(&account_clone)?);
+            log::info!("[SessionStats] Recreating session for {:?}", kind);
+            *owned_guard = Some(create_session(&account_clone, kind)?);
         }
 
         let imap_session_wrapper = owned_guard.as_mut().unwrap();
@@ -133,12 +141,13 @@ where
         let result = f(&mut imap_session_wrapper.session);
 
         if result.is_err() {
-            log::warn!("Session operation failed. Attempting auto-recovery...");
+            log::warn!("[SessionStats] Session operation failed for {:?}. Attempting auto-recovery...", kind);
             let _ = imap_session_wrapper.session.logout(); // poison
             *owned_guard = None; // discard
             
             // Recreate
-            let mut new_session = match create_session(&account_clone) {
+            log::info!("[SessionStats] Recreating failed session for {:?}", kind);
+            let mut new_session = match create_session(&account_clone, kind) {
                 Ok(s) => s,
                 Err(e) => return Err(e),
             };

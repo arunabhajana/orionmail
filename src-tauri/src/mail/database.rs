@@ -4,7 +4,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 use crate::mail::message_list::MessageHeader;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FolderSyncState {
     pub folder: String,
     pub last_uid: u32,
