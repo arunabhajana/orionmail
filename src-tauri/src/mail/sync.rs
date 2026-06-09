@@ -218,9 +218,6 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
         let pf_acc = account.clone();
         let pf_folder = folder_name.clone();
         tokio::spawn(async move {
-            // Modify prefetch to support folders if necessary, assuming it currently supports it or defaults to inbox
-            // Wait, enqueue_prefetch currently takes app_handle, account, uid. It defaults to "INBOX".
-            // We should ideally update prefetch, but for now we'll pass uid.
             crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
                 pf_app,
                 pf_acc,

@@ -20,7 +20,7 @@ OrionMail connects local robustness with web-like flexibility. Key features and 
 ### ⚡ Core Capabilities
 *   **Offline-First Database**: Uses a local SQLite database (`get_db_path()`, `init_from_db()`) to store emails, contacts, and account configurations, ensuring instant access even without an internet connection.
 *   **Smart Background Sync**: The Rust backend handles complex IMAP/SMTP operations (`sync_folder()`, `sync_inbox()`) quietly in the background without blocking the UI.
-*   **Predictive Body Prefetching**: Features a dedicated `BodyPrefetchManager` and background worker (`spawn_prefetch_worker()`) that preemptively downloads and caches email contents (`fetch_and_cache_body_internal()`) for zero-latency reading.
+*   **Predictive Body Prefetching**: Features a dedicated `BodyPrefetchManager` and background worker (`spawn_worker()`) that preemptively downloads and caches email contents (`fetch_and_cache_body_internal()`) for zero-latency reading.
 *   **Secure Google OAuth Integration**: Clean authentication flow (`start_google_login()`, `refresh_google_token()`) managed via a secure local `AuthStore`, seamlessly integrated with the React frontend through the `useAuth()` hook.
 
 ### 🎨 User Interface & Experience
