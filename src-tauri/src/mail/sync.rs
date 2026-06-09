@@ -221,8 +221,10 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
                 pf_app,
                 pf_acc,
-                crate::mail::body_prefetch_manager::PrefetchRequest { folder: pf_folder, uid },
+                pf_folder,
+                uid,
                 crate::mail::body_prefetch_manager::PrefetchPriority::Background,
+                None,
             ).await;
         });
     }

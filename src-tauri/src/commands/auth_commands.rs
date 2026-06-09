@@ -117,29 +117,24 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
         }
     }
 
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
     // Delegate to Manager
     crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
         app_handle.clone(),
         account.clone(),
-        crate::mail::body_prefetch_manager::PrefetchRequest { folder: folder.clone(), uid },
+        folder.clone(),
+        uid,
         crate::mail::body_prefetch_manager::PrefetchPriority::Immediate,
+        Some(tx)
     ).await;
 
-    // Poll cache
-    for _ in 0..600 { // 30 second timeout (600 * 50ms)
-        if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
-            let attachments = if let Some(json) = attachments_json {
-                serde_json::from_str(&json).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            let extracted_data = extracted_data_json.and_then(|json| serde_json::from_str(&json).ok());
-            return Ok(crate::mail::message_body::MessageDetail { body: cached_body, attachments, extracted_data });
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // Wait for the oneshot reply
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("Channel closed unexpectedly".to_string()),
+        Err(_) => Err("Timeout waiting for message body to fetch".to_string()),
     }
-
-    Err("Timeout waiting for message body to fetch".to_string())
 }
 
 #[command]

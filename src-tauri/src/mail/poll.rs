@@ -28,7 +28,13 @@ pub fn start_polling(app_handle: AppHandle, account: Account) {
 
         loop {
             // Wait 180 seconds before processing
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = crate::mail::shutdown::POLL_TOKEN.cancelled() => {
+                    log::info!("[POLL] Shutdown requested, exiting loop.");
+                    break;
+                }
+            }
             log::info!("[POLL] Tick: Attempting fallback sync...");
 
             let app_clone = app_handle.clone();
@@ -62,9 +68,5 @@ pub fn start_polling(app_handle: AppHandle, account: Account) {
 }
 
 pub fn stop_polling() {
-    let mut lock = POLL_HANDLE.lock().unwrap();
-    if let Some(handle) = lock.take() {
-        log::info!("[POLL] Stopping fallback poll loop...");
-        handle.abort();
-    }
+    // SHUTDOWN_TOKEN handles graceful exit now
 }

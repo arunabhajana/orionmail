@@ -45,6 +45,10 @@ pub fn start_idle_listener(app_handle: AppHandle, account: Account) {
                 log::info!("IMAP IDLE: Sync already running. Skipping auto-sync.");
                 continue;
             }
+            
+            if crate::mail::shutdown::IDLE_TOKEN.is_cancelled() {
+                break;
+            }
             let _sync_guard = guard.unwrap();
 
             log::info!("IMAP IDLE: Triggering auto-sync...");
@@ -78,20 +82,35 @@ pub fn start_idle_listener(app_handle: AppHandle, account: Account) {
         let mut backoff: u64 = 2;
 
         loop {
-            match run_idle_loop(&app_idle, &account_idle, tx.clone(), last_exists).await {
-                Ok(updated_count) => {
-                    last_exists = updated_count;
-                    backoff = 2;
-                }
-                Err(e) => {
-                    log::error!(
-                        "IMAP IDLE error: {}. Reconnecting in {} seconds...",
-                        e,
-                        backoff
-                    );
+            tokio::select! {
+                res = run_idle_loop(&app_idle, &account_idle, tx.clone(), last_exists) => {
+                    match res {
+                        Ok(updated_count) => {
+                            last_exists = updated_count;
+                            backoff = 2;
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "IMAP IDLE error: {}. Reconnecting in {} seconds...",
+                                e,
+                                backoff
+                            );
 
-                    tokio::time::sleep(Duration::from_secs(backoff)).await;
-                    backoff = (backoff * 2).min(60);
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_secs(backoff)) => {
+                                    backoff = (backoff * 2).min(60);
+                                }
+                                _ = crate::mail::shutdown::IDLE_TOKEN.cancelled() => {
+                                    log::info!("IMAP IDLE: Shutdown received during backoff.");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                _ = crate::mail::shutdown::IDLE_TOKEN.cancelled() => {
+                    log::info!("IMAP IDLE: Shutdown received, aborting idle connection.");
+                    break;
                 }
             }
         }
@@ -166,6 +185,12 @@ async fn run_idle_loop(
         // IDLE Loop
         // ===============================
         loop {
+            if crate::mail::shutdown::IDLE_TOKEN.is_cancelled() {
+                log::info!("IMAP IDLE: Shutdown requested, exiting idle loop.");
+                let _ = session.logout();
+                return Ok(last_exists);
+            }
+
             // Explicitly test connection health before blocking
             if let Err(e) = session.noop() {
                 log::warn!("IMAP IDLE pre-check failed. Connection likely dead: {}", e);
@@ -228,13 +253,7 @@ async fn run_idle_loop(
 }
 
 pub fn stop_idle_listener() {
-    if let Some(handle) = IDLE_TASK.lock().unwrap().take() {
-        log::info!("IMAP IDLE: Stopping listener task.");
-        handle.abort();
-    }
-
-    if let Some(handle) = COORDINATOR_TASK.lock().unwrap().take() {
-        log::info!("IMAP IDLE: Stopping coordinator task.");
-        handle.abort();
-    }
+    // Actually we don't strictly need to abort manually anymore because 
+    // SHUTDOWN_TOKEN handles it gracefully, but we can keep it as a fallback.
+    // However, the caller now calls trigger_shutdown() instead of this.
 }

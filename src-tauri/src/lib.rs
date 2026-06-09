@@ -119,8 +119,7 @@ pub fn run() {
                   window_clone.emit("window:hidden", ()).ok();
               } else {
                   log::info!("App closing permanently.");
-                  crate::mail::idle::stop_idle_listener();
-                  crate::mail::poll::stop_polling();
+                  crate::mail::shutdown::trigger_shutdown();
               }
             }
           });

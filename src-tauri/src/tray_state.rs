@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use once_cell::sync::Lazy;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 
 struct TrayState {
     unread_count: u32,
@@ -92,9 +92,16 @@ pub fn spawn_tray_update_loop(app: AppHandle) {
     update_tray_now(&app);
     
     tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
-            sleep(Duration::from_secs(60)).await;
-            update_tray_now(&app);
+            tokio::select! {
+                _ = interval.tick() => {
+                    update_tray_now(&app);
+                }
+                _ = crate::mail::shutdown::TRAY_TOKEN.cancelled() => {
+                    break;
+                }
+            }
         }
     });
 }

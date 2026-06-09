@@ -13,3 +13,4 @@ pub mod smtp_client;
 pub mod folder;
 pub mod sync_manager;
 pub mod extraction;
+pub mod shutdown;

@@ -40,7 +40,7 @@ pub struct MessageAttachment {
     pub type_mime: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageDetail {
     pub body: String,

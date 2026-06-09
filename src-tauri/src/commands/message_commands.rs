@@ -210,8 +210,10 @@ pub async fn get_messages_page(
                     crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
                         app_handle_pf.clone(),
                         account.clone(),
-                        crate::mail::body_prefetch_manager::PrefetchRequest { folder: "inbox".to_string(), uid },
+                        "inbox".to_string(),
+                        uid,
                         crate::mail::body_prefetch_manager::PrefetchPriority::Background,
+                        None,
                     ).await;
                 }
             });
@@ -224,7 +226,7 @@ pub async fn get_messages_page(
 #[tauri::command]
 pub async fn prefetch_messages(
     app_handle: tauri::AppHandle,
-    requests: Vec<crate::mail::body_prefetch_manager::PrefetchRequest>,
+    requests: Vec<crate::mail::body_prefetch_manager::BodyKey>,
 ) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
@@ -235,8 +237,10 @@ pub async fn prefetch_messages(
         crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
             app_handle.clone(),
             account.clone(),
-            request,
+            request.folder,
+            request.uid,
             crate::mail::body_prefetch_manager::PrefetchPriority::Background,
+            None,
         ).await;
     }
     
