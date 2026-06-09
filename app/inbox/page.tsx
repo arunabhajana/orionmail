@@ -3,7 +3,6 @@
 import React, { useEffect, useState } from "react";
 import MainLayout from "@/components/MainLayout";
 import { useAuth } from "@/components/AuthContext";
-import LogoSpinner from "@/components/LogoSpinner";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
@@ -45,31 +44,11 @@ export default function InboxPage() {
   };
 
 
-  // If still performing initial auth bootstrap
-  if (loading) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
-        <LogoSpinner message="Verifying Session..." />
-      </div>
-    );
-  }
-
-  // If connecting to IMAP
-  if (mailboxLoading) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
-        <LogoSpinner message="Connecting to mailbox..." />
-      </div>
-    );
-  }
-
-  // If initial inbox sync is running after first login
-  if (isBootstrappingInbox) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
-        <LogoSpinner message="Initializing your Inbox..." />
-      </div>
-    );
+  // The GlobalLoader in layout.tsx will handle showing the immersive animation
+  // with dynamic text for loading, mailboxLoading, and isBootstrappingInbox.
+  // We just return null to prevent MainLayout from mounting prematurely.
+  if (loading || mailboxLoading || isBootstrappingInbox) {
+    return null;
   }
 
   return (

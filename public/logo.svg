@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <clipPath id="envClip">
+      <rect x="90" y="160" width="332" height="220" rx="40" />
+    </clipPath>
+  </defs>
+
+  <!-- Solid vivid electric blue background, no gradients -->
+  <rect width="512" height="512" rx="115" fill="#0050FF" />
+
+  <!-- Distinctive stars in the upper-right quadrant -->
+  <g fill="#A970FF">
+    <!-- Primary star, larger -->
+    <path d="M 410 50 Q 410 100 360 100 Q 410 100 410 150 Q 410 100 460 100 Q 410 100 410 50 Z" />
+    
+    <!-- Companion star 1 -->
+    <path d="M 470 160 Q 470 180 450 180 Q 470 180 470 200 Q 470 180 490 180 Q 470 180 470 160 Z" />
+    
+    <!-- Companion star 2 -->
+    <path d="M 320 120 Q 320 140 300 140 Q 320 140 320 160 Q 320 140 340 140 Q 320 140 320 120 Z" />
+  </g>
+
+  <!-- Envelope -->
+  <g clip-path="url(#envClip)">
+    <!-- Pure white rounded rectangle body -->
+    <rect x="90" y="160" width="332" height="220" fill="#FFFFFF" />
+    
+    <!-- Flap and fold lines taking the background color -->
+    <path d="M 70 140 C 180 320, 332 320, 442 140" fill="none" stroke="#0050FF" stroke-width="24" stroke-linecap="round" />
+    <path d="M 70 410 L 210 280" fill="none" stroke="#0050FF" stroke-width="24" stroke-linecap="round" />
+    <path d="M 442 410 L 302 280" fill="none" stroke="#0050FF" stroke-width="24" stroke-linecap="round" />
+  </g>
+</svg>

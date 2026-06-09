@@ -10,6 +10,7 @@ import { DownloadProvider } from "@/components/DownloadContext";
 import { AppPreferencesProvider } from "@/components/AppPreferencesContext";
 import { BackgroundTasksProvider } from "@/components/BackgroundTasksContext";
 import { Toaster } from "sonner";
+import { GlobalLoader } from "@/components/GlobalLoader";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -46,6 +47,7 @@ export default function RootLayout({
                 <AuthProvider>
                   <SyncProvider>
                     <DownloadProvider>
+                      <GlobalLoader />
                       <div className="app-window">
                         <TitlebarWrapper />
                         <div className="pt-[30px] h-full w-full overflow-hidden">

@@ -96,11 +96,8 @@ export default function Home() {
   }
 
   if (isCheckingLock || loading || user) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-mesh">
-        <div className="animate-pulse text-slate-400 font-medium">Verifying Session...</div>
-      </div>
-    );
+    // Handled by GlobalLoader, just return null so we don't flash LoginPage
+    return null;
   }
 
   return (

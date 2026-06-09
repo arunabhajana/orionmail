@@ -2,8 +2,9 @@
 
 
 import { Window as TauriWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, RefreshCw, CheckCircle2, Download, AlertCircle, File, FolderOpen, Terminal, Database, ShieldAlert, FileText, WifiOff, Clock, Bell, BellOff, Activity } from "lucide-react";
+import { Minus, Square, X, RefreshCw, CheckCircle2, Download, AlertCircle, File, FolderOpen, Terminal, Database, ShieldAlert, FileText, WifiOff, Clock, Bell, BellOff, Activity, Play } from "lucide-react";
 import { useEffect, useState, memo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { toast } from "sonner";
@@ -13,6 +14,7 @@ import { useDownloads } from "@/components/DownloadContext";
 import { useAppPreferences } from "@/components/AppPreferencesContext";
 import { useBackgroundTasks } from "@/components/BackgroundTasksContext";
 import { motion, AnimatePresence } from "framer-motion";
+import LoadingOrion from "./LoadingOrion";
 
 // --- Types & Interfaces ---
 
@@ -212,6 +214,7 @@ function DevToolsPopover() {
     const [isOpen, setIsOpen] = useState(false);
     const [enabled, setEnabled] = useState(false);
     const [isSimulatedOffline, setIsSimulatedOffline] = useState(false);
+    const [previewLoading, setPreviewLoading] = useState(false);
     const popoverRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -246,6 +249,9 @@ function DevToolsPopover() {
     const simulateError = (type: string) => {
         setIsOpen(false);
         switch(type) {
+            case 'preview_loading':
+                setPreviewLoading(true);
+                break;
             case 'session':
                 emit("auth:session_expired");
                 break;
@@ -306,6 +312,10 @@ function DevToolsPopover() {
                             <p className="text-[10px] text-muted-foreground mt-0.5">Trigger application error states</p>
                         </div>
                         <div className="p-2 flex flex-col gap-1">
+                            <button onClick={() => simulateError('preview_loading')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
+                                <Play size={14} className="text-emerald-500" /> Preview Loading Animation
+                            </button>
+                            <div className="h-px bg-black/5 dark:bg-white/5 my-1 mx-2" />
                             <button onClick={() => simulateError('session')} className="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-left text-xs font-medium text-foreground/80 dark:text-white/80">
                                 <ShieldAlert size={14} className="text-red-500" /> Session Expired
                             </button>
@@ -333,6 +343,13 @@ function DevToolsPopover() {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {previewLoading && typeof window !== 'undefined' && createPortal(
+                <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                    <LoadingOrion isPreview={true} onClose={() => setPreviewLoading(false)} />
+                </div>,
+                document.body
+            )}
         </div>
     );
 }

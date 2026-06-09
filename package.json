@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri.js",
     "lint": "eslint"
   },
   "dependencies": {
