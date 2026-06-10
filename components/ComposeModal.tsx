@@ -757,9 +757,8 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
   return (
     <div 
       className={cn(
-        "fixed z-50 flex transition-all duration-300",
-        isHidden ? "opacity-0 pointer-events-none -z-10" : "opacity-100",
-        isMinimized ? "inset-x-0 bottom-0 p-6 items-end justify-end pointer-events-none" : "inset-0 items-center justify-center pointer-events-auto"
+        "fixed inset-0 z-50 pointer-events-none transition-opacity duration-300",
+        isHidden ? "opacity-0 -z-10" : "opacity-100"
       )}
     >
       {/* Backdrop */}
@@ -769,26 +768,44 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={() => composeStatus === "draft" && onClose()}
-          className="absolute inset-0 bg-slate-900/10 backdrop-blur-sm"
+          className="absolute inset-0 bg-slate-900/10 backdrop-blur-sm pointer-events-auto"
         />
       )}
 
       {/* Modal Window */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        initial={{ 
+          opacity: 0, 
+          scale: 0.95, 
+          top: "calc(50% + 0px)", 
+          left: "calc(50% + 0px)", 
+          x: "-50%", 
+          y: "-48%",
+          width: "calc(100% + -32px)",
+          maxWidth: "calc(0% + 672px)",
+          height: "calc(100% + -32px)",
+          maxHeight: "calc(0% + 600px)",
+          borderRadius: "16px"
+        }}
         animate={{ 
           opacity: isHidden ? 0 : 1, 
           scale: 1, 
-          y: 0,
-          width: isMaximized ? "100vw" : isMinimized ? 280 : "100%",
-          height: isMaximized ? "100vh" : isMinimized ? 48 : 600,
-          borderRadius: isMaximized ? 0 : isMinimized ? 12 : 16,
+          top: isMaximized ? "calc(0% + 30px)" : isMinimized ? "calc(100% + -24px)" : "calc(50% + 0px)",
+          left: isMaximized ? "calc(0% + 0px)" : isMinimized ? "calc(100% + -24px)" : "calc(50% + 0px)",
+          x: isMaximized ? "-0%" : isMinimized ? "-100%" : "-50%",
+          y: isMaximized ? "-0%" : isMinimized ? "-100%" : "-50%",
+          width: isMaximized ? "calc(100% + 0px)" : isMinimized ? "calc(0% + 280px)" : "calc(100% + -32px)",
+          maxWidth: isMaximized ? "calc(0% + 5000px)" : isMinimized ? "calc(0% + 280px)" : "calc(0% + 672px)",
+          height: isMaximized ? "calc(100% + -30px)" : isMinimized ? "calc(0% + 48px)" : "calc(100% + -32px)",
+          maxHeight: isMaximized ? "calc(0% + 5000px)" : isMinimized ? "calc(0% + 48px)" : "calc(0% + 600px)",
+          borderRadius: isMaximized ? "0px" : isMinimized ? "12px" : "16px",
         }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        transition={{ duration: 0.2, ease: "easeOut" }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.5, ease: [0.25, 1, 0.5, 1] }}
         className={cn(
-          "relative bg-white/95 dark:bg-[#1C1C21]/95 backdrop-blur-2xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden flex flex-col pointer-events-auto",
-          !isMaximized && !isMinimized && "max-w-2xl m-4"
+          "absolute bg-white/95 dark:bg-[#1C1C21]/95 backdrop-blur-2xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden flex flex-col pointer-events-auto",
+          isMaximized && "border-x-0 border-b-0",
+          isMinimized && "cursor-pointer"
         )}
       >
         <AnimatePresence>
