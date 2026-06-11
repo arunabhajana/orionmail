@@ -16,6 +16,7 @@ import LogoSpinner from '@/components/LogoSpinner';
 import Sidebar from '@/components/Sidebar';
 import EmailList from '@/components/EmailList';
 import EmailDetail from '@/components/EmailDetail';
+import { usePendingSentMessages } from '@/hooks/usePendingSentMessages';
 
 export default function MainLayout() {
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
@@ -47,6 +48,13 @@ export default function MainLayout() {
 
     const layoutRef = useRef<HTMLDivElement>(null);
     const hasSyncedRef = useRef(false);
+
+    const {
+        pendingMessages,
+        addPendingMessage,
+        updatePendingToSyncing,
+        reconcileWithDb
+    } = usePendingSentMessages();
 
     // --- Derived State ---
 
@@ -243,6 +251,7 @@ export default function MainLayout() {
         return {
             id: `${folder}-${msg.uid}`,
             uid: msg.uid,
+            messageId: msg.message_id,
             sender: senderName,
             senderEmail: msg.from,
             to: msg.to || undefined,
@@ -272,7 +281,9 @@ export default function MainLayout() {
             const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
             if (cached && cached.length > 0) {
                 const formattedEmails = cached.map(formatEmailFromMessage);
-                setEmails(dedupeEmails(formattedEmails));
+                const deduped = dedupeEmails(formattedEmails);
+                setEmails(deduped);
+                reconcileWithDb(deduped);
                 setHasMore(cached.length === 50);
                 fetchUnreadCounts();
                 return true;
@@ -313,7 +324,9 @@ export default function MainLayout() {
                     return prev;
                 }
                 const merged = [...formattedEmails, ...prev];
-                return dedupeEmails(merged);
+                const deduped = dedupeEmails(merged);
+                reconcileWithDb(deduped);
+                return deduped;
             });
 
             fetchUnreadCounts();
@@ -809,6 +822,7 @@ export default function MainLayout() {
                 <EmailList
                     className="flex-1 overflow-hidden"
                     emails={filteredEmails}
+                    pendingMessages={currentFolder === 'sent' ? pendingMessages : []}
                     selectedEmailId={selectedEmailId}
                 onSelectEmail={(id) => setSelectedEmailId(id)}
                 onToggleStar={toggleStar}
@@ -836,7 +850,14 @@ export default function MainLayout() {
             {/* Compose Modal Overlay */}
             <AnimatePresence>
                 {isComposeOpen && (
-                    <ComposeModal onClose={() => setIsComposeOpen(false)} />
+                    <ComposeModal 
+                        onClose={() => setIsComposeOpen(false)} 
+                        onSendStart={addPendingMessage}
+                        onSendSuccess={(id, messageId) => {
+                            updatePendingToSyncing(id, messageId);
+                            invoke("sync_mail_folder", { folder: "sent" }).catch(console.error);
+                        }}
+                    />
                 )}
             </AnimatePresence>
         </div>

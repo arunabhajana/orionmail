@@ -81,6 +81,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             thread_id TEXT,
             body_fetched INTEGER DEFAULT 0,
             processed_html TEXT,
+            message_id TEXT,
             PRIMARY KEY (folder, uid)
         )",
         (),
@@ -167,12 +168,33 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
         conn.execute("ALTER TABLE messages ADD COLUMN extracted_data TEXT", ()).map_err(|e| e.to_string())?;
     }
 
+    let mut stmt = conn.prepare("PRAGMA table_info(messages)").unwrap();
+    let mut has_message_id = false;
+    let rows = stmt.query_map([], |row| {
+        let name: String = row.get(1)?;
+        Ok(name)
+    }).unwrap();
+
+    for name in rows {
+        if let Ok(col_name) = name {
+            if col_name == "message_id" {
+                has_message_id = true;
+                break;
+            }
+        }
+    }
+
+    if !has_message_id {
+        conn.execute("ALTER TABLE messages ADD COLUMN message_id TEXT", ()).map_err(|e| e.to_string())?;
+    }
+
     // Performance Indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_folder_uid_desc ON messages(folder, uid DESC)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_folder_date ON messages(folder, date DESC)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_seen ON messages(seen)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_flagged ON messages(flagged)", ()).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_message_id ON messages(message_id)", ()).map_err(|e| e.to_string())?;
 
     // FTS5 Setup
     conn.execute(
@@ -283,8 +305,8 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO messages (folder, uid, uid_validity, subject, sender, recipient, date, seen, flagged, snippet)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO messages (folder, uid, uid_validity, subject, sender, recipient, date, seen, flagged, snippet, message_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(folder, uid) DO UPDATE SET
                 subject = excluded.subject,
                 sender = excluded.sender,
@@ -292,7 +314,8 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
                 date = excluded.date,
                 seen = excluded.seen,
                 flagged = excluded.flagged,
-                snippet = excluded.snippet"
+                snippet = excluded.snippet,
+                message_id = excluded.message_id"
         ).map_err(|e| e.to_string())?;
 
         for msg in messages {
@@ -307,6 +330,7 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
                 if msg.seen { 1 } else { 0 },
                 if msg.flagged { 1 } else { 0 },
                 msg.snippet.as_deref().unwrap_or(""),
+                &msg.message_id,
             ]).map_err(|e| e.to_string())?;
         }
     }
@@ -337,6 +361,7 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
             has_attachments: row.get::<_, i32>(9).unwrap_or(0) != 0,
             thread_id: row.get(10).unwrap_or(None),
             to: row.get(11).unwrap_or(None),
+            message_id: row.get(12).unwrap_or(None),
         })
     };
 
@@ -344,7 +369,7 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
 
     if folder.to_lowercase() == "starred" {
         // Starred uses date-based sorting and pagination
-        let mut query = "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient
+        let mut query = "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id
              FROM messages 
              WHERE flagged = 1".to_string();
              
@@ -385,7 +410,7 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
     } else {
         if let Some(uid) = before_uid {
             let mut stmt = conn.prepare(
-                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient
+                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id
                  FROM messages 
                  WHERE folder = ?1 AND uid < ?2
                  ORDER BY uid DESC 
@@ -398,7 +423,7 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient
+                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id
                  FROM messages 
                  WHERE folder = ?1
                  ORDER BY uid DESC 
@@ -625,8 +650,8 @@ pub fn insert_sent_message(
     let to_joined = to.join(", ");
 
     conn.execute(
-        "INSERT INTO messages (folder, uid, subject, sender, date, snippet, processed_html, body_fetched, seen, flagged, uid_validity)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1, 0, 1)",
+        "INSERT INTO messages (folder, uid, subject, sender, date, snippet, processed_html, body_fetched, seen, flagged, uid_validity, message_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1, 0, 1, NULL)",
         rusqlite::params![
             folder,
             uid,

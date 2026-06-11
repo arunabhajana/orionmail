@@ -47,7 +47,7 @@ pub async fn send_email(
     plain_body: &str,
     html_body: &str,
     attachments: Vec<String>,
-) -> Result<(), SendError> {
+) -> Result<String, SendError> {
     // 1. Check if token needs refreshing (buffer of 5 minutes)
     if account.expires_at < Utc::now().timestamp() + 300 {
         if let Err(e) = refresh_google_token(account).await {
@@ -58,10 +58,12 @@ pub async fn send_email(
     }
 
     // 2. Build the message
+    let message_id_str = format!("<{}@orionmail>", uuid::Uuid::new_v4());
+    
     let mut builder = Message::builder()
         .from(account.email.parse().map_err(|_| SendError::InvalidRecipient)?)
         .subject(subject)
-        .header(MessageId::from(format!("<{}@orionmail>", uuid::Uuid::new_v4())));
+        .header(MessageId::from(message_id_str.clone()));
 
     for recipient in &to {
         builder = builder.to(recipient.parse().map_err(|_| SendError::InvalidRecipient)?);
@@ -143,7 +145,7 @@ pub async fn send_email(
                 }
             }
             
-            Ok(())
+            Ok(message_id_str)
         },
         Ok(Err(e)) => {
             if e.is_client() || e.is_transient() || e.is_permanent() {

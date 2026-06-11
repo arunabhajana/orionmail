@@ -18,6 +18,7 @@ pub struct MessageHeader {
     pub thread_id: Option<String>,
     pub snippet: Option<String>,
     pub to: Option<String>,
+    pub message_id: Option<String>,
 }
 
 pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Result<Vec<MessageHeader>, String> {
@@ -43,7 +44,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
             }
 
             let uids_str = recent_uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-            let fetches = session.uid_fetch(uids_str, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO)])")
+            let fetches = session.uid_fetch(uids_str, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE MESSAGE-ID)])")
                 .map_err(|e| format!("IMAP UID Fetch Error: {}", e))?;
 
             let mut messages = Vec::new();
@@ -58,6 +59,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                     let mut from = String::new();
                     let mut to_recipient = String::new();
                     let mut date = String::new();
+                    let mut message_id = None;
                     let mut seen = false;
                     let mut flagged = false;
 
@@ -80,6 +82,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                                 "from" => from = value,
                                 "to" => to_recipient = value,
                                 "date" => date = value,
+                                "message-id" => message_id = Some(value),
                                 _ => {}
                             }
                         }
@@ -118,6 +121,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                         thread_id: None,
                         snippet,
                         to: to_opt,
+                        message_id,
                     });
                 }
             }

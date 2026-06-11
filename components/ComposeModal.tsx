@@ -43,8 +43,12 @@ import DOMPurify from "isomorphic-dompurify";
 // Types
 // --------------------------------------------------------------------------
 
+import { PendingSentMessage } from "@/hooks/usePendingSentMessages";
+
 interface ComposeModalProps {
   onClose: () => void;
+  onSendStart?: (pending: PendingSentMessage) => void;
+  onSendSuccess?: (id: string, messageId: string) => void;
 }
 
 export interface AttachmentFile {
@@ -345,7 +349,7 @@ function LinkDialog({ open, initialUrl, isEditing, onConfirm, onCancel }: LinkDi
 export type ComposeWindowState = "normal" | "maximized" | "minimized" | "hidden";
 export type ComposeStatus = "draft" | "sending" | "sent" | "failed";
 
-export default function ComposeModal({ onClose }: ComposeModalProps) {
+export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: ComposeModalProps) {
   const [subject, setSubject] = useState("");
   const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
   const attachmentsRef = useRef(attachments);
@@ -463,7 +467,17 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
       return;
     }
 
-    setComposeStatus("sending");
+      setComposeStatus("sending");
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      
+      onSendStart?.({
+        id: tempId,
+        subject: subject || '(No Subject)',
+        recipients: recipients,
+        createdAt: Date.now(),
+        status: 'sending'
+      });
+
     try {
       // Cleanup pipeline: strip TipTap attrs → DOMPurify → wrap
       const cleaned = emailSafeCleanup(editorValue.html);
@@ -471,7 +485,7 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
       const htmlBody = wrapEmailHtml(sanitized);
       const plainBody = editorValue.plainText;
 
-      await invoke("send_message", {
+      const messageId: string = await invoke("send_message", {
         to: recipients,
         cc: [],
         bcc: [],
@@ -483,6 +497,7 @@ export default function ComposeModal({ onClose }: ComposeModalProps) {
       });
 
       setComposeStatus("sent");
+      onSendSuccess?.(tempId, messageId);
       
       setTimeout(() => {
         if (windowStateRef.current !== "hidden") {

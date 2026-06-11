@@ -8,6 +8,7 @@ export interface Attachment {
 export interface Email {
     id: string;
     uid: number;
+    messageId?: string;
     sender: string;
     senderEmail: string;
     to?: string;

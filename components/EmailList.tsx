@@ -10,6 +10,8 @@ import { EmailListItem } from './inbox/EmailListItem';
 import { useVirtualEmailList } from '@/hooks/useVirtualEmailList';
 import OrbitLoader from './inbox/OrbitLoader';
 import { invoke } from '@tauri-apps/api/core';
+import { PendingSentMessage } from '@/hooks/usePendingSentMessages';
+import { PendingEmailListItem } from './inbox/PendingEmailListItem';
 
 // Global cache states removed as predictive prefetch happens in Rust backend now
 
@@ -30,6 +32,7 @@ interface EmailListProps {
     isLoadingMore?: boolean;
     listRef?: React.Ref<HTMLDivElement>;
     currentFolder?: string;
+    pendingMessages?: PendingSentMessage[];
 }
 
 // --- Constants ---
@@ -50,7 +53,8 @@ const EmailList: React.FC<EmailListProps> = ({
     hasMore,
     isLoadingMore,
     listRef,
-    currentFolder
+    currentFolder,
+    pendingMessages = []
 }) => {
     const [currentFilter, setCurrentFilter] = React.useState<FilterType>('all');
 
@@ -246,6 +250,14 @@ const EmailList: React.FC<EmailListProps> = ({
                     onTouchEnd={handleTouchEnd}
                 >
                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                        {/* Render pending messages at the top if any */}
+                        {pendingMessages.length > 0 && currentFilter === 'all' && (
+                            <div className="w-full flex flex-col mb-1 z-20 sticky top-0 bg-background/95 backdrop-blur-md shadow-sm">
+                                {pendingMessages.map(pm => (
+                                    <PendingEmailListItem key={`pending-${pm.id}`} pending={pm} />
+                                ))}
+                            </div>
+                        )}
                         {virtualItems.map((virtualRow) => {
                             const email = displayedEmails[virtualRow.index];
                             return (

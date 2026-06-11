@@ -217,6 +217,7 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folde
     let mut from = String::new();
     let mut to_recipient = String::new();
     let mut date = String::new();
+    let mut message_id = None;
 
     for header in parsed.get_headers() {
         let key = header.get_key().to_lowercase();
@@ -227,6 +228,7 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folde
             "from" => from = val,
             "to" => to_recipient = val,
             "date" => date = val,
+            "message-id" => message_id = Some(val),
             _ => {}
         }
     }
@@ -268,5 +270,6 @@ fn parse_header_to_message(msg: &imap::types::Fetch, server_validity: u32, folde
         thread_id: None,
         snippet,
         to: to_opt,
+        message_id,
     })
 }

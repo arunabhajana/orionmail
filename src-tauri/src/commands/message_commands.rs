@@ -311,7 +311,7 @@ pub async fn send_message(
     plain_body: String,
     html_body: String,
     attachments: Vec<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let mut account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
     let res = crate::mail::smtp_client::send_email(
