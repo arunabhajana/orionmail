@@ -52,8 +52,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setSessionExpired(true);
         });
 
+        const handleOnline = () => {
+            // Retry bootstrap when internet becomes available to refresh tokens if needed
+            bootstrap();
+        };
+        window.addEventListener("online", handleOnline);
+
         return () => {
             unlisten.then(f => f());
+            window.removeEventListener("online", handleOnline);
         };
     }, []);
 

@@ -26,8 +26,10 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
     // Proactively refresh the token 5 minutes before it actually expires to prevent
     // mid-flight authentication failures on long-running IMAP connections.
     if account.expires_at <= current_time + 300 && !account.refresh_token.is_empty() {
-        let client_id = env!("GOOGLE_CLIENT_ID");
-        let client_secret = env!("GOOGLE_CLIENT_SECRET");
+        let client_id = std::env::var("GOOGLE_CLIENT_ID")
+            .unwrap_or_else(|_| option_env!("GOOGLE_CLIENT_ID").unwrap_or("").to_string());
+        let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
+            .unwrap_or_else(|_| option_env!("GOOGLE_CLIENT_SECRET").unwrap_or("").to_string());
         
         let http_client = Client::new();
         let payload = format!(
@@ -43,32 +45,39 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
             .send()
             .await;
 
-        let mut refresh_failed = true;
-        if let Ok(response) = res {
-            if let Ok(json) = response.json::<Value>().await {
-                if let Some(access_token) = json["access_token"].as_str() {
-                    account.access_token = access_token.to_string();
-                    let expires_in = json["expires_in"].as_i64().unwrap_or(3600);
-                    account.expires_at = Utc::now().timestamp() + expires_in;
+        let mut session_expired = false;
+        match res {
+            Ok(response) => {
+                if response.status().is_client_error() {
+                    log::error!("Token refresh rejected by Google (Session Expired)");
+                    session_expired = true;
+                } else if let Ok(json) = response.json::<Value>().await {
+                    if let Some(access_token) = json["access_token"].as_str() {
+                        account.access_token = access_token.to_string();
+                        let expires_in = json["expires_in"].as_i64().unwrap_or(3600);
+                        account.expires_at = Utc::now().timestamp() + expires_in;
 
-                    if let Err(e) = crate::auth::token_store::persist_tokens(&account.id, &account.access_token, &account.refresh_token) {
-                        log::error!("Failed to persist tokens during bootstrap refresh: {}", e);
+                        if let Err(e) = crate::auth::token_store::persist_tokens(&account.id, &account.access_token, &account.refresh_token) {
+                            log::error!("Failed to persist tokens during bootstrap refresh: {}", e);
+                        } else {
+                            account.needs_reauth = false;
+                        }
+
+                        let _ = session::save_account(app_handle, account.clone(), true);
                     } else {
-                        account.needs_reauth = false;
+                        log::error!("Token refresh failed missing access_token: {}", json);
                     }
-
-                    let _ = session::save_account(app_handle, account.clone(), true);
-                    refresh_failed = false;
-                } else {
-                    log::error!("Token refresh failed: {}", json);
                 }
+            }
+            Err(e) => {
+                log::warn!("Network error during token refresh: {}", e);
             }
         }
 
-        if refresh_failed {
+        if session_expired {
             use tauri::Emitter;
             let _ = app_handle.emit("auth:session_expired", ());
-            return Err("TOKEN_REFRESH_FAILED".to_string());
+            return Err("SESSION_EXPIRED".to_string());
         }
     }
 
