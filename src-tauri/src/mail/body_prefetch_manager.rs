@@ -183,6 +183,9 @@ impl BodyPrefetchManager {
                     Ok(acc) => acc,
                     Err(_) => {
                         log::warn!("Body fetch deferred: No active account");
+                        for tx in job.responders {
+                            let _ = tx.send(Err("No active account".to_string()));
+                        }
                         let mut state = manager.state.lock().await;
                         state.in_progress.remove(&job.key);
                         continue;

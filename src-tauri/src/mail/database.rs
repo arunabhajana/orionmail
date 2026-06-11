@@ -531,7 +531,8 @@ pub fn get_message_body_cache(app_handle: &AppHandle, folder: &str, uid: u32) ->
     let db_path = get_db_path(app_handle)?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT processed_html, attachments_json, extracted_data FROM messages WHERE folder = ?1 AND uid = ?2 AND body_fetched = 1 AND processed_html IS NOT NULL").unwrap();
+    let mut stmt = conn.prepare("SELECT processed_html, attachments_json, extracted_data FROM messages WHERE folder = ?1 AND uid = ?2 AND body_fetched = 1 AND processed_html IS NOT NULL")
+        .map_err(|e| format!("Failed to prepare get_message_body_cache statement: {}", e))?;
     let result = stmt.query_row(rusqlite::params![folder, uid], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))
     }).ok();
