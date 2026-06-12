@@ -21,7 +21,7 @@ OrionMail connects local robustness with web-like flexibility. Key features and 
 *   **Offline-First Database**: Uses a local SQLite database (`get_db_path()`, `init_from_db()`) to store emails, contacts, and account configurations, ensuring instant access even without an internet connection.
 *   **Smart Background Sync**: The Rust backend handles complex IMAP/SMTP operations (`sync_folder()`, `sync_inbox()`) quietly in the background without blocking the UI.
 *   **Predictive Body Prefetching**: Features a dedicated `BodyPrefetchManager` and background worker (`spawn_worker()`) that preemptively downloads and caches email contents (`fetch_and_cache_body_internal()`) for zero-latency reading.
-*   **Secure Google OAuth Integration**: Clean authentication flow (`start_google_login()`, `refresh_google_token()`) managed via a secure local `AuthStore`, seamlessly integrated with the React frontend through the `useAuth()` hook.
+*   **Multi-Provider Authentication**: Secure OAuth flows for Google and Outlook, plus support for Custom IMAP/SMTP configurations, managed via a secure local `AuthStore` and seamlessly integrated with the React frontend.
 
 ### 🎨 User Interface & Experience
 *   **Glassmorphic & Adaptive Theming**: A sophisticated, translucent UI built with Tailwind CSS. Includes dynamic accent color customization (`AccentColorProvider`, `useAccentColor()`) and dark mode support.
@@ -30,6 +30,7 @@ OrionMail connects local robustness with web-like flexibility. Key features and 
 *   **Integrated Compose & Attachments**: A feature-rich `ComposeModal` for drafting emails, alongside native attachment handling and a dedicated downloads manager (`useDownloads()`, `download_attachment()`).
 
 ### 🧠 Smart Features & OS Integration
+*   **Intelligent Content Extraction**: A robust extraction pipeline (`run_extraction_pipeline()`) that parses inline images (`rewrite_cid_images()`) and decodes calendar invites (ICS) for enhanced viewing.
 *   **Automated Contact Management**: Automatically extracts and stores contacts from your communications (`extract_and_store_contacts()`) into a local database, enabling fast address auto-completion (`search_contacts()`).
 *   **Deep OS Integration**: Leverages Tauri for native system tray support (`spawn_tray_update_loop()`), background OS notifications (`show_new_emails()`), and "minimize to tray" functionality (`was_launched_minimized()`).
 *   **Instant Actions**: Perform standard email operations—like starring (`toggle_star()`), marking as read (`toggle_read()`), and deleting (`delete_message()`)—with immediate optimistic UI updates backed by robust local-to-remote sync.
@@ -56,7 +57,7 @@ The following components and versions are required for local development:
 *   **Tauri**: v2.10.0
 *   **Rusqlite**: v0.38.x (for local SQLite storage)
 *   **IMAP & Lettre**: For email synchronization and SMTP sending
-*   **OAuth2**: For secure Google authentication
+*   **OAuth2**: For secure Google and Outlook authentication
 
 ### 1. Clone the repository
 ```bash
