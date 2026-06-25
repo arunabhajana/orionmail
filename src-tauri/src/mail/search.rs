@@ -99,7 +99,7 @@ impl LocalSearchEngine for FTS5SearchEngine {
 
 pub trait SearchBackend: Send + Sync {
     fn search(&self, account: &Account, folder: &str, query: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>>;
-    fn load_more(&self, account: &Account, folder: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>>;
+    fn load_more(&self, account: &Account, folder: &str, query: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>>;
     fn supports_feature(&self) -> ProviderCapabilities;
 }
 
@@ -129,9 +129,10 @@ impl SearchBackend for GmailSearchBackend {
         })
     }
 
-    fn load_more(&self, account: &Account, folder: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
+    fn load_more(&self, account: &Account, folder: &str, query: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
         let account_clone = account.clone();
         let folder_clone = folder.to_string();
+        let query_clone = query.to_string();
         Box::pin(async move {
             let provider_clone = account_clone.provider.clone();
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
@@ -143,7 +144,7 @@ impl SearchBackend for GmailSearchBackend {
                     Err(_) => return Err(format!("Unknown folder: {}", folder_clone)),
                 };
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("UID 1:{}", cursor_uid.saturating_sub(1));
+                let search_query = format!("UID 1:{} X-GM-RAW \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a));
@@ -189,9 +190,10 @@ impl SearchBackend for OutlookSearchBackend {
         })
     }
 
-    fn load_more(&self, account: &Account, folder: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
+    fn load_more(&self, account: &Account, folder: &str, query: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
         let account_clone = account.clone();
         let folder_clone = folder.to_string();
+        let query_clone = query.to_string();
         Box::pin(async move {
             let provider_clone = account_clone.provider.clone();
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
@@ -203,7 +205,7 @@ impl SearchBackend for OutlookSearchBackend {
                     Err(_) => return Err(format!("Unknown folder: {}", folder_clone)),
                 };
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("UID 1:{}", cursor_uid.saturating_sub(1));
+                let search_query = format!("UID 1:{} TEXT \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a));
@@ -249,9 +251,10 @@ impl SearchBackend for GenericImapSearchBackend {
         })
     }
 
-    fn load_more(&self, account: &Account, folder: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
+    fn load_more(&self, account: &Account, folder: &str, query: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
         let account_clone = account.clone();
         let folder_clone = folder.to_string();
+        let query_clone = query.to_string();
         Box::pin(async move {
             let provider_clone = account_clone.provider.clone();
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
@@ -263,7 +266,7 @@ impl SearchBackend for GenericImapSearchBackend {
                     Err(_) => return Err(format!("Unknown folder: {}", folder_clone)),
                 };
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("UID 1:{}", cursor_uid.saturating_sub(1));
+                let search_query = format!("UID 1:{} TEXT \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a));
@@ -480,7 +483,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         });
 
         let remote_start = Instant::now();
-        let cache_key = format!("{}_{}_{}", account.email, folder_bg, query_bg);
+        let cache_key = format!("{}_{}_{}", account.email, folder_bg, query_bg.to_lowercase());
         let uidvalidity = database::get_mailbox_validity(&app_handle_bg, &folder_bg).unwrap_or(Some(1)).unwrap_or(1);
 
         let mut cached_uids = None;
@@ -502,7 +505,10 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
             let search_future = backend.search(&account, &folder_bg, &query_bg);
             
             let search_res = tokio::select! {
-                res = search_future => res,
+                res = tokio::time::timeout(Duration::from_secs(10), search_future) => match res {
+                    Ok(r) => r,
+                    Err(_) => Err("IMAP search timeout".to_string()),
+                },
                 _ = token.cancelled() => {
                     let mut state = context.state.lock().await;
                     state.metrics.cancelled = true;
@@ -561,6 +567,17 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
 
         // Reconcile UIDs
         let existing = database::get_existing_uids(&app_handle_bg, &folder_bg, &uids).unwrap_or_default();
+        if !existing.is_empty() {
+            let existing_vec: Vec<u32> = existing.iter().copied().collect();
+            if let Ok(existing_msgs) = database::get_messages_by_uids(&app_handle_bg, &folder_bg, &existing_vec) {
+                let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
+                    search_id: search_id_bg.clone(),
+                    query: query_bg.clone(),
+                    folder: folder_bg.clone(),
+                    new_messages: existing_msgs,
+                });
+            }
+        }
         let missing_uids: Vec<u32> = uids.iter().filter(|&&uid| !existing.contains(&uid)).copied().collect();
 
         {
@@ -703,9 +720,20 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
         if pending_uids.is_empty() {
             if let Some(cur) = cursor {
                 let backend = get_search_backend(&account.provider);
-                if let Ok(mut uids) = backend.load_more(&account, &folder, cur).await {
+                if let Ok(Ok(mut uids)) = tokio::time::timeout(Duration::from_secs(10), backend.load_more(&account, &folder, &query, cur)).await {
                     uids.truncate(500);
                     let existing = database::get_existing_uids(&app_handle_bg, &folder, &uids).unwrap_or_default();
+                    if !existing.is_empty() {
+                        let existing_vec: Vec<u32> = existing.iter().copied().collect();
+                        if let Ok(existing_msgs) = database::get_messages_by_uids(&app_handle_bg, &folder, &existing_vec) {
+                            let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
+                                search_id: search_id_bg.clone(),
+                                query: query.clone(),
+                                folder: folder.clone(),
+                                new_messages: existing_msgs,
+                            });
+                        }
+                    }
                     pending_uids = uids.iter().filter(|&&uid| !existing.contains(&uid)).take(100).copied().collect();
                     {
                         let mut state = context.state.lock().await;

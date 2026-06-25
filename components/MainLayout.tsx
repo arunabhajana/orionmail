@@ -787,7 +787,7 @@ export default function MainLayout() {
                         ...(prev[folder] || { searchQuery: query, isLoadingMoreSearch: false }),
                         activeSearchId: res.search_id,
                         searchResults: deduped,
-                        hasMoreSearch: res.remote_search_state !== 'Completed' && res.remote_search_state !== 'Offline' && res.remote_search_state !== 'Unsupported',
+                        hasMoreSearch: res.remote_search_state !== 'Offline' && res.remote_search_state !== 'Unsupported',
                         searchProgress: {
                             search_id: res.search_id,
                             state: 'SearchingRemote',
@@ -867,7 +867,7 @@ export default function MainLayout() {
                             next[folder] = {
                                 ...context,
                                 searchProgress: progress,
-                                hasMoreSearch: progress.state !== 'Completed' && progress.state !== 'Cancelled' && progress.state !== 'OfflineLocalOnly' && !progress.progress_text.includes('Complete')
+                                hasMoreSearch: progress.state !== 'Cancelled' && progress.state !== 'OfflineLocalOnly' && !progress.progress_text.includes('Offline')
                             };
                             break;
                         }

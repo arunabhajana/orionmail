@@ -23,62 +23,53 @@ interface SearchBarProps {
     searchProgress?: SearchProgressData | null;
 }
 
-export const SearchBar = memo(({ value = '', onChange, onClear, searchProgress }: SearchBarProps) => (
-    <div className="w-full space-y-2">
-        <div className="relative group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4 transition-colors group-focus-within:text-primary" />
-            <input
-                className={cn(
-                    "w-full rounded-lg py-2 pl-9 pr-8 text-sm outline-none transition-all",
-                    "bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 placeholder:text-muted-foreground/70",
-                    "focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
-                )}
-                placeholder="Search messages..."
-                type="text"
-                value={value}
-                onChange={(e) => onChange?.(e.target.value)}
-            />
-            {value && (
-                <button
-                    onClick={onClear}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/20 transition-colors"
-                >
-                    <X className="w-3.5 h-3.5" />
-                </button>
-            )}
+export const SearchBar = memo(({ value = '', onChange, onClear, searchProgress }: SearchBarProps) => {
+    const isSearchingServer = value && searchProgress && searchProgress.state !== 'Completed' && searchProgress.state !== 'Cancelled' && searchProgress.state !== 'OfflineLocalOnly' && !searchProgress.progress_text.includes('Complete') && !searchProgress.progress_text.includes('Offline');
+
+    return (
+        <div className="w-full">
+            <div className="relative group">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4 transition-colors group-focus-within:text-primary" />
+                <input
+                    className={cn(
+                        "w-full rounded-lg py-2 pl-9 pr-20 text-sm outline-none transition-all",
+                        "bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 placeholder:text-muted-foreground/70",
+                        "focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                    )}
+                    placeholder="Search messages..."
+                    type="text"
+                    value={value}
+                    onChange={(e) => onChange?.(e.target.value)}
+                />
+                <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                    <AnimatePresence>
+                        {isSearchingServer && (
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.8 }}
+                                className="flex items-center gap-1 bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-medium border border-primary/20"
+                                title="Checking mail server for updates..."
+                            >
+                                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                                <span>Server</span>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                    {value && (
+                        <button
+                            onClick={onClear}
+                            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/20 transition-colors"
+                            title="Clear search"
+                        >
+                            <X className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
+            </div>
         </div>
-        
-        <AnimatePresence>
-            {value && searchProgress && searchProgress.state !== 'Idle' && searchProgress.state !== 'Cancelled' && (
-                <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden"
-                >
-                    <div className={cn(
-                        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-md border transition-all",
-                        searchProgress.state === 'Completed' || searchProgress.progress_text.includes('Complete')
-                            ? "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20" 
-                            : searchProgress.state === 'OfflineLocalOnly' || searchProgress.progress_text.includes('Offline')
-                            ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                            : "bg-primary/10 text-primary border-primary/20"
-                    )}>
-                        {searchProgress.state !== 'Completed' && searchProgress.state !== 'OfflineLocalOnly' && !searchProgress.progress_text.includes('Offline') && !searchProgress.progress_text.includes('Complete') && (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                        )}
-                        <span className="truncate flex-1">{searchProgress.progress_text}</span>
-                        {searchProgress.total > 0 && (
-                            <span className="text-[10px] bg-background/50 px-1.5 py-0.5 rounded border border-foreground/10 shrink-0">
-                                {searchProgress.downloaded}/{searchProgress.total}
-                            </span>
-                        )}
-                    </div>
-                </motion.div>
-            )}
-        </AnimatePresence>
-    </div>
-));
+    );
+});
 SearchBar.displayName = "SearchBar";
 
 export type FilterType = 'all' | 'unread' | 'flagged';

@@ -798,7 +798,7 @@ pub fn search_messages_local(app_handle: &AppHandle, folder: &str, query: &str, 
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     // Clean query for FTS MATCH
-    let cleaned: Vec<String> = query.split_whitespace()
+    let cleaned: Vec<String> = query.to_lowercase().split_whitespace()
         .filter(|s| !s.is_empty())
         .map(|s| {
             let s_clean = s.replace(|c: char| !c.is_ascii_alphanumeric(), "");
