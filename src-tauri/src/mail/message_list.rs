@@ -4,7 +4,7 @@ use std::time::Duration;
 use mailparse::parse_mail;
 use tauri::AppHandle;
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MessageHeader {
     pub folder: String,
     pub uid: u32,

@@ -196,22 +196,76 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_flagged ON messages(flagged)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_message_id ON messages(message_id)", ()).map_err(|e| e.to_string())?;
 
-    // FTS5 Setup
+    // FTS5 Setup & Resumable Contentless FTS Migration
     conn.execute(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-            subject,
-            sender,
-            snippet,
-            content='messages',
-            content_rowid='rowid'
+        "CREATE TABLE IF NOT EXISTS app_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT
         )",
         (),
     ).map_err(|e| e.to_string())?;
 
+    let mut stmt = conn.prepare("SELECT value FROM app_metadata WHERE key = 'fts_version'").unwrap();
+    let fts_version: Option<String> = stmt.query_row([], |row| row.get(0)).ok();
+    let fts_version_num: u32 = fts_version.and_then(|v| v.parse().ok()).unwrap_or(1);
+
+    if fts_version_num < 2 {
+        log::info!("Performing resumable FTS migration to fts_version 2...");
+        let _ = conn.execute("DROP TABLE IF EXISTS messages_fts_v2", ());
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_v2 USING fts5(
+                subject,
+                sender,
+                recipient,
+                body,
+                attachment_names,
+                content='messages',
+                content_rowid='rowid'
+            )",
+            (),
+        ).map_err(|e| e.to_string())?;
+
+        let _ = conn.execute(
+            "INSERT INTO messages_fts_v2(rowid, subject, sender, recipient, body, attachment_names)
+             SELECT rowid, subject, sender, recipient, coalesce(body, snippet, ''), coalesce(attachments_json, '') FROM messages",
+            (),
+        );
+
+        let _ = conn.execute("DROP TABLE IF EXISTS messages_fts", ());
+        conn.execute("ALTER TABLE messages_fts_v2 RENAME TO messages_fts", ()).map_err(|e| e.to_string())?;
+        conn.execute("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('fts_version', '2')", ()).map_err(|e| e.to_string())?;
+    } else {
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                subject,
+                sender,
+                recipient,
+                body,
+                attachment_names,
+                content='messages',
+                content_rowid='rowid'
+            )",
+            (),
+        ).map_err(|e| e.to_string())?;
+    }
+
+    let _ = conn.execute("DROP TRIGGER IF EXISTS messages_ai", ());
+    let _ = conn.execute("DROP TRIGGER IF EXISTS messages_au", ());
+
     conn.execute(
         "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts(rowid, subject, sender, snippet)
-            VALUES (new.rowid, new.subject, new.sender, new.snippet);
+            INSERT INTO messages_fts(rowid, subject, sender, recipient, body, attachment_names)
+            VALUES (new.rowid, new.subject, new.sender, new.recipient, coalesce(new.body, new.snippet, ''), coalesce(new.attachments_json, ''));
+        END",
+        (),
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, subject, sender, recipient, body, attachment_names)
+            VALUES ('delete', old.rowid, old.subject, old.sender, old.recipient, coalesce(old.body, old.snippet, ''), coalesce(old.attachments_json, ''));
+            INSERT INTO messages_fts(rowid, subject, sender, recipient, body, attachment_names)
+            VALUES (new.rowid, new.subject, new.sender, new.recipient, coalesce(new.body, new.snippet, ''), coalesce(new.attachments_json, ''));
         END",
         (),
     ).map_err(|e| e.to_string())?;
@@ -737,4 +791,165 @@ pub fn get_global_unread_count(app_handle: &AppHandle) -> Result<u32, String> {
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE seen = 0").unwrap();
     let count: u32 = stmt.query_row([], |row| row.get(0)).unwrap_or(0);
     Ok(count)
+}
+
+pub fn search_messages_local(app_handle: &AppHandle, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Clean query for FTS MATCH
+    let cleaned: Vec<String> = query.split_whitespace()
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let s_clean = s.replace(|c: char| !c.is_ascii_alphanumeric(), "");
+            format!("\"{}\"*", s_clean)
+        })
+        .collect();
+    let match_query = cleaned.join(" ");
+
+    if match_query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // score = bm25(messages_fts) + recent_bonus + flag_bonus
+    // In SQLite FTS5, bm25() is smaller (more negative) for better matches.
+    // So we subtract bonuses to make the score even more negative.
+    let sql = if folder == "all" {
+        "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
+         FROM messages m
+         JOIN messages_fts f ON m.rowid = f.rowid
+         WHERE messages_fts MATCH ?1
+         ORDER BY (bm25(messages_fts) - (m.flagged * 5.0) - (CASE WHEN m.seen = 0 THEN 2.0 ELSE 0.0 END) - (m.date / 100000.0)) ASC
+         LIMIT ?2"
+    } else {
+        "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
+         FROM messages m
+         JOIN messages_fts f ON m.rowid = f.rowid
+         WHERE m.folder = ?1 AND messages_fts MATCH ?2
+         ORDER BY (bm25(messages_fts) - (m.flagged * 5.0) - (CASE WHEN m.seen = 0 THEN 2.0 ELSE 0.0 END) - (m.date / 100000.0)) ASC
+         LIMIT ?3"
+    };
+
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    
+    let mut messages = Vec::new();
+    if folder == "all" {
+        let rows = stmt.query_map(rusqlite::params![match_query, limit], |row| {
+            Ok(MessageHeader {
+                uid: row.get(0)?,
+                uid_validity: row.get(1)?,
+                subject: row.get(2)?,
+                from: row.get(3)?,
+                date: row.get(4)?,
+                seen: row.get(5)?,
+                flagged: row.get(6)?,
+                snippet: row.get(7)?,
+                folder: row.get(8)?,
+                has_attachments: row.get(9)?,
+                thread_id: row.get(10)?,
+                to: row.get(11)?,
+                message_id: row.get(12)?,
+            })
+        }).map_err(|e| e.to_string())?;
+        for row in rows {
+            if let Ok(msg) = row {
+                messages.push(msg);
+            }
+        }
+    } else {
+        let rows = stmt.query_map(rusqlite::params![folder, match_query, limit], |row| {
+            Ok(MessageHeader {
+                uid: row.get(0)?,
+                uid_validity: row.get(1)?,
+                subject: row.get(2)?,
+                from: row.get(3)?,
+                date: row.get(4)?,
+                seen: row.get(5)?,
+                flagged: row.get(6)?,
+                snippet: row.get(7)?,
+                folder: row.get(8)?,
+                has_attachments: row.get(9)?,
+                thread_id: row.get(10)?,
+                to: row.get(11)?,
+                message_id: row.get(12)?,
+            })
+        }).map_err(|e| e.to_string())?;
+        for row in rows {
+            if let Ok(msg) = row {
+                messages.push(msg);
+            }
+        }
+    }
+
+    Ok(messages)
+}
+
+pub fn get_existing_uids(app_handle: &AppHandle, folder: &str, uids: &[u32]) -> Result<std::collections::HashSet<u32>, String> {
+    if uids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let placeholders: Vec<String> = uids.iter().map(|_| "?".to_string()).collect();
+    let sql = format!("SELECT uid FROM messages WHERE folder = ? AND uid IN ({})", placeholders.join(","));
+    
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut params: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(folder.to_string())];
+    for &uid in uids {
+        params.push(rusqlite::types::Value::Integer(uid as i64));
+    }
+
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| row.get::<_, u32>(0)).map_err(|e| e.to_string())?;
+    
+    let mut existing = std::collections::HashSet::new();
+    for row in rows {
+        if let Ok(uid) = row {
+            existing.insert(uid);
+        }
+    }
+    Ok(existing)
+}
+
+pub fn get_messages_by_uids(app_handle: &AppHandle, folder: &str, uids: &[u32]) -> Result<Vec<MessageHeader>, String> {
+    if uids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let db_path = get_db_path(app_handle)?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let placeholders: Vec<String> = uids.iter().map(|_| "?".to_string()).collect();
+    let sql = format!("SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id FROM messages WHERE folder = ? AND uid IN ({}) ORDER BY date DESC, uid DESC", placeholders.join(","));
+    
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut params: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(folder.to_string())];
+    for &uid in uids {
+        params.push(rusqlite::types::Value::Integer(uid as i64));
+    }
+
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+        Ok(MessageHeader {
+            uid: row.get(0)?,
+            uid_validity: row.get(1)?,
+            subject: row.get(2)?,
+            from: row.get(3)?,
+            date: row.get(4)?,
+            seen: row.get(5)?,
+            flagged: row.get(6)?,
+            snippet: row.get(7)?,
+            folder: row.get(8)?,
+            has_attachments: row.get(9)?,
+            thread_id: row.get(10)?,
+            to: row.get(11)?,
+            message_id: row.get(12)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    
+    let mut messages = Vec::new();
+    for row in rows {
+        if let Ok(msg) = row {
+            messages.push(msg);
+        }
+    }
+    Ok(messages)
 }

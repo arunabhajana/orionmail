@@ -426,3 +426,31 @@ pub async fn open_url(url: String) -> Result<(), String> {
 pub fn get_boot_error(state: tauri::State<'_, BootError>) -> Option<String> {
     state.0.lock().unwrap().clone()
 }
+
+#[derive(serde::Serialize)]
+pub struct SearchResponse {
+    pub search_id: String,
+    pub local_results: Vec<crate::mail::message_list::MessageHeader>,
+    pub remote_search_state: crate::mail::search::RemoteSearchState,
+}
+
+#[tauri::command]
+pub async fn search_messages(app_handle: tauri::AppHandle, folder: String, query: String) -> Result<SearchResponse, String> {
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    let (search_id, local_results, remote_search_state) = crate::mail::search::start_search(app_handle, account, folder, query).await?;
+    Ok(SearchResponse {
+        search_id,
+        local_results,
+        remote_search_state,
+    })
+}
+
+#[tauri::command]
+pub async fn load_more_results(app_handle: tauri::AppHandle, search_id: String) -> Result<crate::mail::search::RemoteSearchState, String> {
+    crate::mail::search::load_more_results(app_handle, search_id).await
+}
+
+#[tauri::command]
+pub async fn clear_search(app_handle: tauri::AppHandle, search_id: String) -> Result<(), String> {
+    crate::mail::search::clear_search(app_handle, search_id).await
+}

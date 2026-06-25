@@ -199,6 +199,9 @@ pub fn run() {
       get_attachment_metadata,
       open_url,
       clear_local_cache,
+      search_messages,
+      load_more_results,
+      clear_search,
       crate::auth::hello::check_hello_availability,
       crate::auth::hello::authenticate_hello
     ])

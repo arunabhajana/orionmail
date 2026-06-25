@@ -17,6 +17,16 @@ import Sidebar from '@/components/Sidebar';
 import EmailList from '@/components/EmailList';
 import EmailDetail from '@/components/EmailDetail';
 import { usePendingSentMessages } from '@/hooks/usePendingSentMessages';
+import { SearchProgressData } from '@/components/inbox/EmailListHeader';
+
+interface FolderSearchState {
+    searchQuery: string;
+    activeSearchId: string | null;
+    searchProgress: SearchProgressData | null;
+    searchResults: Email[];
+    hasMoreSearch: boolean;
+    isLoadingMoreSearch: boolean;
+}
 
 export default function MainLayout() {
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
@@ -36,6 +46,22 @@ export default function MainLayout() {
     const [hasMore, setHasMore] = useState(true);
     const emailListContainerRef = useRef<HTMLDivElement>(null);
     const emailsRef = useRef<Email[]>([]);
+
+    const [folderSearchContexts, setFolderSearchContexts] = useState<Record<string, FolderSearchState>>({});
+
+    const activeSearchState = folderSearchContexts[currentFolder] || {
+        searchQuery: '',
+        activeSearchId: null,
+        searchProgress: null,
+        searchResults: [],
+        hasMoreSearch: false,
+        isLoadingMoreSearch: false,
+    };
+
+    const activeSearchIdRef = useRef<string | null>(null);
+    useEffect(() => {
+        activeSearchIdRef.current = activeSearchState.activeSearchId;
+    }, [activeSearchState.activeSearchId]);
 
     useEffect(() => {
         emailsRef.current = emails;
@@ -58,14 +84,15 @@ export default function MainLayout() {
 
     // --- Derived State ---
 
-    const filteredEmails = emails.filter(email => {
+    const filteredEmails = activeSearchState.searchQuery ? activeSearchState.searchResults : emails.filter(email => {
         if (currentFolder === "starred") {
             return email.starred;
         }
         return email.folder === currentFolder;
     });
 
-    const selectedEmail = emails.find(e => e.id === selectedEmailId);
+    const selectedEmail = activeSearchState.searchQuery ? activeSearchState.searchResults.find(e => e.id === selectedEmailId) : emails.find(e => e.id === selectedEmailId);
+
 
     const fetchUnreadCounts = async () => {
         try {
@@ -727,6 +754,171 @@ export default function MainLayout() {
         };
     }, []);
 
+    const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    const handleSearchQueryChange = (query: string) => {
+        const folder = currentFolder;
+        setFolderSearchContexts(prev => ({
+            ...prev,
+            [folder]: {
+                ...(prev[folder] || { activeSearchId: null, searchProgress: null, searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false }),
+                searchQuery: query,
+                ...(query ? {} : { activeSearchId: null, searchProgress: null, searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false })
+            }
+        }));
+
+        if (!query) {
+            if (activeSearchState.activeSearchId) {
+                invoke('clear_search', { searchId: activeSearchState.activeSearchId }).catch(console.error);
+            }
+            return;
+        }
+
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = setTimeout(async () => {
+            try {
+                const res: any = await invoke('search_messages', { folder, query });
+                const localFormatted = res.local_results.map(formatEmailFromMessage);
+                const deduped = dedupeEmails(localFormatted);
+                
+                setFolderSearchContexts(prev => ({
+                    ...prev,
+                    [folder]: {
+                        ...(prev[folder] || { searchQuery: query, isLoadingMoreSearch: false }),
+                        activeSearchId: res.search_id,
+                        searchResults: deduped,
+                        hasMoreSearch: res.remote_search_state !== 'Completed' && res.remote_search_state !== 'Offline' && res.remote_search_state !== 'Unsupported',
+                        searchProgress: {
+                            search_id: res.search_id,
+                            state: 'SearchingRemote',
+                            matched: deduped.length,
+                            downloaded: 0,
+                            indexed: 0,
+                            streamed: 0,
+                            total: 0,
+                            progress_text: 'Searching server...'
+                        }
+                    }
+                }));
+            } catch (err) {
+                console.error("Search failed", err);
+            }
+        }, 300);
+    };
+
+    const handleSearchClear = () => {
+        const folder = currentFolder;
+        if (activeSearchState.activeSearchId) {
+            invoke('clear_search', { searchId: activeSearchState.activeSearchId }).catch(console.error);
+        }
+        setFolderSearchContexts(prev => ({
+            ...prev,
+            [folder]: {
+                searchQuery: '',
+                activeSearchId: null,
+                searchProgress: null,
+                searchResults: [],
+                hasMoreSearch: false,
+                isLoadingMoreSearch: false,
+            }
+        }));
+    };
+
+    const handleSearchLoadMore = async () => {
+        const folder = currentFolder;
+        const searchId = activeSearchState.activeSearchId;
+        if (!searchId || activeSearchState.isLoadingMoreSearch || !activeSearchState.hasMoreSearch) return;
+
+        setFolderSearchContexts(prev => ({
+            ...prev,
+            [folder]: { ...(prev[folder] || { searchQuery: activeSearchState.searchQuery, activeSearchId: searchId, searchProgress: activeSearchState.searchProgress, searchResults: activeSearchState.searchResults, hasMoreSearch: true }), isLoadingMoreSearch: true }
+        }));
+
+        try {
+            const state: any = await invoke('load_more_results', { searchId });
+            setFolderSearchContexts(prev => ({
+                ...prev,
+                [folder]: { 
+                    ...(prev[folder] || { searchQuery: activeSearchState.searchQuery, activeSearchId: searchId, searchProgress: activeSearchState.searchProgress, searchResults: activeSearchState.searchResults }), 
+                    isLoadingMoreSearch: false,
+                    hasMoreSearch: state !== 'Completed'
+                }
+            }));
+        } catch (err) {
+            console.error("Failed to load more search results", err);
+            setFolderSearchContexts(prev => ({
+                ...prev,
+                [folder]: { ...(prev[folder] || { searchQuery: activeSearchState.searchQuery, activeSearchId: searchId, searchProgress: activeSearchState.searchProgress, searchResults: activeSearchState.searchResults }), isLoadingMoreSearch: false, hasMoreSearch: false }
+            }));
+        }
+    };
+
+    useEffect(() => {
+        let unlistenProgress: (() => void) | undefined;
+        let unlistenIncremental: (() => void) | undefined;
+
+        const setupSearchListeners = async () => {
+            unlistenProgress = await listen<SearchProgressData>('mail:search_progress', (event) => {
+                const progress = event.payload;
+                setFolderSearchContexts(prev => {
+                    const next = { ...prev };
+                    for (const [folder, context] of Object.entries(next)) {
+                        if (context.activeSearchId === progress.search_id) {
+                            next[folder] = {
+                                ...context,
+                                searchProgress: progress,
+                                hasMoreSearch: progress.state !== 'Completed' && progress.state !== 'Cancelled' && progress.state !== 'OfflineLocalOnly' && !progress.progress_text.includes('Complete')
+                            };
+                            break;
+                        }
+                    }
+                    return next;
+                });
+            });
+
+            unlistenIncremental = await listen<any>('mail:search_incremental', (event) => {
+                const payload = event.payload;
+                setFolderSearchContexts(prev => {
+                    const next = { ...prev };
+                    for (const [folder, context] of Object.entries(next)) {
+                        if (context.activeSearchId === payload.search_id) {
+                            const newEmails = payload.new_messages.map(formatEmailFromMessage);
+                            const existingMap = new Map();
+                            for (const item of context.searchResults) {
+                                existingMap.set(item.id, item);
+                            }
+                            for (const item of newEmails) {
+                                if (!existingMap.has(item.id)) {
+                                    existingMap.set(item.id, item);
+                                }
+                            }
+                            const merged = Array.from(existingMap.values()).sort((a, b) => {
+                                if (b.timestamp !== a.timestamp) {
+                                    return b.timestamp - a.timestamp;
+                                }
+                                return b.uid - a.uid;
+                            });
+
+                            next[folder] = {
+                                ...context,
+                                searchResults: merged,
+                            };
+                            break;
+                        }
+                    }
+                    return next;
+                });
+            });
+        };
+
+        setupSearchListeners();
+
+        return () => {
+            if (unlistenProgress) unlistenProgress();
+            if (unlistenIncremental) unlistenIncremental();
+        };
+    }, []);
+
     useLayoutEffect(() => {
         if (isBootstrapping) return;
 
@@ -831,10 +1023,15 @@ export default function MainLayout() {
                 onSync={handleSync}
                 isSyncing={isSyncing || isLoadingFolder || syncingFolders.has(currentFolder)}
                 onLoadMore={loadMoreEmails}
-                hasMore={hasMore}
-                isLoadingMore={isLoadingMore}
+                hasMore={activeSearchState.searchQuery ? activeSearchState.hasMoreSearch : hasMore}
+                isLoadingMore={activeSearchState.searchQuery ? activeSearchState.isLoadingMoreSearch : isLoadingMore}
                 listRef={emailListContainerRef}
                 currentFolder={currentFolder}
+                searchQuery={activeSearchState.searchQuery}
+                onSearchQueryChange={handleSearchQueryChange}
+                onSearchClear={handleSearchClear}
+                searchProgress={activeSearchState.searchProgress}
+                onSearchLoadMore={handleSearchLoadMore}
             />
             </div>
 

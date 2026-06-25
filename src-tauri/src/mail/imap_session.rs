@@ -13,6 +13,7 @@ pub enum SessionKind {
     Sync,
     Prefetch,
     Idle,
+    Search,
 }
 
 pub struct ImapSession {

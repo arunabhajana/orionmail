@@ -14,3 +14,4 @@ pub mod folder;
 pub mod sync_manager;
 pub mod extraction;
 pub mod shutdown;
+pub mod search;

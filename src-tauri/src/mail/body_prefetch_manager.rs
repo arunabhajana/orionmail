@@ -11,6 +11,7 @@ use crate::mail::shutdown::PREFETCH_TOKEN;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrefetchPriority {
     Immediate,
+    Search,
     Background,
 }
 
@@ -27,6 +28,7 @@ pub struct FetchJob {
 
 struct BodyPrefetchManagerState {
     immediate_queue: VecDeque<FetchJob>,
+    search_queue: VecDeque<FetchJob>,
     background_queue: VecDeque<FetchJob>,
     in_progress: HashSet<BodyKey>,
     worker_started: bool,
@@ -41,6 +43,7 @@ pub static PREFETCH_MANAGER: Lazy<Arc<BodyPrefetchManager>> = Lazy::new(|| {
     Arc::new(BodyPrefetchManager {
         state: Mutex::new(BodyPrefetchManagerState {
             immediate_queue: VecDeque::new(),
+            search_queue: VecDeque::new(),
             background_queue: VecDeque::new(),
             in_progress: HashSet::new(),
             worker_started: false,
@@ -85,6 +88,23 @@ impl BodyPrefetchManager {
             return;
         }
 
+        // Deduplicate in search
+        if let Some(pos) = state.search_queue.iter().position(|j| j.key == key) {
+            if priority == PrefetchPriority::Immediate {
+                let mut job = state.search_queue.remove(pos).unwrap();
+                if let Some(tx) = extracted_responder {
+                    job.responders.push(tx);
+                }
+                state.immediate_queue.push_back(job);
+            } else {
+                let job = &mut state.search_queue[pos];
+                if let Some(tx) = extracted_responder {
+                    job.responders.push(tx);
+                }
+            }
+            return;
+        }
+
         // Deduplicate in background
         if let Some(pos) = state.background_queue.iter().position(|j| j.key == key) {
             if priority == PrefetchPriority::Immediate {
@@ -95,6 +115,13 @@ impl BodyPrefetchManager {
                 }
                 state.immediate_queue.push_back(job);
                 log::debug!("Body prefetch upgraded to Immediate: {} {}", key.folder, key.uid);
+            } else if priority == PrefetchPriority::Search {
+                let mut job = state.background_queue.remove(pos).unwrap();
+                if let Some(tx) = extracted_responder {
+                    job.responders.push(tx);
+                }
+                state.search_queue.push_back(job);
+                log::debug!("Body prefetch upgraded to Search: {} {}", key.folder, key.uid);
             } else {
                 let job = &mut state.background_queue[pos];
                 if let Some(tx) = extracted_responder {
@@ -115,6 +142,9 @@ impl BodyPrefetchManager {
         if priority == PrefetchPriority::Immediate {
             state.immediate_queue.push_back(new_job);
             log::debug!("Body prefetch queued (Immediate): {} {}", key.folder, key.uid);
+        } else if priority == PrefetchPriority::Search {
+            state.search_queue.push_back(new_job);
+            log::debug!("Body prefetch queued (Search): {} {}", key.folder, key.uid);
         } else {
             // Cap background queue size to avoid memory bloat on massive scrolls
             if state.background_queue.len() >= 50 {
@@ -142,6 +172,8 @@ impl BodyPrefetchManager {
                     let mut state = manager.state.lock().await;
                     if let Some(job) = state.immediate_queue.pop_front() {
                         Some((job, PrefetchPriority::Immediate))
+                    } else if let Some(job) = state.search_queue.pop_front() {
+                        Some((job, PrefetchPriority::Search))
                     } else if let Some(job) = state.background_queue.pop_front() {
                         Some((job, PrefetchPriority::Background))
                     } else {
@@ -200,7 +232,11 @@ impl BodyPrefetchManager {
 
                 let mut fetch_res: Result<MessageDetail, String> = Err("Not fetched".to_string());
                 if should_fetch {
-                    fetch_res = message_body::fetch_and_cache_body_internal(&app_handle, &account, &job.key.folder, job.key.uid).await;
+                    if priority == PrefetchPriority::Search {
+                        fetch_res = crate::mail::search::fetch_and_index_search_message(&app_handle, &account, &job.key.folder, job.key.uid).await;
+                    } else {
+                        fetch_res = message_body::fetch_and_cache_body_internal(&app_handle, &account, &job.key.folder, job.key.uid).await;
+                    }
                 }
                 
                 // Reply to oneshot waiters inline

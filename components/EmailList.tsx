@@ -5,7 +5,7 @@ import { Search, Star, RefreshCw, Mailbox, CheckCircle2, Flag } from 'lucide-rea
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { SearchBar, FilterTabs, FilterType } from './inbox/EmailListHeader';
+import { SearchBar, FilterTabs, FilterType, SearchProgressData } from './inbox/EmailListHeader';
 import { EmailListItem } from './inbox/EmailListItem';
 import { useVirtualEmailList } from '@/hooks/useVirtualEmailList';
 import OrbitLoader from './inbox/OrbitLoader';
@@ -33,6 +33,11 @@ interface EmailListProps {
     listRef?: React.Ref<HTMLDivElement>;
     currentFolder?: string;
     pendingMessages?: PendingSentMessage[];
+    searchQuery?: string;
+    onSearchQueryChange?: (query: string) => void;
+    onSearchClear?: () => void;
+    searchProgress?: SearchProgressData | null;
+    onSearchLoadMore?: () => void;
 }
 
 // --- Constants ---
@@ -54,7 +59,12 @@ const EmailList: React.FC<EmailListProps> = ({
     isLoadingMore,
     listRef,
     currentFolder,
-    pendingMessages = []
+    pendingMessages = [],
+    searchQuery = '',
+    onSearchQueryChange,
+    onSearchClear,
+    searchProgress,
+    onSearchLoadMore
 }) => {
     const [currentFilter, setCurrentFilter] = React.useState<FilterType>('all');
 
@@ -74,7 +84,7 @@ const EmailList: React.FC<EmailListProps> = ({
         itemCount: displayedEmails.length,
         hasMore,
         isLoadingMore,
-        onLoadMore,
+        onLoadMore: searchQuery ? (onSearchLoadMore || onLoadMore) : onLoadMore,
         listRef,
         getItemKey: (index) => displayedEmails[index]?.id || index,
     });
@@ -155,7 +165,12 @@ const EmailList: React.FC<EmailListProps> = ({
             <div className="p-4 space-y-4 shrink-0 z-10">
                 <div className="flex items-center gap-2">
                     <div className="flex-1">
-                        <SearchBar />
+                        <SearchBar
+                            value={searchQuery}
+                            onChange={onSearchQueryChange}
+                            onClear={onSearchClear}
+                            searchProgress={searchProgress}
+                        />
                     </div>
                     <button
                         onClick={onSync}
