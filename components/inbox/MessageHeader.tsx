@@ -50,35 +50,10 @@ const parseRecipients = (toStr: string) => {
     return results;
 };
 
-const getRelativeTime = (dateStr: string) => {
-    if (!dateStr) return '';
+const getRelativeTime = (timestamp: number) => {
+    if (!timestamp) return '';
     try {
-        let d = new Date(dateStr);
-        if (isNaN(d.getTime())) {
-            const parts = dateStr.split(',');
-            if (parts.length >= 1) {
-                const dateParts = parts[0].trim().split('/');
-                if (dateParts.length === 3) {
-                    const day = parseInt(dateParts[0], 10);
-                    const month = parseInt(dateParts[1], 10) - 1;
-                    const year = parseInt(dateParts[2], 10);
-                    const timePart = parts[1] ? parts[1].trim() : '';
-                    d = new Date(year, month, day);
-                    if (timePart) {
-                        const timeMatch = timePart.match(/(\d+):(\d+)(?::(\d+))?\s*(am|pm)?/i);
-                        if (timeMatch) {
-                            let hours = parseInt(timeMatch[1], 10);
-                            const minutes = parseInt(timeMatch[2], 10);
-                            const ampm = timeMatch[4]?.toLowerCase();
-                            if (ampm === 'pm' && hours < 12) hours += 12;
-                            if (ampm === 'am' && hours === 12) hours = 0;
-                            d.setHours(hours, minutes, 0, 0);
-                        }
-                    }
-                }
-            }
-        }
-
+        const d = new Date(timestamp);
         if (isNaN(d.getTime())) return '';
 
         const now = new Date();
@@ -103,38 +78,11 @@ const getRelativeTime = (dateStr: string) => {
     }
 };
 
-const formatSimplifiedDateTime = (dateStr: string) => {
-    if (!dateStr) return '';
+const formatSimplifiedDateTime = (timestamp: number) => {
+    if (!timestamp) return '';
     try {
-        let d = new Date(dateStr);
-        if (isNaN(d.getTime())) {
-            const parts = dateStr.split(',');
-            if (parts.length >= 1) {
-                const dateParts = parts[0].trim().split('/');
-                if (dateParts.length === 3) {
-                    const day = parseInt(dateParts[0], 10);
-                    const month = parseInt(dateParts[1], 10) - 1;
-                    const year = parseInt(dateParts[2], 10);
-                    const timePart = parts[1] ? parts[1].trim() : '';
-                    d = new Date(year, month, day);
-                    if (timePart) {
-                        const timeMatch = timePart.match(/(\d+):(\d+)(?::(\d+))?\s*(am|pm)?/i);
-                        if (timeMatch) {
-                            let hours = parseInt(timeMatch[1], 10);
-                            const minutes = parseInt(timeMatch[2], 10);
-                            const ampm = timeMatch[4]?.toLowerCase();
-                            if (ampm === 'pm' && hours < 12) hours += 12;
-                            if (ampm === 'am' && hours === 12) hours = 0;
-                            d.setHours(hours, minutes, 0, 0);
-                        }
-                    }
-                }
-            }
-        }
-
-        if (isNaN(d.getTime())) {
-            return dateStr.replace(/(\d+:\d+):\d+\s*(am|pm)/i, '$1 $2').toUpperCase();
-        }
+        const d = new Date(timestamp);
+        if (isNaN(d.getTime())) return '';
 
         const now = new Date();
         const isCurrentYear = d.getFullYear() === now.getFullYear();
@@ -158,7 +106,7 @@ const formatSimplifiedDateTime = (dateStr: string) => {
             return `${day} ${month} ${year}, ${timeStr}`;
         }
     } catch (e) {
-        return dateStr;
+        return '';
     }
 };
 
@@ -168,8 +116,8 @@ export const MessageHeader = memo(({ email }: { email: Email }) => {
 
     const senderInfo = getSenderInfo(email.sender || '', email.senderEmail || '');
     const recipients = parseRecipients(email.to || '');
-    const relativeTime = getRelativeTime(email.date || '');
-    const simplifiedDateTime = formatSimplifiedDateTime(email.date || '');
+    const relativeTime = getRelativeTime(email.timestamp || 0);
+    const simplifiedDateTime = formatSimplifiedDateTime(email.timestamp || 0);
 
     const handleCopyText = (text: string) => {
         if (text) {
