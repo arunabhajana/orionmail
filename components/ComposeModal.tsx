@@ -27,8 +27,6 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, TauriEvent } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
 import { cn } from "@/lib/utils";
 import { useRecipientAutocomplete } from "@/hooks/useRecipientAutocomplete";
 import RichTextEditor, {
@@ -53,7 +51,7 @@ interface ComposeModalProps {
 
 export interface AttachmentFile {
   id: string;
-  path: string;
+  handle: string;
   name: string;
   size: number;
   mimeType: string;
@@ -359,7 +357,6 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
   const isProcessingAttachmentsRef = useRef(false);
 
   const [isAttaching, setIsAttaching] = useState(false);
-  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const [composeWindowState, setComposeWindowState] = useState<ComposeWindowState>("normal");
   const windowStateRef = useRef<ComposeWindowState>("normal");
@@ -494,7 +491,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
         subject,
         plainBody,
         htmlBody,
-        attachments: attachments.map(a => a.path),
+        attachments: attachments.map(a => a.handle),
       });
 
       setComposeStatus("sent");
@@ -518,41 +515,44 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
   const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024; // 18MB raw (~24MB base64)
   const MAX_ATTACHMENTS = 25;
 
-  const processAttachments = async (paths: string[]) => {
-    if (isProcessingAttachmentsRef.current) return;
+  const processAttachments = async (selected: Array<{ handle: string; name: string; size: number; mime_type: string }>) => {
+    if (isProcessingAttachmentsRef.current) {
+      await invoke("release_attachment_handles", { handles: selected.map(file => file.handle) }).catch(() => {});
+      return;
+    }
     isProcessingAttachmentsRef.current = true;
 
     try {
       const currentAttachments = attachmentsRef.current;
 
-      if (currentAttachments.length + paths.length > MAX_ATTACHMENTS) {
+      if (currentAttachments.length + selected.length > MAX_ATTACHMENTS) {
         showToast(`You can only attach up to ${MAX_ATTACHMENTS} files.`);
+        await invoke("release_attachment_handles", { handles: selected.map(file => file.handle) }).catch(() => {});
         return;
       }
 
       setIsAttaching(true);
 
-      const newPaths = paths.filter(p => !currentAttachments.some(a => a.path === p));
-      if (newPaths.length === 0) {
+      const newAttachments = selected.filter(file => !currentAttachments.some(a => a.handle === file.handle));
+      if (newAttachments.length === 0) {
+        await invoke("release_attachment_handles", { handles: selected.map(file => file.handle) }).catch(() => {});
         setIsAttaching(false);
         return;
       }
-
-      const newAttachments: AttachmentFile[] = await invoke("get_attachment_metadata", {
-        paths: newPaths
-      });
 
       const totalSize = currentAttachments.reduce((sum, a) => sum + a.size, 0) +
         newAttachments.reduce((sum, a) => sum + a.size, 0);
 
       if (totalSize > MAX_ATTACHMENT_BYTES) {
         showToast("Files exceed the 18MB size limit. Please remove some attachments.");
+        await invoke("release_attachment_handles", { handles: selected.map(file => file.handle) }).catch(() => {});
         setIsAttaching(false);
         return;
       }
 
-      const attachmentsWithId = newAttachments.map(a => ({
+      const attachmentsWithId: AttachmentFile[] = newAttachments.map(a => ({
         ...a,
+        mimeType: a.mime_type,
         id: Math.random().toString(36).substring(7),
         addedAt: Date.now()
       }));
@@ -570,69 +570,26 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
 
   const handleAttachFiles = async () => {
     try {
-      const selectedPaths = await open({
-        multiple: true,
-        directory: false,
-      });
-
-      if (!selectedPaths || selectedPaths.length === 0) return;
-
-      const paths = Array.isArray(selectedPaths) ? selectedPaths : [selectedPaths];
-      await processAttachments(paths);
+      const selected = await invoke<Array<{ handle: string; name: string; size: number; mime_type: string }>>("pick_attachments");
+      if (selected.length > 0) await processAttachments(selected);
     } catch (error) {
-      console.error("Failed to open file dialog:", error);
+      console.error("Failed to select attachments:", error);
+      showToast(String(error));
     }
   };
 
-  useEffect(() => {
-    let isUnmounted = false;
-    let unlistenEnter: (() => void) | undefined;
-    let unlistenLeave: (() => void) | undefined;
-    let unlistenDrop: (() => void) | undefined;
-
-    const setup = async () => {
-      try {
-        const enter = await listen(TauriEvent.DRAG_ENTER, () => {
-          if (windowStateRef.current === "normal" || windowStateRef.current === "maximized") {
-            setIsDraggingOver(true);
-          }
-        });
-        if (isUnmounted) enter(); else unlistenEnter = enter;
-
-        const leave = await listen(TauriEvent.DRAG_LEAVE, () => {
-          setIsDraggingOver(false);
-        });
-        if (isUnmounted) leave(); else unlistenLeave = leave;
-
-        const drop = await listen<{ paths?: string[] }>(TauriEvent.DRAG_DROP, async (event) => {
-          setIsDraggingOver(false);
-          if (windowStateRef.current === "normal" || windowStateRef.current === "maximized") {
-            const payload = event.payload;
-            const paths = payload?.paths || (Array.isArray(payload) ? payload : []);
-            if (paths.length > 0) {
-              await processAttachments(paths);
-            }
-          }
-        });
-        if (isUnmounted) drop(); else unlistenDrop = drop;
-      } catch (err) {
-        console.error("Failed to setup drag drop listeners", err);
-      }
-    };
-
-    setup();
-
-    return () => {
-      isUnmounted = true;
-      if (unlistenEnter) unlistenEnter();
-      if (unlistenLeave) unlistenLeave();
-      if (unlistenDrop) unlistenDrop();
-    };
-  }, []);
-
   const removeAttachment = (id: string) => {
+    const attachment = attachmentsRef.current.find(file => file.id === id);
+    if (attachment) {
+      invoke("release_attachment_handles", { handles: [attachment.handle] }).catch(() => {});
+    }
     setAttachments(prev => prev.filter(a => a.id !== id));
   };
+
+  useEffect(() => () => {
+    const handles = attachmentsRef.current.map(file => file.handle);
+    if (handles.length > 0) invoke("release_attachment_handles", { handles }).catch(() => {});
+  }, []);
 
   // --------------------------------------------------------------------------
   // Toolbar: derive active states from editor
@@ -824,23 +781,6 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
           isMinimized && "cursor-pointer"
         )}
       >
-        <AnimatePresence>
-          {isDraggingOver && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 z-[100] bg-black/40 dark:bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center text-white pointer-events-none"
-            >
-              <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-white/40 rounded-2xl bg-white/10 backdrop-blur-md shadow-2xl">
-                <Paperclip className="w-10 h-10 mb-4 animate-bounce text-white/90" />
-                <h2 className="text-xl font-bold tracking-tight">Drop files to attach</h2>
-                <p className="text-xs text-white/70 mt-2 font-medium">Up to 25 files, 18MB total</p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* ---------------------------------------------------------------- */}
         {/* Window Header */}
         {/* ---------------------------------------------------------------- */}

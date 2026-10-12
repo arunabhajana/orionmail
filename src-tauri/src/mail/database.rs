@@ -251,6 +251,61 @@ fn open_connection(app_handle: &AppHandle) -> Result<Connection, String> {
     Ok(conn)
 }
 
+#[cfg(test)]
+mod account_scope_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_message_migration_preserves_rows_in_isolated_account_scope() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE messages (folder TEXT NOT NULL, uid INTEGER NOT NULL, subject TEXT, PRIMARY KEY(folder, uid));
+            INSERT INTO messages (folder, uid, subject) VALUES ('inbox', 42, 'legacy mail');
+            CREATE TABLE mailbox_state (mailbox TEXT PRIMARY KEY, uid_validity INTEGER);
+            INSERT INTO mailbox_state (mailbox, uid_validity) VALUES ('INBOX', 7);
+            CREATE TABLE folder_sync_state (folder TEXT PRIMARY KEY, last_uid INTEGER, last_synced_at INTEGER);
+            INSERT INTO folder_sync_state (folder, last_uid, last_synced_at) VALUES ('inbox', 42, 100);")
+            .unwrap();
+
+        migrate_account_scoped_schema(&mut conn, LEGACY_ACCOUNT_SCOPE).unwrap();
+
+        assert!(is_account_scoped(&conn, "messages", &["account_id", "folder", "uid"]).unwrap());
+        assert!(is_account_scoped(&conn, "mailbox_state", &["account_id", "mailbox"]).unwrap());
+        assert!(is_account_scoped(&conn, "folder_sync_state", &["account_id", "folder"]).unwrap());
+        let legacy: (String, String) = conn.query_row(
+            "SELECT account_id, subject FROM messages WHERE folder = 'inbox' AND uid = 42",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(legacy, (LEGACY_ACCOUNT_SCOPE.to_string(), "legacy mail".to_string()));
+
+        // Colliding mailbox/UID identities remain isolated and independently insertable.
+        conn.execute("INSERT INTO messages (account_id, folder, uid) VALUES ('account-a', 'inbox', 42)", []).unwrap();
+        conn.execute("INSERT INTO messages (account_id, folder, uid) VALUES ('account-b', 'inbox', 42)", []).unwrap();
+        let account_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM messages WHERE folder = 'inbox' AND uid = 42 AND account_id IN ('account-a', 'account-b')",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(account_rows, 2);
+
+        conn.execute("INSERT INTO mailbox_state (account_id, mailbox, uid_validity) VALUES ('account-a', 'INBOX', 21)", []).unwrap();
+        conn.execute("INSERT INTO mailbox_state (account_id, mailbox, uid_validity) VALUES ('account-b', 'INBOX', 22)", []).unwrap();
+        conn.execute("INSERT INTO folder_sync_state (account_id, folder, last_uid) VALUES ('account-a', 'inbox', 10)", []).unwrap();
+        conn.execute("INSERT INTO folder_sync_state (account_id, folder, last_uid) VALUES ('account-b', 'inbox', 99)", []).unwrap();
+        let sync_state_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM folder_sync_state WHERE folder = 'inbox' AND account_id IN ('account-a', 'account-b')",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(sync_state_rows, 2);
+    }
+
+    #[test]
+    fn account_scoping_detects_legacy_primary_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE folder_sync_state (folder TEXT PRIMARY KEY, last_uid INTEGER);").unwrap();
+        assert!(!is_account_scoped(&conn, "folder_sync_state", &["account_id", "folder"]).unwrap());
+    }
+}
+
 pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     let mut conn = open_connection(app_handle)?;
     conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;

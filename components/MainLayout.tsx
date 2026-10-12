@@ -48,6 +48,7 @@ export default function MainLayout() {
     const [isLoadingFolder, setIsLoadingFolder] = useState(false); // Loading skeleton when switching folders
     const [syncError, setSyncError] = useState<string | null>(null);
     const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
+    const syncFailure = Object.entries(syncErrors)[0] ?? null;
 
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(true);
@@ -415,16 +416,16 @@ export default function MainLayout() {
         }
     };
 
-    const handleSync = (isBackground = false) => {
+    const handleSync = (isBackground = false, requestedFolder?: string) => {
         // Read currentFolder from ref to avoid stale closure issues
         const folderAtSyncTime = currentFolderRef.current;
-        if (isSyncing || folderAtSyncTime === "drafts" || folderAtSyncTime === "trash") return Promise.resolve();
+        if (isSyncing || (!requestedFolder && (folderAtSyncTime === "drafts" || folderAtSyncTime === "trash"))) return Promise.resolve();
         setIsSyncing(true);
         setSyncError(null);
 
         // For Starred, we just need to ensure Inbox/Sent are relatively up-to-date.
         // Tags are now directly synchronized from their respective IMAP mailboxes.
-        const syncTarget = folderAtSyncTime === "starred" ? "inbox" : folderAtSyncTime;
+        const syncTarget = requestedFolder ?? (folderAtSyncTime === "starred" ? "inbox" : folderAtSyncTime);
 
         // NOTE: sync_mail_folder is fire-and-forget on the backend (enqueues async sync,
         // returns 0 immediately). The real results arrive via the 'mail:updated' event.
@@ -662,7 +663,8 @@ export default function MainLayout() {
                 }
             });
             
-            unlistenError = await listen<any>('mail:sync_error', (event) => {
+            unlistenError = await listen<{ folder: string; error: string }>('mail:sync_error', (event) => {
+                console.error(`Sync failed for ${event.payload.folder}:`, event.payload.error);
                 setSyncErrors(prev => ({
                     ...prev,
                     [event.payload.folder]: event.payload.error
@@ -1009,21 +1011,21 @@ export default function MainLayout() {
             <div className="list-anim w-[380px] flex flex-col shrink-0 border-r border-black/5 dark:border-white/5">
                 {/* Sync Error Banner */}
                 <AnimatePresence>
-                    {Object.entries(syncErrors).length > 0 && (
+                    {syncFailure && (
                         <motion.div
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
                             className="bg-red-500/10 border-b border-red-500/20 text-red-600 dark:text-red-400 px-4 py-2.5 flex items-center justify-between z-10"
                         >
-                            <div className="flex items-center gap-2 overflow-hidden">
+                            <div className="flex min-w-0 items-center gap-2 overflow-hidden" title={syncFailure[1]}>
                                 <AlertCircle className="w-4 h-4 shrink-0" />
-                                <span className="text-xs font-medium truncate">
-                                    Sync failed. Check connection.
+                                <span className="min-w-0 text-xs font-medium truncate">
+                                    Sync failed in {syncFailure[0]}: {syncFailure[1]}
                                 </span>
                             </div>
                             <button
-                                onClick={handleForceSync}
+                                onClick={() => handleSync(false, syncFailure[0])}
                                 className="text-xs font-bold hover:text-red-700 dark:hover:text-red-300 ml-4 shrink-0 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
                             >
                                 RETRY

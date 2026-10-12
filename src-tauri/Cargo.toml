@@ -64,3 +64,6 @@ features = [
     "Win32_Security_Credentials",
     "Win32_System_WinRT",
 ]
+
+[patch.crates-io]
+imap = { path = "vendor/imap" }

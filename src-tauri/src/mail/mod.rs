@@ -1,6 +1,7 @@
 pub mod imap_client;
 pub mod message_list;
 pub mod message_actions;
+pub mod attachments;
 pub mod database;
 pub mod sync;
 pub mod message_body;

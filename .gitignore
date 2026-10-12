@@ -30,10 +30,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 *.log
-*.txt
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!.env.sample
+!.env.template
 
 # vercel
 .vercel
@@ -42,15 +44,20 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local docs
-/docs
-
 # sensitive data
 accounts.json
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
 
 # graphify
 /graphify-out
-.github
 
 #claude
 .claude
@@ -61,4 +68,23 @@ accounts.json
 
 .sf/
 
-docs/
+# Rust build output and generated Tauri schemas
+/target/
+/src-tauri/target/
+/src-tauri/gen/schemas/
+
+# Local compiler diagnostics
+/src-tauri/cargo_check.json
+/src-tauri/errors.json
+
+# Cargo registry metadata copied with the patched dependency
+/src-tauri/vendor/**/.cargo-ok
+/src-tauri/vendor/**/.cargo_vcs_info.json
+
+# Editor and operating-system temporary files
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+/.idea/

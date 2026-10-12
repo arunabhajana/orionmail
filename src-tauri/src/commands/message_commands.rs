@@ -122,40 +122,18 @@ pub async fn download_attachment(
     Ok(save_path)
 }
 
-#[derive(serde::Serialize)]
-pub struct AttachmentMetadata {
-    pub path: String,
-    pub name: String,
-    pub size: u64,
-    pub mime_type: String,
+#[tauri::command]
+pub async fn pick_attachments(app_handle: AppHandle) -> Result<Vec<crate::mail::attachments::AttachmentMetadata>, String> {
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    tokio::task::spawn_blocking(move || crate::mail::attachments::pick_for_account(&app_handle, &account.id))
+        .await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub async fn get_attachment_metadata(paths: Vec<String>) -> Result<Vec<AttachmentMetadata>, String> {
-    let mut metadata_list = Vec::new();
-    
-    for path in paths {
-        let path_obj = std::path::Path::new(&path);
-        let name = path_obj.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        
-        let meta = tokio::fs::metadata(&path)
-            .await
-            .map_err(|e| format!("Could not read file metadata for {}: {}", name, e))?;
-            
-        let size = meta.len();
-        
-        // Use mime_guess for Content-Type, fallback to octet-stream
-        let mime_type = mime_guess::from_path(&path).first_or_octet_stream().to_string();
-        
-        metadata_list.push(AttachmentMetadata {
-            path,
-            name,
-            size,
-            mime_type,
-        });
-    }
-    
-    Ok(metadata_list)
+pub async fn release_attachment_handles(app_handle: AppHandle, handles: Vec<String>) -> Result<(), String> {
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    crate::mail::attachments::release_handles(&account.id, &handles);
+    Ok(())
 }
 
 #[tauri::command]
@@ -171,6 +149,7 @@ pub async fn send_message(
     attachments: Vec<String>,
 ) -> Result<String, String> {
     let mut account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    let attachment_data = crate::mail::attachments::load_for_send(&account.id, &attachments)?;
     
     let res = crate::mail::smtp_client::send_email(
         &app_handle,
@@ -182,11 +161,14 @@ pub async fn send_message(
         &subject,
         &plain_body,
         &html_body,
-        attachments,
+        attachment_data,
     )
     .await
     .map_err(|e| e.to_string());
     
+    if res.is_ok() {
+        crate::mail::attachments::release_handles(&account.id, &attachments);
+    }
     res
 }
 

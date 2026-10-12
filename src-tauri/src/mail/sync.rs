@@ -97,6 +97,12 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             // 2. Fast Exit Check
             if uid_next <= sync_state.last_uid + 1 {
                 log::info!("{} already up to date.", folder_name_clone);
+                sync_state.last_error = None;
+                sync_state.last_synced_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let _ = database::update_folder_sync_state(&app_handle_clone, &sync_state);
                 return Ok(0);
             }
 

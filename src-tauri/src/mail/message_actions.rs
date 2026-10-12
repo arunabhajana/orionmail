@@ -41,6 +41,17 @@ fn trash_mailbox(provider: &MailProvider) -> &'static str {
     }
 }
 
+fn flag_store_command(action: &str, desired: Option<bool>) -> Result<String, String> {
+    let enabled = desired.ok_or_else(|| format!("Missing value for pending {} action", action))?;
+    let flag = match action {
+        "seen" => "Seen",
+        "flagged" => "Flagged",
+        _ => return Err(format!("Unsupported flag action: {}", action)),
+    };
+    let sign = if enabled { "+" } else { "-" };
+    Ok(format!("{}FLAGS.SILENT (\\{})", sign, flag))
+}
+
 async fn execute_remote_action(account: &Account, item: &database::PendingMessageAction) -> Result<(), String> {
     let uid = item.uid;
     let mailbox = item.mailbox.clone();
@@ -51,10 +62,8 @@ async fn execute_remote_action(account: &Account, item: &database::PendingMessag
         session.select(&mailbox).map_err(|e| format!("Could not select mailbox '{}': {}", mailbox, e))?;
         match action.as_str() {
             "seen" | "flagged" => {
-                let enabled = desired.ok_or_else(|| format!("Missing value for pending {} action", action))?;
-                let flag = if action == "seen" { "Seen" } else { "Flagged" };
-                let sign = if enabled { "+" } else { "-" };
-                session.uid_store(uid.to_string(), format!("{}FLAGS.SILENT (\\{})", sign, flag))
+                let command = flag_store_command(&action, desired)?;
+                session.uid_store(uid.to_string(), command)
                     .map_err(|e| format!("IMAP rejected {} update for UID {} in '{}': {}", action, uid, mailbox, e))?;
                 Ok(())
             }
@@ -78,6 +87,31 @@ async fn execute_remote_action(account: &Account, item: &database::PendingMessag
             other => Err(format!("Unsupported pending message action: {}", other)),
         }
     }).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_and_star_actions_set_or_clear_the_provider_flag_idempotently() {
+        assert_eq!(flag_store_command("seen", Some(true)).unwrap(), "+FLAGS.SILENT (\\Seen)");
+        assert_eq!(flag_store_command("seen", Some(false)).unwrap(), "-FLAGS.SILENT (\\Seen)");
+        assert_eq!(flag_store_command("flagged", Some(true)).unwrap(), "+FLAGS.SILENT (\\Flagged)");
+        assert_eq!(flag_store_command("flagged", Some(false)).unwrap(), "-FLAGS.SILENT (\\Flagged)");
+        assert!(flag_store_command("seen", None).is_err());
+    }
+
+    #[test]
+    fn trash_destination_is_provider_specific() {
+        assert_eq!(trash_mailbox(&MailProvider::Google), "[Gmail]/Trash");
+        assert_eq!(trash_mailbox(&MailProvider::Outlook), "Deleted Items");
+        let custom = MailProvider::Custom {
+            imap: crate::auth::account::ImapConfig { host: "imap.example.test".into(), port: 993, tls: true },
+            smtp: crate::auth::account::SmtpConfig { host: "smtp.example.test".into(), port: 587, starttls: true },
+        };
+        assert_eq!(trash_mailbox(&custom), "Trash");
+    }
 }
 
 fn apply_local_action(app: &AppHandle, item: &database::PendingMessageAction) -> Result<(), String> {

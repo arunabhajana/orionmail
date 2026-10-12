@@ -5,6 +5,10 @@ use tauri::AppHandle;
 use crate::auth::account::Account;
 use crate::mail::folder::MailFolder;
 
+fn should_skip_for_interval(elapsed: i64, min_interval: i64, has_previous_error: bool) -> bool {
+    !has_previous_error && elapsed < min_interval
+}
+
 // Tracks which folders are currently waiting in the queue
 pub static SYNC_QUEUE: Lazy<AsyncMutex<HashSet<(String, MailFolder)>>> = Lazy::new(|| AsyncMutex::new(HashSet::new()));
 
@@ -26,17 +30,12 @@ pub async fn enqueue_sync(app_handle: AppHandle, account: Account, folder: MailF
     tokio::spawn(async move {
         let _guard = SYNC_LOCK.lock().await;
 
-        // Remove from queue because we are now the active sync
-        {
-            let mut q = SYNC_QUEUE.lock().await;
-            q.remove(&queue_key);
-        }
-
         // Check folder-specific minimum sync intervals
-        let last_synced_at = crate::mail::database::get_folder_sync_state(&app_handle, &account.id, &folder.to_string())
+        let folder_state = crate::mail::database::get_folder_sync_state(&app_handle, &account.id, &folder.to_string())
             .unwrap_or(None)
-            .map(|state| state.last_synced_at)
-            .unwrap_or(0);
+            .unwrap_or_default();
+        let last_synced_at = folder_state.last_synced_at;
+        let has_previous_error = folder_state.last_error.is_some();
         
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
         let elapsed = now - last_synced_at;
@@ -48,8 +47,9 @@ pub async fn enqueue_sync(app_handle: AppHandle, account: Account, folder: MailF
             MailFolder::Tag(_) => 60, // 1 minute refresh for tags
         };
 
-        if elapsed < min_interval {
+        if should_skip_for_interval(elapsed, min_interval, has_previous_error) {
             log::info!("Skipping sync for {}: only {} seconds elapsed (min: {}).", folder, elapsed, min_interval);
+            SYNC_QUEUE.lock().await.remove(&queue_key);
             return;
         }
 
@@ -68,5 +68,18 @@ pub async fn enqueue_sync(app_handle: AppHandle, account: Account, folder: MailF
         }
         
         let _ = app_handle.emit("mail:sync_finished", folder.to_string());
+        SYNC_QUEUE.lock().await.remove(&queue_key);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_skip_for_interval;
+
+    #[test]
+    fn failed_sync_bypasses_the_success_interval_throttle() {
+        assert!(!should_skip_for_interval(5, 30, true));
+        assert!(should_skip_for_interval(5, 30, false));
+        assert!(!should_skip_for_interval(30, 30, false));
+    }
 }

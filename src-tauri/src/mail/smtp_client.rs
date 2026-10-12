@@ -46,7 +46,7 @@ pub async fn send_email(
     subject: &str,
     plain_body: &str,
     html_body: &str,
-    attachments: Vec<String>,
+    attachments: Vec<crate::mail::attachments::AttachmentData>,
 ) -> Result<String, SendError> {
     // 1. Check if token needs refreshing (buffer of 5 minutes)
     if account.expires_at < Utc::now().timestamp() + 300 {
@@ -85,20 +85,11 @@ pub async fn send_email(
         )
     );
 
-    for path in attachments {
-        let path_obj = std::path::Path::new(&path);
-        let filename = path_obj.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        
-        let file_bytes = match tokio::fs::read(&path).await {
-            Ok(bytes) => bytes,
-            Err(_) => return Err(SendError::Other(format!("Could not read attachment: {}. The file may have been moved or deleted.", filename))),
-        };
-        
-        let content_type = mime_guess::from_path(&path).first_or_octet_stream();
-        let lettre_content_type = content_type.to_string().parse().unwrap_or_else(|_| "application/octet-stream".parse().unwrap());
-        
-        let attachment = lettre::message::Attachment::new(filename)
-            .body(file_bytes, lettre_content_type);
+    for selected in attachments {
+        let lettre_content_type = selected.mime_type.parse()
+            .unwrap_or_else(|_| "application/octet-stream".parse().unwrap());
+        let attachment = lettre::message::Attachment::new(selected.name)
+            .body(selected.bytes.as_ref().clone(), lettre_content_type);
             
         multipart = multipart.singlepart(attachment);
     }
