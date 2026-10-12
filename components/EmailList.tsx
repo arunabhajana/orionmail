@@ -83,6 +83,7 @@ const EmailList: React.FC<EmailListProps> = ({
 
     React.useEffect(() => {
         setCurrentFilter('all');
+        setContextMenuState(null);
     }, [currentFolder]);
 
     const displayedEmails = React.useMemo(() => {
@@ -383,12 +384,6 @@ const EmailList: React.FC<EmailListProps> = ({
                                         onContextMenu={(e, id) => {
                                             e.preventDefault();
                                             e.stopPropagation();
-                                            console.log("Right click fired for:", id);
-                                            // Import toast dynamically or if not available just don't crash
-                                            try {
-                                                const { toast } = require('sonner');
-                                                toast(`Right clicked on email ${id}`);
-                                            } catch (e) {}
                                             setContextMenuState({
                                                 x: e.clientX,
                                                 y: e.clientY,
@@ -418,7 +413,9 @@ const EmailList: React.FC<EmailListProps> = ({
             </div>
             )}
             <EmailContextMenu 
-                contextMenu={contextMenuState} 
+                contextMenu={contextMenuState && emails.some(email => email.id === contextMenuState.emailId)
+                    ? { ...contextMenuState, unread: Boolean(emails.find(email => email.id === contextMenuState.emailId)?.unread) }
+                    : null}
                 onClose={() => setContextMenuState(null)} 
                 onToggleRead={onToggleRead} 
             />

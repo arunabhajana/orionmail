@@ -6,6 +6,7 @@ import { NavItemConfig, Tag } from "@/lib/types";
 
 export const NavItem = memo(({ icon: Icon, label, id, badge, highlight, onClick }: NavItemConfig & { onClick?: () => void }) => (
     <button
+        data-context-menu={['inbox', 'sent', 'starred'].includes(id) ? 'folder' : undefined}
         onClick={onClick}
         className={cn(
             "w-full flex items-center gap-3 pl-4 pr-3 py-2 rounded-lg text-sm transition-all duration-200 outline-none items-center",
@@ -63,11 +64,13 @@ export const TagItem = memo(({
 
     return (
         <div 
+            data-context-menu="tag"
             className="flex flex-col"
             onMouseEnter={() => setIsHovered(true)} 
             onMouseLeave={() => setIsHovered(false)}
         >
             <button 
+                data-context-menu="tag"
                 onClick={onClick} 
                 className={cn("w-full flex items-center pr-2 py-1.5 pl-1.5 rounded-lg text-sm transition-all duration-200 outline-none group", 
                     highlight ? "bg-white/60 dark:bg-white/10 text-foreground dark:text-white/90 font-medium shadow-sm ring-1 ring-black/5 dark:ring-white/5" 

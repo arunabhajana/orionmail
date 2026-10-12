@@ -1,4 +1,4 @@
-import { useState, useEffect, type RefObject } from "react";
+import { useState, useEffect, useRef, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -150,12 +150,16 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         };
     }, [emailId, emailUid, folder]);
 
-    // Trigger optimistic "mark as read" if the email is unread
+    const lastOpenedMessage = useRef<string | null>(null);
+    // Mark read on opening a message, allowing an explicit unread action while it stays open.
     useEffect(() => {
+        const key = emailId ? `${folder || 'inbox'}:${emailId}` : null;
+        if (lastOpenedMessage.current === key) return;
+        lastOpenedMessage.current = key;
         if (emailId && emailUnread && onMarkAsRead) {
             onMarkAsRead(emailId);
         }
-    }, [emailId, emailUnread, onMarkAsRead]);
+    }, [emailId, folder, emailUnread, onMarkAsRead]);
 
     // Handle iframe messages sent from the injected srcDoc script
     useEffect(() => {

@@ -12,6 +12,7 @@ import { BackgroundTasksProvider } from "@/components/BackgroundTasksContext";
 import { Toaster } from "sonner";
 import { GlobalLoader } from "@/components/GlobalLoader";
 import { AppLockGate } from "@/components/AppLockGate";
+import { AppContextMenus } from "@/components/ui/AppContextMenus";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -49,6 +50,7 @@ export default function RootLayout({
                   <SyncProvider>
                     <DownloadProvider>
                       <AppLockGate>
+                        <AppContextMenus>
                         <div className="app-window">
                           <GlobalLoader />
                           <TitlebarWrapper />
@@ -57,6 +59,7 @@ export default function RootLayout({
                           </div>
                           <Toaster theme="system" richColors position="top-center" />
                         </div>
+                        </AppContextMenus>
                       </AppLockGate>
                     </DownloadProvider>
                   </SyncProvider>

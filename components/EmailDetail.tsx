@@ -101,6 +101,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
 
     return (
         <section
+            data-context-menu="message"
             className={cn(
                 "flex flex-col h-full bg-white dark:bg-[#111111] transition-colors",
                 className

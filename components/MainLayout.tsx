@@ -174,7 +174,7 @@ export default function MainLayout() {
         const target = emails.find(e => e.id === emailId);
         if (!target) return;
 
-        const newReadState = !target.unread; // if it was unread, it becomes read, i.e., should_read = true.
+        const newReadState = Boolean(target.unread);
 
         // Optimistic Update
         setEmails(prev => prev.map(email =>
@@ -199,6 +199,7 @@ export default function MainLayout() {
             setEmails(prev => prev.map(email =>
                 email.id === emailId ? { ...email, unread: target.unread } : email
             ));
+            fetchUnreadCounts();
         }
     };
 
