@@ -6,6 +6,7 @@ use crate::mail::message_list::MessageHeader;
 
 #[derive(Debug, Clone, Default)]
 pub struct FolderSyncState {
+    pub account_id: String,
     pub folder: String,
     pub last_uid: u32,
     pub last_synced_at: i64,
@@ -23,6 +24,215 @@ pub struct GlobalSyncState {
     pub last_tag_sync_at: Option<i64>,
 }
 
+const LEGACY_ACCOUNT_SCOPE: &str = "legacy-unassigned";
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())
+}
+
+fn table_columns(conn: &Connection, table: &str) -> Result<Vec<(String, i32)>, String> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).map_err(|e| e.to_string())?;
+    let columns = stmt.query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(columns)
+}
+
+fn is_account_scoped(conn: &Connection, table: &str, expected_primary_key: &[&str]) -> Result<bool, String> {
+    if !table_exists(conn, table)? { return Ok(false); }
+    let columns = table_columns(conn, table)?;
+    let mut primary_key: Vec<(i32, String)> = columns.iter()
+        .filter(|(_, ordinal)| *ordinal > 0)
+        .map(|(name, ordinal)| (*ordinal, name.to_lowercase()))
+        .collect();
+    primary_key.sort_by_key(|(ordinal, _)| *ordinal);
+    let expected: Vec<String> = expected_primary_key.iter().map(|name| name.to_string()).collect();
+    Ok(columns.iter().any(|(name, _)| name.eq_ignore_ascii_case("account_id"))
+        && primary_key.into_iter().map(|(_, name)| name).collect::<Vec<_>>() == expected)
+}
+
+fn account_expression(columns: &[(String, i32)]) -> String {
+    if columns.iter().any(|(name, _)| name.eq_ignore_ascii_case("account_id")) {
+        "COALESCE(account_id, ?1)".to_string()
+    } else {
+        "?1".to_string()
+    }
+}
+
+fn migrate_account_scoped_schema(conn: &mut Connection, legacy_account_id: &str) -> Result<(), String> {
+    let messages_need_migration = table_exists(conn, "messages")?
+        && !is_account_scoped(conn, "messages", &["account_id", "folder", "uid"])?;
+    let mailbox_needs_migration = table_exists(conn, "mailbox_state")?
+        && !is_account_scoped(conn, "mailbox_state", &["account_id", "mailbox"])?;
+    let folders_need_migration = table_exists(conn, "folder_sync_state")?
+        && !is_account_scoped(conn, "folder_sync_state", &["account_id", "folder"])?;
+    let global_needs_migration = table_exists(conn, "global_sync_state")?
+        && !is_account_scoped(conn, "global_sync_state", &["account_id"])?;
+    let tags_need_migration = if table_exists(conn, "message_tags")? {
+        let sql: String = conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'message_tags'",
+            [], |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        !sql.to_lowercase().contains("foreign key (account_id, folder, message_uid)")
+    } else { false };
+
+    if !(messages_need_migration || mailbox_needs_migration || folders_need_migration || global_needs_migration || tags_need_migration) {
+        return Ok(());
+    }
+
+    conn.pragma_update(None, "foreign_keys", "OFF").map_err(|e| e.to_string())?;
+    let migration = (|| -> Result<(), String> {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        tx.execute_batch("DROP TRIGGER IF EXISTS messages_ai; DROP TRIGGER IF EXISTS messages_au; DROP TRIGGER IF EXISTS messages_ad; DROP TABLE IF EXISTS messages_fts_v2; DROP TABLE IF EXISTS messages_fts;")
+            .map_err(|e| e.to_string())?;
+
+        if messages_need_migration {
+            let columns = table_columns(&tx, "messages")?;
+            if !columns.iter().any(|(name, _)| name.eq_ignore_ascii_case("folder"))
+                || !columns.iter().any(|(name, _)| name.eq_ignore_ascii_case("uid"))
+            {
+                return Err("Cannot migrate cached messages: folder or UID column is missing".to_string());
+            }
+            tx.execute_batch("ALTER TABLE messages RENAME TO messages_legacy_account_scope;")
+                .map_err(|e| e.to_string())?;
+            tx.execute_batch("CREATE TABLE messages (
+                account_id TEXT NOT NULL,
+                folder TEXT NOT NULL,
+                uid INTEGER NOT NULL,
+                uid_validity INTEGER,
+                subject TEXT,
+                sender TEXT,
+                recipient TEXT,
+                date INTEGER NOT NULL DEFAULT 0,
+                snippet TEXT,
+                body TEXT,
+                seen INTEGER DEFAULT 0,
+                flagged INTEGER DEFAULT 0,
+                has_attachments INTEGER DEFAULT 0,
+                thread_id TEXT,
+                body_fetched INTEGER DEFAULT 0,
+                processed_html TEXT,
+                attachments_json TEXT,
+                extracted_data TEXT,
+                message_id TEXT,
+                PRIMARY KEY (account_id, folder, uid)
+            );")
+                .map_err(|e| e.to_string())?;
+
+            let legacy_columns = table_columns(&tx, "messages_legacy_account_scope")?;
+            let value = |name: &str, default: &str| -> String {
+                if legacy_columns.iter().any(|(column, _)| column.eq_ignore_ascii_case(name)) { name.to_string() } else { default.to_string() }
+            };
+            let account = account_expression(&legacy_columns);
+            let insert = format!("INSERT INTO messages (
+                    account_id, folder, uid, uid_validity, subject, sender, recipient, date, snippet, body,
+                    seen, flagged, has_attachments, thread_id, body_fetched, processed_html, attachments_json,
+                    extracted_data, message_id
+                ) SELECT {account}, folder, uid, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+                FROM messages_legacy_account_scope",
+                value("uid_validity", "NULL"), value("subject", "NULL"), value("sender", "NULL"),
+                value("recipient", "NULL"), value("date", "0"), value("snippet", "NULL"),
+                value("body", "NULL"), value("seen", "0"), value("flagged", "0"),
+                value("has_attachments", "0"), value("thread_id", "NULL"), value("body_fetched", "0"),
+                value("processed_html", "NULL"), value("attachments_json", "NULL"),
+                value("extracted_data", "NULL"), value("message_id", "NULL"));
+            tx.execute(&insert, [legacy_account_id]).map_err(|e| format!("Could not preserve cached messages during account-scope migration: {e}"))?;
+            tx.execute_batch("DROP TABLE messages_legacy_account_scope;").map_err(|e| e.to_string())?;
+        } else if !table_exists(&tx, "messages")? {
+            tx.execute_batch("CREATE TABLE messages (
+                account_id TEXT NOT NULL, folder TEXT NOT NULL, uid INTEGER NOT NULL, uid_validity INTEGER,
+                subject TEXT, sender TEXT, recipient TEXT, date INTEGER NOT NULL DEFAULT 0, snippet TEXT,
+                body TEXT, seen INTEGER DEFAULT 0, flagged INTEGER DEFAULT 0, has_attachments INTEGER DEFAULT 0,
+                thread_id TEXT, body_fetched INTEGER DEFAULT 0, processed_html TEXT, attachments_json TEXT,
+                extracted_data TEXT, message_id TEXT, PRIMARY KEY (account_id, folder, uid)
+            );").map_err(|e| e.to_string())?;
+        }
+
+        if table_exists(&tx, "mailbox_state")? && mailbox_needs_migration {
+            let columns = table_columns(&tx, "mailbox_state")?;
+            tx.execute_batch("ALTER TABLE mailbox_state RENAME TO mailbox_state_legacy_account_scope;
+                CREATE TABLE mailbox_state (account_id TEXT NOT NULL, mailbox TEXT NOT NULL, uid_validity INTEGER, PRIMARY KEY (account_id, mailbox));")
+                .map_err(|e| e.to_string())?;
+            let account = account_expression(&columns);
+            tx.execute(&format!("INSERT OR REPLACE INTO mailbox_state (account_id, mailbox, uid_validity) SELECT {account}, mailbox, uid_validity FROM mailbox_state_legacy_account_scope"), [legacy_account_id])
+                .map_err(|e| e.to_string())?;
+            tx.execute_batch("DROP TABLE mailbox_state_legacy_account_scope;").map_err(|e| e.to_string())?;
+        }
+
+        if table_exists(&tx, "folder_sync_state")? && folders_need_migration {
+            let columns = table_columns(&tx, "folder_sync_state")?;
+            tx.execute_batch("ALTER TABLE folder_sync_state RENAME TO folder_sync_state_legacy_account_scope;
+                CREATE TABLE folder_sync_state (
+                    account_id TEXT NOT NULL, folder TEXT NOT NULL, last_uid INTEGER, last_synced_at INTEGER,
+                    sync_in_progress INTEGER DEFAULT 0, last_full_sync_at INTEGER, last_error TEXT,
+                    PRIMARY KEY (account_id, folder)
+                );").map_err(|e| e.to_string())?;
+            let account = account_expression(&columns);
+            let value = |name: &str, default: &str| -> String {
+                if columns.iter().any(|(column, _)| column.eq_ignore_ascii_case(name)) { name.to_string() } else { default.to_string() }
+            };
+            tx.execute(&format!("INSERT OR REPLACE INTO folder_sync_state (account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error)
+                SELECT {account}, folder, {}, {}, {}, {}, {} FROM folder_sync_state_legacy_account_scope",
+                value("last_uid", "0"), value("last_synced_at", "0"), value("sync_in_progress", "0"),
+                value("last_full_sync_at", "0"), value("last_error", "NULL")), [legacy_account_id])
+                .map_err(|e| e.to_string())?;
+            tx.execute_batch("DROP TABLE folder_sync_state_legacy_account_scope;").map_err(|e| e.to_string())?;
+        }
+
+        if table_exists(&tx, "global_sync_state")? && global_needs_migration {
+            let columns = table_columns(&tx, "global_sync_state")?;
+            tx.execute_batch("ALTER TABLE global_sync_state RENAME TO global_sync_state_legacy_account_scope;
+                CREATE TABLE global_sync_state (
+                    account_id TEXT PRIMARY KEY, last_sync_at INTEGER, last_successful_idle_at INTEGER,
+                    last_notification_at INTEGER, last_sync_error TEXT, last_tag_sync_at INTEGER
+                );").map_err(|e| e.to_string())?;
+            let account = account_expression(&columns);
+            let value = |name: &str| -> String {
+                if columns.iter().any(|(column, _)| column.eq_ignore_ascii_case(name)) { name.to_string() } else { "NULL".to_string() }
+            };
+            tx.execute(&format!("INSERT OR REPLACE INTO global_sync_state (account_id, last_sync_at, last_successful_idle_at, last_notification_at, last_sync_error, last_tag_sync_at)
+                SELECT {account}, {}, {}, {}, {}, {} FROM global_sync_state_legacy_account_scope",
+                value("last_sync_at"), value("last_successful_idle_at"), value("last_notification_at"),
+                value("last_sync_error"), value("last_tag_sync_at")), [legacy_account_id])
+                .map_err(|e| e.to_string())?;
+            tx.execute_batch("DROP TABLE global_sync_state_legacy_account_scope;").map_err(|e| e.to_string())?;
+        }
+
+        if table_exists(&tx, "message_tags")? && tags_need_migration {
+            tx.execute_batch("ALTER TABLE message_tags RENAME TO message_tags_legacy_account_scope;
+                CREATE TABLE message_tags (
+                    account_id TEXT NOT NULL, folder TEXT NOT NULL, message_uid INTEGER NOT NULL, tag_id TEXT NOT NULL,
+                    PRIMARY KEY (account_id, folder, message_uid, tag_id),
+                    FOREIGN KEY (account_id, folder, message_uid) REFERENCES messages(account_id, folder, uid) ON DELETE CASCADE
+                );")
+                .map_err(|e| e.to_string())?;
+            tx.execute_batch("INSERT OR IGNORE INTO message_tags (account_id, folder, message_uid, tag_id)
+                SELECT old.account_id, old.folder, old.message_uid, old.tag_id
+                FROM message_tags_legacy_account_scope old
+                JOIN messages m ON m.account_id = old.account_id AND m.folder = old.folder AND m.uid = old.message_uid;
+                DROP TABLE message_tags_legacy_account_scope;")
+                .map_err(|e| e.to_string())?;
+        }
+
+        if table_exists(&tx, "app_metadata")? {
+            tx.execute("UPDATE app_metadata SET value = '1' WHERE key = 'fts_version'", [])
+                .map_err(|e| e.to_string())?;
+        }
+
+        tx.commit().map_err(|e| e.to_string())
+    })();
+    let enable_foreign_keys = conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string());
+    migration?;
+    enable_foreign_keys?;
+    Ok(())
+}
+
 pub fn get_db_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let app_dir = app_handle
         .path()
@@ -35,38 +245,24 @@ pub fn get_db_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_dir.join("orbitmail.db"))
 }
 
+fn open_connection(app_handle: &AppHandle) -> Result<Connection, String> {
+    let conn = Connection::open(get_db_path(app_handle)?).map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
+    Ok(conn)
+}
+
 pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-
-    // Verify primary key constraint is (folder, uid) to match ON CONFLICT clause
-    let mut check_stmt = conn.prepare("PRAGMA table_info(messages)").map_err(|e| e.to_string())?;
-    let check_rows = check_stmt.query_map([], |row| {
-        let name: String = row.get(1)?;
-        let pk: i32 = row.get(5)?;
-        Ok((name, pk))
-    }).map_err(|e| e.to_string())?;
-
-    let mut pk_cols = Vec::new();
-    for row in check_rows {
-        if let Ok((name, pk)) = row {
-            if pk > 0 {
-                pk_cols.push(name);
-            }
-        }
-    }
-
-    if !pk_cols.is_empty() {
-        let has_folder = pk_cols.iter().any(|c| c.to_lowercase() == "folder");
-        let has_uid = pk_cols.iter().any(|c| c.to_lowercase() == "uid");
-        if pk_cols.len() != 2 || !has_folder || !has_uid {
-            log::warn!("Mismatched Primary Key in messages table: {:?}. Dropping table for clean recreation.", pk_cols);
-            let _ = conn.execute("DROP TABLE IF EXISTS messages", ());
-        }
-    }
+    let mut conn = open_connection(app_handle)?;
+    conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
+    // Legacy message rows have no trustworthy owner. Keep them in an isolated
+    // migration scope instead of assigning them to whichever account is active
+    // on startup and potentially exposing another account's cached mail.
+    let migration_account = LEGACY_ACCOUNT_SCOPE.to_string();
+    migrate_account_scoped_schema(&mut conn, &migration_account)?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
+            account_id TEXT NOT NULL,
             folder TEXT NOT NULL,
             uid INTEGER NOT NULL,
             uid_validity INTEGER, -- Left for generic IMAP parity
@@ -83,7 +279,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             body_fetched INTEGER DEFAULT 0,
             processed_html TEXT,
             message_id TEXT,
-            PRIMARY KEY (folder, uid)
+            PRIMARY KEY (account_id, folder, uid)
         )",
         (),
     ).map_err(|e| e.to_string())?;
@@ -190,12 +386,12 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     }
 
     // Performance Indexes
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_folder_uid_desc ON messages(folder, uid DESC)", ()).map_err(|e| e.to_string())?;
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_folder_date ON messages(folder, date DESC)", ()).map_err(|e| e.to_string())?;
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id)", ()).map_err(|e| e.to_string())?;
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_seen ON messages(seen)", ()).map_err(|e| e.to_string())?;
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_flagged ON messages(flagged)", ()).map_err(|e| e.to_string())?;
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_message_id ON messages(message_id)", ()).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_folder_uid_desc ON messages(account_id, folder, uid DESC)", ()).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_folder_date ON messages(account_id, folder, date DESC)", ()).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_thread ON messages(account_id, thread_id)", ()).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_seen ON messages(account_id, seen)", ()).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_flagged ON messages(account_id, flagged)", ()).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_message_id ON messages(account_id, message_id)", ()).map_err(|e| e.to_string())?;
 
     // FTS5 Setup & Resumable Contentless FTS Migration
     conn.execute(
@@ -210,11 +406,12 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     let fts_version: Option<String> = stmt.query_row([], |row| row.get(0)).ok();
     let fts_version_num: u32 = fts_version.and_then(|v| v.parse().ok()).unwrap_or(1);
 
-    if fts_version_num < 2 {
-        log::info!("Performing resumable FTS migration to fts_version 2...");
+    if fts_version_num < 3 {
+        log::info!("Performing resumable FTS migration to fts_version 3...");
         let _ = conn.execute("DROP TABLE IF EXISTS messages_fts_v2", ());
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_v2 USING fts5(
+                account_id UNINDEXED,
                 subject,
                 sender,
                 recipient,
@@ -226,18 +423,19 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             (),
         ).map_err(|e| e.to_string())?;
 
-        let _ = conn.execute(
-            "INSERT INTO messages_fts_v2(rowid, subject, sender, recipient, body, attachment_names)
-             SELECT rowid, subject, sender, recipient, coalesce(body, snippet, ''), coalesce(attachments_json, '') FROM messages",
+        conn.execute(
+            "INSERT INTO messages_fts_v2(rowid, account_id, subject, sender, recipient, body, attachment_names)
+             SELECT rowid, account_id, subject, sender, recipient, coalesce(body, snippet, ''), coalesce(attachments_json, '') FROM messages",
             (),
-        );
+        ).map_err(|e| format!("Failed to rebuild the local mail search index: {e}"))?;
 
         let _ = conn.execute("DROP TABLE IF EXISTS messages_fts", ());
         conn.execute("ALTER TABLE messages_fts_v2 RENAME TO messages_fts", ()).map_err(|e| e.to_string())?;
-        conn.execute("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('fts_version', '2')", ()).map_err(|e| e.to_string())?;
+        conn.execute("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('fts_version', '3')", ()).map_err(|e| e.to_string())?;
     } else {
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                account_id UNINDEXED,
                 subject,
                 sender,
                 recipient,
@@ -252,48 +450,61 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
 
     let _ = conn.execute("DROP TRIGGER IF EXISTS messages_ai", ());
     let _ = conn.execute("DROP TRIGGER IF EXISTS messages_au", ());
+    let _ = conn.execute("DROP TRIGGER IF EXISTS messages_ad", ());
 
     conn.execute(
         "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts(rowid, subject, sender, recipient, body, attachment_names)
-            VALUES (new.rowid, new.subject, new.sender, new.recipient, coalesce(new.body, new.snippet, ''), coalesce(new.attachments_json, ''));
+            INSERT INTO messages_fts(rowid, account_id, subject, sender, recipient, body, attachment_names)
+            VALUES (new.rowid, new.account_id, new.subject, new.sender, new.recipient, coalesce(new.body, new.snippet, ''), coalesce(new.attachments_json, ''));
         END",
         (),
     ).map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, subject, sender, recipient, body, attachment_names)
-            VALUES ('delete', old.rowid, old.subject, old.sender, old.recipient, coalesce(old.body, old.snippet, ''), coalesce(old.attachments_json, ''));
-            INSERT INTO messages_fts(rowid, subject, sender, recipient, body, attachment_names)
-            VALUES (new.rowid, new.subject, new.sender, new.recipient, coalesce(new.body, new.snippet, ''), coalesce(new.attachments_json, ''));
+            INSERT INTO messages_fts(messages_fts, rowid, account_id, subject, sender, recipient, body, attachment_names)
+            VALUES ('delete', old.rowid, old.account_id, old.subject, old.sender, old.recipient, coalesce(old.body, old.snippet, ''), coalesce(old.attachments_json, ''));
+            INSERT INTO messages_fts(rowid, account_id, subject, sender, recipient, body, attachment_names)
+            VALUES (new.rowid, new.account_id, new.subject, new.sender, new.recipient, coalesce(new.body, new.snippet, ''), coalesce(new.attachments_json, ''));
+        END",
+        (),
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, account_id, subject, sender, recipient, body, attachment_names)
+            VALUES ('delete', old.rowid, old.account_id, old.subject, old.sender, old.recipient, coalesce(old.body, old.snippet, ''), coalesce(old.attachments_json, ''));
         END",
         (),
     ).map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS mailbox_state (
-            mailbox TEXT PRIMARY KEY,
-            uid_validity INTEGER
+            account_id TEXT NOT NULL,
+            mailbox TEXT NOT NULL,
+            uid_validity INTEGER,
+            PRIMARY KEY (account_id, mailbox)
         )",
         (),
     ).map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS folder_sync_state (
-            folder TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            folder TEXT NOT NULL,
             last_uid INTEGER,
             last_synced_at INTEGER,
             sync_in_progress INTEGER DEFAULT 0,
             last_full_sync_at INTEGER,
-            last_error TEXT
+            last_error TEXT,
+            PRIMARY KEY (account_id, folder)
         )",
         (),
     ).map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS global_sync_state (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
+            account_id TEXT PRIMARY KEY,
             last_sync_at INTEGER,
             last_successful_idle_at INTEGER,
             last_notification_at INTEGER,
@@ -345,7 +556,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
             message_uid INTEGER NOT NULL,
             tag_id TEXT NOT NULL,
             PRIMARY KEY (account_id, folder, message_uid, tag_id),
-            FOREIGN KEY (folder, message_uid) REFERENCES messages(folder, uid) ON DELETE CASCADE
+            FOREIGN KEY (account_id, folder, message_uid) REFERENCES messages(account_id, folder, uid) ON DELETE CASCADE
         )",
         (),
     ).map_err(|e| e.to_string())?;
@@ -359,61 +570,67 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn get_mailbox_validity(app_handle: &AppHandle, mailbox: &str) -> Result<Option<u32>, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-
-    let mut stmt = conn.prepare("SELECT uid_validity FROM mailbox_state WHERE mailbox = ?1").unwrap();
-    let validity = stmt.query_row([mailbox], |row| row.get(0)).ok();
+pub fn get_mailbox_validity(app_handle: &AppHandle, account_id: &str, mailbox: &str) -> Result<Option<u32>, String> {
+    let conn = open_connection(app_handle)?;
+    let mut stmt = conn.prepare("SELECT uid_validity FROM mailbox_state WHERE account_id = ?1 AND mailbox = ?2").map_err(|e| e.to_string())?;
+    let validity = stmt.query_row(rusqlite::params![account_id, mailbox], |row| row.get(0)).ok();
 
     Ok(validity)
 }
 
-pub fn update_mailbox_validity(app_handle: &AppHandle, mailbox: &str, validity: u32) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn update_mailbox_validity(app_handle: &AppHandle, account_id: &str, mailbox: &str, validity: u32) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO mailbox_state (mailbox, uid_validity) VALUES (?1, ?2)",
-        rusqlite::params![mailbox, validity],
+        "INSERT OR REPLACE INTO mailbox_state (account_id, mailbox, uid_validity) VALUES (?1, ?2, ?3)",
+        rusqlite::params![account_id, mailbox, validity],
     ).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-pub fn clear_messages(app_handle: &AppHandle, folder: &str) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn clear_messages(app_handle: &AppHandle, account_id: &str, folder: &str) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
-    conn.execute("DELETE FROM messages WHERE folder = ?1", rusqlite::params![folder]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM messages WHERE account_id = ?1 AND folder = ?2", rusqlite::params![account_id, folder]).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-pub fn get_highest_uid(app_handle: &AppHandle, folder: &str) -> Result<u32, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn clear_account_cache(app_handle: &AppHandle, account_id: &str) -> Result<(), String> {
+    let mut conn = open_connection(app_handle)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM message_tags WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM messages WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM mailbox_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM folder_sync_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM global_sync_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM tags WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
 
-    let mut stmt = conn.prepare("SELECT MAX(uid) FROM messages WHERE folder = ?1").unwrap();
-    let max_uid: Option<u32> = stmt.query_row(rusqlite::params![folder], |row| row.get(0)).unwrap_or(None);
+pub fn get_highest_uid(app_handle: &AppHandle, account_id: &str, folder: &str) -> Result<u32, String> {
+    let conn = open_connection(app_handle)?;
+
+    let mut stmt = conn.prepare("SELECT MAX(uid) FROM messages WHERE account_id = ?1 AND folder = ?2").map_err(|e| e.to_string())?;
+    let max_uid: Option<u32> = stmt.query_row(rusqlite::params![account_id, folder], |row| row.get(0)).unwrap_or(None);
 
     Ok(max_uid.unwrap_or(0))
 }
 
-pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHeader]) -> Result<(), String> {
+pub fn insert_or_update_messages(app_handle: &AppHandle, account_id: &str, messages: &[MessageHeader]) -> Result<(), String> {
     if messages.is_empty() {
         return Ok(());
     }
 
-    let db_path = get_db_path(app_handle)?;
-    let mut conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let mut conn = open_connection(app_handle)?;
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO messages (folder, uid, uid_validity, subject, sender, recipient, date, seen, flagged, snippet, message_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-             ON CONFLICT(folder, uid) DO UPDATE SET
+            "INSERT INTO messages (account_id, folder, uid, uid_validity, subject, sender, recipient, date, seen, flagged, snippet, message_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(account_id, folder, uid) DO UPDATE SET
                 subject = excluded.subject,
                 sender = excluded.sender,
                 recipient = excluded.recipient,
@@ -426,6 +643,7 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
 
         for msg in messages {
             stmt.execute(rusqlite::params![
+                account_id,
                 msg.folder,
                 msg.uid,
                 msg.uid_validity,
@@ -445,13 +663,13 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, messages: &[MessageHead
     Ok(())
 }
 
-fn populate_message_tags(conn: &Connection, messages: &mut [MessageHeader]) {
+fn populate_message_tags(conn: &Connection, account_id: &str, messages: &mut [MessageHeader]) {
     if messages.is_empty() {
         return;
     }
-    if let Ok(mut stmt) = conn.prepare("SELECT tag_id FROM message_tags WHERE folder = ?1 AND message_uid = ?2") {
+    if let Ok(mut stmt) = conn.prepare("SELECT tag_id FROM message_tags WHERE account_id = ?1 AND folder = ?2 AND message_uid = ?3") {
         for msg in messages.iter_mut() {
-            if let Ok(rows) = stmt.query_map(rusqlite::params![msg.folder, msg.uid], |row| row.get::<_, String>(0)) {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![account_id, msg.folder, msg.uid], |row| row.get::<_, String>(0)) {
                 for row in rows {
                     if let Ok(tag_id) = row {
                         msg.tags.push(tag_id);
@@ -462,13 +680,12 @@ fn populate_message_tags(conn: &Connection, messages: &mut [MessageHeader]) {
     }
 }
 
-pub fn load_cached_messages(app_handle: &AppHandle, limit: usize) -> Result<Vec<MessageHeader>, String> {
-    load_messages_page(app_handle, "inbox", None, limit as u32)
+pub fn load_cached_messages(app_handle: &AppHandle, account_id: &str, limit: usize) -> Result<Vec<MessageHeader>, String> {
+    load_messages_page(app_handle, account_id, "inbox", None, limit as u32)
 }
 
-pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Option<u32>, limit: u32) -> Result<Vec<MessageHeader>, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn load_messages_page(app_handle: &AppHandle, account_id: &str, folder: &str, before_uid: Option<u32>, limit: u32) -> Result<Vec<MessageHeader>, String> {
+    let conn = open_connection(app_handle)?;
 
     let parse_row = |row: &rusqlite::Row| -> rusqlite::Result<MessageHeader> {
         Ok(MessageHeader {
@@ -490,127 +707,46 @@ pub fn load_messages_page(app_handle: &AppHandle, folder: &str, before_uid: Opti
     };
 
     let mut messages = Vec::new();
-
-    if folder.to_lowercase() == "starred" {
-        // Starred uses date-based sorting and pagination
-        let mut query = "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id
-             FROM messages 
-             WHERE flagged = 1".to_string();
-             
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(uid) = before_uid {
-            let date: Option<i64> = conn.query_row(
-                "SELECT date FROM messages WHERE uid = ?1 AND flagged = 1 LIMIT 1",
-                rusqlite::params![uid],
-                |row| row.get(0)
-            ).ok();
-            
-            if let Some(d) = date {
-                query.push_str(" AND date < ?1");
-                params.push(Box::new(d));
-                query.push_str(" ORDER BY date DESC LIMIT ?2");
-                params.push(Box::new(limit));
-            } else {
-                query.push_str(" ORDER BY date DESC LIMIT ?1");
-                params.push(Box::new(limit));
-            }
-        } else {
-            query.push_str(" ORDER BY date DESC LIMIT ?1");
-            params.push(Box::new(limit));
-        }
-
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-        let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
-        let msg_iter = stmt.query_map(rusqlite::params_from_iter(param_refs), parse_row).map_err(|e| e.to_string())?;
-        for msg in msg_iter {
-            messages.push(msg.map_err(|e| e.to_string())?);
-        }
+    let fields = "uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id";
+    if folder.eq_ignore_ascii_case("starred") {
+        let sql = format!("SELECT {fields} FROM messages WHERE account_id = ?1 AND flagged = 1 AND (?2 IS NULL OR date < (SELECT date FROM messages WHERE account_id = ?1 AND uid = ?2 AND flagged = 1 LIMIT 1)) ORDER BY date DESC, uid DESC LIMIT ?3");
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![account_id, before_uid, limit], parse_row).map_err(|e| e.to_string())?;
+        for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
     } else if let Some(tag_id) = folder.strip_prefix("tag:") {
-        let mut query = "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id
-             FROM (
-                 SELECT m.*, ROW_NUMBER() OVER(PARTITION BY COALESCE(m.message_id, m.uid || m.folder) ORDER BY m.date DESC) as rn
-                 FROM messages m
-                 LEFT JOIN message_tags mt ON m.folder = mt.folder AND m.uid = mt.message_uid
-                 WHERE m.folder = ?1 OR mt.tag_id = ?2
-             )
-             WHERE rn = 1".to_string();
-             
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(folder.to_string()), Box::new(tag_id.to_string())];
-
-        if let Some(uid) = before_uid {
-            let date: Option<i64> = conn.query_row(
-                "SELECT date FROM messages WHERE uid = ?1 LIMIT 1",
-                rusqlite::params![uid],
-                |row| row.get(0)
-            ).ok();
-            
-            if let Some(d) = date {
-                query.push_str(" AND date < ?3 ORDER BY date DESC LIMIT ?4");
-                params.push(Box::new(d));
-                params.push(Box::new(limit));
-            } else {
-                query.push_str(" ORDER BY date DESC LIMIT ?3");
-                params.push(Box::new(limit));
-            }
-        } else {
-            query.push_str(" ORDER BY date DESC LIMIT ?3");
-            params.push(Box::new(limit));
-        }
-
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-        let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
-        let msg_iter = stmt.query_map(rusqlite::params_from_iter(param_refs), parse_row).map_err(|e| e.to_string())?;
-        for msg in msg_iter {
-            messages.push(msg.map_err(|e| e.to_string())?);
-        }
+        let sql = format!("SELECT m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{} FROM messages m WHERE m.account_id = ?1 AND EXISTS (SELECT 1 FROM message_tags mt WHERE mt.account_id = m.account_id AND mt.folder = m.folder AND mt.message_uid = m.uid AND mt.tag_id = ?2) AND (?3 IS NULL OR m.date < (SELECT date FROM messages c WHERE c.account_id = ?1 AND c.uid = ?3 AND EXISTS (SELECT 1 FROM message_tags mt2 WHERE mt2.account_id = c.account_id AND mt2.folder = c.folder AND mt2.message_uid = c.uid AND mt2.tag_id = ?2) LIMIT 1)) ORDER BY m.date DESC, m.uid DESC LIMIT ?4", "uid", "uid_validity", "subject", "sender", "date", "seen", "flagged", "snippet", "folder", "has_attachments", "thread_id", "recipient", "message_id");
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![account_id, tag_id, before_uid, limit], parse_row).map_err(|e| e.to_string())?;
+        for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
+    } else if let Some(uid) = before_uid {
+        let sql = format!("SELECT {fields} FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid < ?3 ORDER BY uid DESC LIMIT ?4");
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![account_id, folder, uid, limit], parse_row).map_err(|e| e.to_string())?;
+        for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
     } else {
-        if let Some(uid) = before_uid {
-            let mut stmt = conn.prepare(
-                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id
-                 FROM messages 
-                 WHERE folder = ?1 AND uid < ?2
-                 ORDER BY uid DESC 
-                 LIMIT ?3"
-            ).map_err(|e| e.to_string())?;
-
-            let msg_iter = stmt.query_map(rusqlite::params![folder, uid, limit], parse_row).map_err(|e| e.to_string())?;
-            for msg in msg_iter {
-                messages.push(msg.map_err(|e| e.to_string())?);
-            }
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id
-                 FROM messages 
-                 WHERE folder = ?1
-                 ORDER BY uid DESC 
-                 LIMIT ?2"
-            ).map_err(|e| e.to_string())?;
-
-            let msg_iter = stmt.query_map(rusqlite::params![folder, limit], parse_row).map_err(|e| e.to_string())?;
-            for msg in msg_iter {
-                messages.push(msg.map_err(|e| e.to_string())?);
-            }
-        }
+        let sql = format!("SELECT {fields} FROM messages WHERE account_id = ?1 AND folder = ?2 ORDER BY uid DESC LIMIT ?3");
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![account_id, folder, limit], parse_row).map_err(|e| e.to_string())?;
+        for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
     }
 
-    populate_message_tags(&conn, &mut messages);
+    populate_message_tags(&conn, account_id, &mut messages);
     Ok(messages)
 }
 
-pub fn get_folder_sync_state(app_handle: &AppHandle, folder: &str) -> Result<Option<FolderSyncState>, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn get_folder_sync_state(app_handle: &AppHandle, account_id: &str, folder: &str) -> Result<Option<FolderSyncState>, String> {
+    let conn = open_connection(app_handle)?;
 
-    let mut stmt = conn.prepare("SELECT folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error FROM folder_sync_state WHERE folder = ?1").unwrap();
-    let state = stmt.query_row([folder], |row| {
+    let mut stmt = conn.prepare("SELECT account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error FROM folder_sync_state WHERE account_id = ?1 AND folder = ?2").map_err(|e| e.to_string())?;
+    let state = stmt.query_row(rusqlite::params![account_id, folder], |row| {
         Ok(FolderSyncState {
-            folder: row.get(0)?,
-            last_uid: row.get(1)?,
-            last_synced_at: row.get(2)?,
-            sync_in_progress: row.get::<_, i32>(3)? != 0,
-            last_full_sync_at: row.get(4)?,
-            last_error: row.get(5)?,
+            account_id: row.get(0)?,
+            folder: row.get(1)?,
+            last_uid: row.get(2)?,
+            last_synced_at: row.get(3)?,
+            sync_in_progress: row.get::<_, i32>(4)? != 0,
+            last_full_sync_at: row.get(5)?,
+            last_error: row.get(6)?,
         })
     }).ok();
 
@@ -618,12 +754,12 @@ pub fn get_folder_sync_state(app_handle: &AppHandle, folder: &str) -> Result<Opt
 }
 
 pub fn update_folder_sync_state(app_handle: &AppHandle, state: &FolderSyncState) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO folder_sync_state (folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT OR REPLACE INTO folder_sync_state (account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
+            state.account_id,
             state.folder,
             state.last_uid,
             state.last_synced_at,
@@ -636,31 +772,29 @@ pub fn update_folder_sync_state(app_handle: &AppHandle, state: &FolderSyncState)
     Ok(())
 }
 
-pub fn set_sync_in_progress(app_handle: &AppHandle, folder: &str, in_progress: bool) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn set_sync_in_progress(app_handle: &AppHandle, account_id: &str, folder: &str, in_progress: bool) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
     // We use INSERT OR IGNORE and then UPDATE to ensure the row exists
     conn.execute(
-        "INSERT OR IGNORE INTO folder_sync_state (folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error) VALUES (?1, 0, 0, 0, 0, NULL)",
-        rusqlite::params![folder],
+        "INSERT OR IGNORE INTO folder_sync_state (account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error) VALUES (?1, ?2, 0, 0, 0, 0, NULL)",
+        rusqlite::params![account_id, folder],
     ).map_err(|e| e.to_string())?;
 
     conn.execute(
-        "UPDATE folder_sync_state SET sync_in_progress = ?1 WHERE folder = ?2",
-        rusqlite::params![if in_progress { 1 } else { 0 }, folder],
+        "UPDATE folder_sync_state SET sync_in_progress = ?1 WHERE account_id = ?2 AND folder = ?3",
+        rusqlite::params![if in_progress { 1 } else { 0 }, account_id, folder],
     ).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-pub fn set_folder_sync_error(app_handle: &AppHandle, folder: &str, error: &str) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn set_folder_sync_error(app_handle: &AppHandle, account_id: &str, folder: &str, error: &str) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "UPDATE folder_sync_state SET last_error = ?1 WHERE folder = ?2",
-        rusqlite::params![error, folder],
+        "UPDATE folder_sync_state SET last_error = ?1 WHERE account_id = ?2 AND folder = ?3",
+        rusqlite::params![error, account_id, folder],
     ).map_err(|e| e.to_string())?;
 
     Ok(())
@@ -668,59 +802,57 @@ pub fn set_folder_sync_error(app_handle: &AppHandle, folder: &str, error: &str) 
 
 pub struct SyncProgressGuard {
     app_handle: AppHandle,
+    account_id: String,
     folder: String,
 }
 
 impl SyncProgressGuard {
-    pub fn new(app_handle: AppHandle, folder: String) -> Result<Self, String> {
-        set_sync_in_progress(&app_handle, &folder, true)?;
-        Ok(Self { app_handle, folder })
+    pub fn new(app_handle: AppHandle, account_id: String, folder: String) -> Result<Self, String> {
+        set_sync_in_progress(&app_handle, &account_id, &folder, true)?;
+        Ok(Self { app_handle, account_id, folder })
     }
 }
 
 impl Drop for SyncProgressGuard {
     fn drop(&mut self) {
-        let _ = set_sync_in_progress(&self.app_handle, &self.folder, false);
+        let _ = set_sync_in_progress(&self.app_handle, &self.account_id, &self.folder, false);
     }
 }
 
 
-pub fn get_message_body_cache(app_handle: &AppHandle, folder: &str, uid: u32) -> Result<Option<(String, Option<String>, Option<String>)>, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn get_message_body_cache(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32) -> Result<Option<(String, Option<String>, Option<String>)>, String> {
+    let conn = open_connection(app_handle)?;
 
-    let mut stmt = conn.prepare("SELECT processed_html, attachments_json, extracted_data FROM messages WHERE folder = ?1 AND uid = ?2 AND body_fetched = 1 AND processed_html IS NOT NULL")
+    let mut stmt = conn.prepare("SELECT processed_html, attachments_json, extracted_data FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND body_fetched = 1 AND processed_html IS NOT NULL")
         .map_err(|e| format!("Failed to prepare get_message_body_cache statement: {}", e))?;
-    let result = stmt.query_row(rusqlite::params![folder, uid], |row| {
+    let result = stmt.query_row(rusqlite::params![account_id, folder, uid], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))
     }).ok();
 
     Ok(result)
 }
 
-pub fn update_message_body(app_handle: &AppHandle, folder: &str, uid: u32, body: &str, snippet: &str, attachments_json: Option<String>, extracted_data: Option<String>) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn update_message_body(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32, body: &str, snippet: &str, attachments_json: Option<String>, extracted_data: Option<String>) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "UPDATE messages SET processed_html = ?1, snippet = ?2, attachments_json = ?3, extracted_data = ?4, body_fetched = 1 WHERE folder = ?5 AND uid = ?6",
-        rusqlite::params![body, snippet, attachments_json, extracted_data, folder, uid],
+        "UPDATE messages SET processed_html = ?1, snippet = ?2, attachments_json = ?3, extracted_data = ?4, body_fetched = 1 WHERE account_id = ?5 AND folder = ?6 AND uid = ?7",
+        rusqlite::params![body, snippet, attachments_json, extracted_data, account_id, folder, uid],
     ).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-pub fn get_unfetched_recent_uids(app_handle: &AppHandle, folder: &str, limit: u32) -> Result<Vec<u32>, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn get_unfetched_recent_uids(app_handle: &AppHandle, account_id: &str, folder: &str, limit: u32) -> Result<Vec<u32>, String> {
+    let conn = open_connection(app_handle)?;
 
     let mut stmt = conn.prepare(
         "SELECT uid FROM messages 
-         WHERE folder = ?1 AND body_fetched = 0 AND uid > (SELECT MAX(uid) - 200 FROM messages WHERE folder = ?1) 
-         ORDER BY uid DESC LIMIT ?2"
+         WHERE account_id = ?1 AND folder = ?2 AND body_fetched = 0 AND uid > (SELECT MAX(uid) - 200 FROM messages WHERE account_id = ?1 AND folder = ?2)
+         ORDER BY uid DESC LIMIT ?3"
     ).unwrap();
 
-    let uid_iter = stmt.query_map(rusqlite::params![folder, limit], |row| {
+    let uid_iter = stmt.query_map(rusqlite::params![account_id, folder, limit], |row| {
         Ok(row.get(0)?)
     }).map_err(|e| e.to_string())?;
 
@@ -732,47 +864,43 @@ pub fn get_unfetched_recent_uids(app_handle: &AppHandle, folder: &str, limit: u3
     Ok(uids)
 }
 
-pub fn is_message_seen(app_handle: &AppHandle, folder: &str, uid: u32) -> Result<bool, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn is_message_seen(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32) -> Result<bool, String> {
+    let conn = open_connection(app_handle)?;
 
-    let mut stmt = conn.prepare("SELECT seen FROM messages WHERE folder = ?1 AND uid = ?2").unwrap();
-    let seen: Option<i32> = stmt.query_row(rusqlite::params![folder, uid], |row| row.get(0)).ok();
+    let mut stmt = conn.prepare("SELECT seen FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid = ?3").map_err(|e| e.to_string())?;
+    let seen: Option<i32> = stmt.query_row(rusqlite::params![account_id, folder, uid], |row| row.get(0)).ok();
 
     Ok(seen.unwrap_or(0) != 0)
 }
 
-pub fn set_message_seen(app_handle: &AppHandle, folder: &str, uid: u32, seen: bool) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn set_message_seen(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32, seen: bool) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "UPDATE messages SET seen = ?1 WHERE folder = ?2 AND uid = ?3",
-        rusqlite::params![if seen { 1 } else { 0 }, folder, uid],
+        "UPDATE messages SET seen = ?1 WHERE account_id = ?2 AND folder = ?3 AND uid = ?4",
+        rusqlite::params![if seen { 1 } else { 0 }, account_id, folder, uid],
     ).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-pub fn set_message_flagged(app_handle: &AppHandle, folder: &str, uid: u32, flagged: bool) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn set_message_flagged(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32, flagged: bool) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "UPDATE messages SET flagged = ?1 WHERE folder = ?2 AND uid = ?3",
-        rusqlite::params![if flagged { 1 } else { 0 }, folder, uid],
+        "UPDATE messages SET flagged = ?1 WHERE account_id = ?2 AND folder = ?3 AND uid = ?4",
+        rusqlite::params![if flagged { 1 } else { 0 }, account_id, folder, uid],
     ).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-pub fn delete_message_local(app_handle: &AppHandle, folder: &str, uid: u32) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn delete_message_local(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "DELETE FROM messages WHERE folder = ?1 AND uid = ?2",
-        rusqlite::params![folder, uid],
+        "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid = ?3",
+        rusqlite::params![account_id, folder, uid],
     ).map_err(|e| e.to_string())?;
 
     Ok(())
@@ -780,14 +908,14 @@ pub fn delete_message_local(app_handle: &AppHandle, folder: &str, uid: u32) -> R
 
 pub fn insert_sent_message(
     app_handle: &AppHandle,
+    account_id: &str,
     _sender: &str,
     to: &[String],
     subject: &str,
     plain_body: &str,
     html_body: &str,
 ) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_connection(app_handle)?;
 
     let folder = "sent";
     let date = std::time::SystemTime::now()
@@ -795,7 +923,7 @@ pub fn insert_sent_message(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let highest = get_highest_uid(app_handle, folder)?;
+    let highest = get_highest_uid(app_handle, account_id, folder)?;
     let uid = std::cmp::max(highest + 1, (date % 1000000000) as u32);
 
     let snippet_text = plain_body.trim();
@@ -809,9 +937,10 @@ pub fn insert_sent_message(
     let to_joined = to.join(", ");
 
     conn.execute(
-        "INSERT INTO messages (folder, uid, subject, sender, date, snippet, processed_html, body_fetched, seen, flagged, uid_validity, message_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1, 0, 1, NULL)",
+        "INSERT INTO messages (account_id, folder, uid, subject, sender, date, snippet, processed_html, body_fetched, seen, flagged, uid_validity, message_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, 1, 0, 1, NULL)",
         rusqlite::params![
+            account_id,
             folder,
             uid,
             subject,
@@ -825,12 +954,11 @@ pub fn insert_sent_message(
     Ok(())
 }
 
-pub fn get_global_sync_state(app_handle: &AppHandle) -> Result<GlobalSyncState, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn get_global_sync_state(app_handle: &AppHandle, account_id: &str) -> Result<GlobalSyncState, String> {
+    let conn = open_connection(app_handle)?;
 
-    let mut stmt = conn.prepare("SELECT last_sync_at, last_successful_idle_at, last_notification_at, last_sync_error, last_tag_sync_at FROM global_sync_state WHERE id = 1").unwrap();
-    let state = stmt.query_row([], |row| {
+    let mut stmt = conn.prepare("SELECT last_sync_at, last_successful_idle_at, last_notification_at, last_sync_error, last_tag_sync_at FROM global_sync_state WHERE account_id = ?1").map_err(|e| e.to_string())?;
+    let state = stmt.query_row([account_id], |row| {
         Ok(GlobalSyncState {
             last_sync_at: row.get(0)?,
             last_successful_idle_at: row.get(1)?,
@@ -843,64 +971,59 @@ pub fn get_global_sync_state(app_handle: &AppHandle) -> Result<GlobalSyncState, 
     Ok(state)
 }
 
-pub fn update_global_sync_time(app_handle: &AppHandle, timestamp: Option<i64>, error: Option<String>) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn update_global_sync_time(app_handle: &AppHandle, account_id: &str, timestamp: Option<i64>, error: Option<String>) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
     
     if timestamp.is_some() {
         conn.execute(
-            "INSERT INTO global_sync_state (id, last_sync_at, last_sync_error) 
-             VALUES (1, ?1, ?2) 
-             ON CONFLICT(id) DO UPDATE SET last_sync_at = ?1, last_sync_error = ?2",
-            rusqlite::params![timestamp, error],
+            "INSERT INTO global_sync_state (account_id, last_sync_at, last_sync_error)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(account_id) DO UPDATE SET last_sync_at = excluded.last_sync_at, last_sync_error = excluded.last_sync_error",
+            rusqlite::params![account_id, timestamp, error],
         ).map_err(|e| e.to_string())?;
     } else {
         conn.execute(
-            "INSERT INTO global_sync_state (id, last_sync_error) 
-             VALUES (1, ?1) 
-             ON CONFLICT(id) DO UPDATE SET last_sync_error = ?1",
-            rusqlite::params![error],
+            "INSERT INTO global_sync_state (account_id, last_sync_error)
+             VALUES (?1, ?2)
+             ON CONFLICT(account_id) DO UPDATE SET last_sync_error = excluded.last_sync_error",
+            rusqlite::params![account_id, error],
         ).map_err(|e| e.to_string())?;
     }
     
     Ok(())
 }
 
-pub fn update_global_idle_time(app_handle: &AppHandle, timestamp: i64) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn update_global_idle_time(app_handle: &AppHandle, account_id: &str, timestamp: i64) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
     conn.execute(
-        "INSERT INTO global_sync_state (id, last_successful_idle_at) 
-         VALUES (1, ?1) 
-         ON CONFLICT(id) DO UPDATE SET last_successful_idle_at = ?1",
-        rusqlite::params![timestamp],
+        "INSERT INTO global_sync_state (account_id, last_successful_idle_at)
+         VALUES (?1, ?2)
+         ON CONFLICT(account_id) DO UPDATE SET last_successful_idle_at = excluded.last_successful_idle_at",
+        rusqlite::params![account_id, timestamp],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn update_global_notification_time(app_handle: &AppHandle, timestamp: i64) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn update_global_notification_time(app_handle: &AppHandle, account_id: &str, timestamp: i64) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
     conn.execute(
-        "INSERT INTO global_sync_state (id, last_notification_at) 
-         VALUES (1, ?1) 
-         ON CONFLICT(id) DO UPDATE SET last_notification_at = ?1",
-        rusqlite::params![timestamp],
+        "INSERT INTO global_sync_state (account_id, last_notification_at)
+         VALUES (?1, ?2)
+         ON CONFLICT(account_id) DO UPDATE SET last_notification_at = excluded.last_notification_at",
+        rusqlite::params![account_id, timestamp],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn get_global_unread_count(app_handle: &AppHandle) -> Result<u32, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE seen = 0").unwrap();
-    let count: u32 = stmt.query_row([], |row| row.get(0)).unwrap_or(0);
+pub fn get_global_unread_count(app_handle: &AppHandle, account_id: &str) -> Result<u32, String> {
+    let conn = open_connection(app_handle)?;
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE account_id = ?1 AND seen = 0").map_err(|e| e.to_string())?;
+    let count: u32 = stmt.query_row([account_id], |row| row.get(0)).unwrap_or(0);
     Ok(count)
 }
 
-pub fn search_messages_local(app_handle: &AppHandle, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
+    let conn = open_connection(app_handle)?;
 
     // Clean query for FTS MATCH
     let cleaned: Vec<String> = query.to_lowercase().split_whitespace()
@@ -922,24 +1045,24 @@ pub fn search_messages_local(app_handle: &AppHandle, folder: &str, query: &str, 
     let sql = if folder == "all" {
         "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
          FROM messages m
-         JOIN messages_fts f ON m.rowid = f.rowid
-         WHERE messages_fts MATCH ?1
+         JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
+         WHERE m.account_id = ?1 AND messages_fts MATCH ?2
          ORDER BY (bm25(messages_fts) - (m.flagged * 5.0) - (CASE WHEN m.seen = 0 THEN 2.0 ELSE 0.0 END) - (m.date / 100000.0)) ASC
-         LIMIT ?2"
+         LIMIT ?3"
     } else {
         "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
          FROM messages m
-         JOIN messages_fts f ON m.rowid = f.rowid
-         WHERE m.folder = ?1 AND messages_fts MATCH ?2
+         JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
+         WHERE m.account_id = ?1 AND m.folder = ?2 AND messages_fts MATCH ?3
          ORDER BY (bm25(messages_fts) - (m.flagged * 5.0) - (CASE WHEN m.seen = 0 THEN 2.0 ELSE 0.0 END) - (m.date / 100000.0)) ASC
-         LIMIT ?3"
+         LIMIT ?4"
     };
 
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     
     let mut messages = Vec::new();
     if folder == "all" {
-        let rows = stmt.query_map(rusqlite::params![match_query, limit], |row| {
+        let rows = stmt.query_map(rusqlite::params![account_id, match_query, limit], |row| {
             Ok(MessageHeader {
                 uid: row.get(0)?,
                 uid_validity: row.get(1)?,
@@ -963,7 +1086,7 @@ pub fn search_messages_local(app_handle: &AppHandle, folder: &str, query: &str, 
             }
         }
     } else {
-        let rows = stmt.query_map(rusqlite::params![folder, match_query, limit], |row| {
+        let rows = stmt.query_map(rusqlite::params![account_id, folder, match_query, limit], |row| {
             Ok(MessageHeader {
                 uid: row.get(0)?,
                 uid_validity: row.get(1)?,
@@ -991,18 +1114,17 @@ pub fn search_messages_local(app_handle: &AppHandle, folder: &str, query: &str, 
     Ok(messages)
 }
 
-pub fn get_existing_uids(app_handle: &AppHandle, folder: &str, uids: &[u32]) -> Result<std::collections::HashSet<u32>, String> {
+pub fn get_existing_uids(app_handle: &AppHandle, account_id: &str, folder: &str, uids: &[u32]) -> Result<std::collections::HashSet<u32>, String> {
     if uids.is_empty() {
         return Ok(std::collections::HashSet::new());
     }
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_connection(app_handle)?;
 
     let placeholders: Vec<String> = uids.iter().map(|_| "?".to_string()).collect();
-    let sql = format!("SELECT uid FROM messages WHERE folder = ? AND uid IN ({})", placeholders.join(","));
+    let sql = format!("SELECT uid FROM messages WHERE account_id = ? AND folder = ? AND uid IN ({})", placeholders.join(","));
     
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    let mut params: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(folder.to_string())];
+    let mut params: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(account_id.to_string()), rusqlite::types::Value::Text(folder.to_string())];
     for &uid in uids {
         params.push(rusqlite::types::Value::Integer(uid as i64));
     }
@@ -1018,18 +1140,17 @@ pub fn get_existing_uids(app_handle: &AppHandle, folder: &str, uids: &[u32]) -> 
     Ok(existing)
 }
 
-pub fn get_messages_by_uids(app_handle: &AppHandle, folder: &str, uids: &[u32]) -> Result<Vec<MessageHeader>, String> {
+pub fn get_messages_by_uids(app_handle: &AppHandle, account_id: &str, folder: &str, uids: &[u32]) -> Result<Vec<MessageHeader>, String> {
     if uids.is_empty() {
         return Ok(Vec::new());
     }
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_connection(app_handle)?;
 
     let placeholders: Vec<String> = uids.iter().map(|_| "?".to_string()).collect();
-    let sql = format!("SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id FROM messages WHERE folder = ? AND uid IN ({}) ORDER BY date DESC, uid DESC", placeholders.join(","));
+    let sql = format!("SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id FROM messages WHERE account_id = ? AND folder = ? AND uid IN ({}) ORDER BY date DESC, uid DESC", placeholders.join(","));
     
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    let mut params: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(folder.to_string())];
+    let mut params: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(account_id.to_string()), rusqlite::types::Value::Text(folder.to_string())];
     for &uid in uids {
         params.push(rusqlite::types::Value::Integer(uid as i64));
     }
@@ -1075,8 +1196,7 @@ pub struct Tag {
 }
 
 pub fn upsert_tags(app_handle: &AppHandle, tags: &[Tag]) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let mut conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let mut conn = open_connection(app_handle)?;
     
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
@@ -1110,8 +1230,7 @@ pub fn upsert_tags(app_handle: &AppHandle, tags: &[Tag]) -> Result<(), String> {
 }
 
 pub fn delete_missing_tags(app_handle: &AppHandle, account_id: &str, keep_ids: &[String]) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_connection(app_handle)?;
     
     if keep_ids.is_empty() {
         conn.execute("DELETE FROM tags WHERE account_id = ?", rusqlite::params![account_id]).map_err(|e| e.to_string())?;
@@ -1131,8 +1250,7 @@ pub fn delete_missing_tags(app_handle: &AppHandle, account_id: &str, keep_ids: &
 }
 
 pub fn get_all_tags(app_handle: &AppHandle, account_id: &str) -> Result<Vec<Tag>, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_connection(app_handle)?;
     
     let mut stmt = conn.prepare(
         "SELECT id, name, type, bg_color, text_color, provider, updated_at 
@@ -1162,8 +1280,7 @@ pub fn get_all_tags(app_handle: &AppHandle, account_id: &str) -> Result<Vec<Tag>
 }
 
 pub fn set_message_tags(app_handle: &AppHandle, account_id: &str, folder: &str, message_uid: u32, tag_ids: &[String]) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let mut conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let mut conn = open_connection(app_handle)?;
     
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
@@ -1190,8 +1307,7 @@ pub fn set_message_tags(app_handle: &AppHandle, account_id: &str, folder: &str, 
 }
 
 pub fn get_message_tags(app_handle: &AppHandle, account_id: &str, folder: &str, message_uid: u32) -> Result<Vec<String>, String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_connection(app_handle)?;
     
     let mut stmt = conn.prepare(
         "SELECT tag_id FROM message_tags WHERE account_id = ? AND folder = ? AND message_uid = ?"
@@ -1207,14 +1323,14 @@ pub fn get_message_tags(app_handle: &AppHandle, account_id: &str, folder: &str, 
     Ok(tag_ids)
 }
 
-pub fn update_global_sync_state(app_handle: &AppHandle, state: &GlobalSyncState) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn update_global_sync_state(app_handle: &AppHandle, account_id: &str, state: &GlobalSyncState) -> Result<(), String> {
+    let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO global_sync_state (id, last_sync_at, last_successful_idle_at, last_notification_at, last_sync_error, last_tag_sync_at) 
-         VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+        "INSERT OR REPLACE INTO global_sync_state (account_id, last_sync_at, last_successful_idle_at, last_notification_at, last_sync_error, last_tag_sync_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![
+            account_id,
             state.last_sync_at,
             state.last_successful_idle_at,
             state.last_notification_at,
@@ -1227,8 +1343,7 @@ pub fn update_global_sync_state(app_handle: &AppHandle, state: &GlobalSyncState)
 }
 
 pub fn set_message_tags_batch(app_handle: &AppHandle, account_id: &str, folder: &str, batch: &[(u32, Vec<String>)]) -> Result<(), String> {
-    let db_path = get_db_path(app_handle)?;
-    let mut conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let mut conn = open_connection(app_handle)?;
     
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {

@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 
 struct NotificationState {
     last_notification_time: Instant,
-    recent_uids: HashMap<u32, Instant>,
+    recent_uids: HashMap<(String, u32), Instant>,
 }
 
 static STATE: Lazy<Mutex<NotificationState>> = Lazy::new(|| Mutex::new(NotificationState {
@@ -30,7 +30,7 @@ fn clean_sender(from: &str) -> String {
     }
 }
 
-pub fn show_new_emails(app: &AppHandle, new_emails: &[(String, String, u32)]) {
+pub fn show_new_emails(app: &AppHandle, account_id: &str, new_emails: &[(String, String, u32)]) {
     let mut state = STATE.lock().unwrap();
     let now = Instant::now();
     
@@ -40,8 +40,9 @@ pub fn show_new_emails(app: &AppHandle, new_emails: &[(String, String, u32)]) {
     // Deduplicate
     let mut deduped_emails = Vec::new();
     for email in new_emails {
-        if !state.recent_uids.contains_key(&email.2) {
-            state.recent_uids.insert(email.2, now);
+        let key = (account_id.to_string(), email.2);
+        if !state.recent_uids.contains_key(&key) {
+            state.recent_uids.insert(key, now);
             deduped_emails.push(email.clone());
         }
     }
@@ -57,7 +58,7 @@ pub fn show_new_emails(app: &AppHandle, new_emails: &[(String, String, u32)]) {
     let current_timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
-    let _ = crate::mail::database::update_global_notification_time(app, current_timestamp);
+    let _ = crate::mail::database::update_global_notification_time(app, account_id, current_timestamp);
 
     if count >= 4 {
         // Summary notification

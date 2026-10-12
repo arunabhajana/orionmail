@@ -25,6 +25,7 @@ pub struct MessageHeader {
 
 pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Result<Vec<MessageHeader>, String> {
     let app_handle_clone = app_handle.clone();
+    let account_id = account.id.clone();
 
     let messages_future = crate::mail::imap_session::execute_with_session(
         &account,
@@ -132,7 +133,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
             messages.sort_by(|a, b| b.uid.cmp(&a.uid));
             
             // Save to local cache
-            if let Err(e) = crate::mail::database::insert_or_update_messages(&app_handle_clone, &messages) {
+            if let Err(e) = crate::mail::database::insert_or_update_messages(&app_handle_clone, &account_id, &messages) {
                 log::warn!("Failed to insert messages into DB cache: {}", e);
             }
 

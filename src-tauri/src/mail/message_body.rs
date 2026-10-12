@@ -338,14 +338,16 @@ fn generate_preview(html: &str) -> String {
 pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32) -> Result<MessageDetail, String> {
     let app_handle_cache = app_handle.clone();
     let folder_cache = folder.to_string();
+    let account_id = account.id.clone();
+    let account_id_cache = account_id.clone();
     
     // 1. Check caches in a blocking task
     let cache_result = tokio::task::spawn_blocking(move || {
-        let stored_validity = database::get_mailbox_validity(&app_handle_cache, &folder_cache)
+        let stored_validity = database::get_mailbox_validity(&app_handle_cache, &account_id_cache, &folder_cache)
             .unwrap_or_default()
             .unwrap_or(1);
 
-        if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle_cache, &folder_cache, uid) {
+        if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle_cache, &account_id_cache, &folder_cache, uid) {
             let attachments = if let Some(json) = attachments_json {
                 serde_json::from_str(&json).unwrap_or_default()
             } else {
@@ -383,6 +385,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
         if needs_reextract {
             let app_clone = app_handle.clone();
             let folder_clone = folder.to_string();
+            let account_id_clone = account_id.clone();
             let body_clone = detail.body.clone();
             let attachments_clone = detail.attachments.clone();
             
@@ -391,7 +394,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
                 let extracted = extraction::run_extraction_pipeline(&body_clone, &text);
                 if let Ok(ext_json) = serde_json::to_string(&extracted) {
                     let attachments_json = serde_json::to_string(&attachments_clone).ok();
-                    let _ = database::update_message_body(&app_clone, &folder_clone, uid, &body_clone, "", attachments_json, Some(ext_json.clone()));
+                    let _ = database::update_message_body(&app_clone, &account_id_clone, &folder_clone, uid, &body_clone, "", attachments_json, Some(ext_json.clone()));
                     let _ = app_clone.emit("mail:re_extracted", serde_json::json!({
                         "folder": folder_clone,
                         "uid": uid,
@@ -542,7 +545,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     let extracted = extraction::run_extraction_pipeline(&parsed_body, &text);
     let extracted_json = serde_json::to_string(&extracted).ok();
     
-    let _ = database::update_message_body(app_handle, folder, uid, &parsed_body, &preview, attachments_json, extracted_json.clone());
+    let _ = database::update_message_body(app_handle, &account.id, folder, uid, &parsed_body, &preview, attachments_json, extracted_json.clone());
     
     Ok(MessageDetail {
         body: parsed_body,

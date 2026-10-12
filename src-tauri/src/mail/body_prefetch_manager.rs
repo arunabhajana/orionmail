@@ -17,12 +17,15 @@ pub enum PrefetchPriority {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct BodyKey {
+    #[serde(default)]
+    pub account_id: String,
     pub folder: String,
     pub uid: u32,
 }
 
 pub struct FetchJob {
     pub key: BodyKey,
+    pub account: Account,
     pub responders: Vec<oneshot::Sender<Result<MessageDetail, String>>>,
 }
 
@@ -56,18 +59,18 @@ impl BodyPrefetchManager {
     pub async fn enqueue(
         &self,
         app_handle: AppHandle,
-        _account: Account,
+        account: Account,
         folder: String,
         uid: u32,
         priority: PrefetchPriority,
         responder: Option<oneshot::Sender<Result<MessageDetail, String>>>,
     ) {
         let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
-        let key = BodyKey { folder, uid };
+        let key = BodyKey { account_id: account.id.clone(), folder, uid };
         
         // Skip background duplicates if cached
         if priority == PrefetchPriority::Background {
-            if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, &key.folder, key.uid) {
+            if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, &key.account_id, &key.folder, key.uid) {
                 return;
             }
         }
@@ -143,7 +146,7 @@ impl BodyPrefetchManager {
             responders.push(tx);
         }
         
-        let new_job = FetchJob { key: key.clone(), responders };
+        let new_job = FetchJob { key: key.clone(), account, responders };
 
         if priority == PrefetchPriority::Immediate {
             state.immediate_queue.push_back(new_job);
@@ -209,7 +212,7 @@ impl BodyPrefetchManager {
                     let mut state = manager.state.lock().await;
                     let key = job.key.clone();
                     let responders = state.in_progress.remove(&key).unwrap_or_default();
-                    state.background_queue.push_front(FetchJob { key: key.clone(), responders });
+                    state.background_queue.push_front(FetchJob { key: key.clone(), account: job.account, responders });
                     drop(state);
                     tokio::select! {
                         _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => continue,
@@ -217,24 +220,11 @@ impl BodyPrefetchManager {
                     }
                 }
 
-                let account = match crate::auth::bootstrap::ensure_active_account(&app_handle).await {
-                    Ok(acc) => acc,
-                    Err(_) => {
-                        log::warn!("Body fetch deferred: No active account");
-                        let responders = {
-                            let mut state = manager.state.lock().await;
-                            state.in_progress.remove(&job.key).unwrap_or_default()
-                        };
-                        for tx in responders {
-                            let _ = tx.send(Err("No active account".to_string()));
-                        }
-                        continue;
-                    }
-                };
+                let account = job.account.clone();
 
                 // Double check cache in worker
                 let mut should_fetch = true;
-                if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, &job.key.folder, job.key.uid) {
+                if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, &job.key.account_id, &job.key.folder, job.key.uid) {
                     should_fetch = false;
                 }
 
@@ -255,7 +245,7 @@ impl BodyPrefetchManager {
                 // Reply to oneshot waiters inline
                 // Try to read from cache regardless of fetch_res (it may already have been cached)
                 if fetch_res.is_ok() || !should_fetch {
-                    if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle, &job.key.folder, job.key.uid) {
+                    if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle, &job.key.account_id, &job.key.folder, job.key.uid) {
                         let attachments = if let Some(json) = attachments_json {
                             serde_json::from_str(&json).unwrap_or_default()
                         } else {

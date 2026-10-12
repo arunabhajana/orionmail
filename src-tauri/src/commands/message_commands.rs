@@ -7,14 +7,16 @@ use crate::BootError;
 pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
     log::info!("mark_as_read command invoked for UID {}", uid);
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    let account_id = account.id.clone();
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
 
     // Idempotency Check: Don't hit IMAP if already updated locally
     let is_already_seen = tokio::task::spawn_blocking({
         let app = app_handle.clone();
         let folder_str = folder_str.clone();
+        let account_id = account_id.clone();
         move || {
-            let seen = database::is_message_seen(&app, &folder_str, uid);
+            let seen = database::is_message_seen(&app, &account_id, &folder_str, uid);
             log::info!("is_message_seen for UID {}: {:?}", uid, seen);
             seen
         }
@@ -27,8 +29,9 @@ pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String
 
     if folder_str != "inbox" {
         let app_handle_clone = app_handle.clone();
+        let account_id = account_id.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            database::set_message_seen(&app_handle_clone, &folder_str, uid, true)
+            database::set_message_seen(&app_handle_clone, &account_id, &folder_str, uid, true)
         }).await;
         crate::tray_state::refresh_unread_count_from_db(&app_handle);
         return Ok(());
@@ -52,8 +55,9 @@ pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String
     log::info!("Updating SQLite seen flag to true for UID {}", uid);
     // Update SQLite
     let app_handle_clone = app_handle.clone();
+    let account_id = account_id.clone();
     let _ = tokio::task::spawn_blocking(move || {
-        database::set_message_seen(&app_handle_clone, "inbox", uid, true)
+        database::set_message_seen(&app_handle_clone, &account_id, "inbox", uid, true)
     }).await;
     
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
@@ -65,12 +69,14 @@ pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String
 #[tauri::command]
 pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    let account_id = account.id.clone();
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
 
     let app_handle_clone = app_handle.clone();
     if folder_str != "inbox" {
+        let account_id = account_id.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            database::set_message_seen(&app_handle_clone, &folder_str, uid, should_read)
+            database::set_message_seen(&app_handle_clone, &account_id, &folder_str, uid, should_read)
         }).await;
         crate::tray_state::refresh_unread_count_from_db(&app_handle);
         return Ok(());
@@ -91,8 +97,9 @@ pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, fol
 
     let app_handle_clone2 = app_handle.clone();
     // Update SQLite
+    let account_id = account_id.clone();
     let _ = tokio::task::spawn_blocking(move || {
-        database::set_message_seen(&app_handle_clone2, "inbox", uid, should_read)
+        database::set_message_seen(&app_handle_clone2, &account_id, "inbox", uid, should_read)
     }).await;
     
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
@@ -103,11 +110,13 @@ pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, fol
 #[tauri::command]
 pub async fn toggle_star(app_handle: AppHandle, uid: u32, should_star: bool, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    let account_id = account.id.clone();
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
 
     if folder_str != "inbox" {
+        let account_id = account_id.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            database::set_message_flagged(&app_handle, &folder_str, uid, should_star)
+            database::set_message_flagged(&app_handle, &account_id, &folder_str, uid, should_star)
         }).await;
         return Ok(());
     }
@@ -126,8 +135,9 @@ pub async fn toggle_star(app_handle: AppHandle, uid: u32, should_star: bool, fol
     }).await?;
 
     // Update SQLite
+    let account_id = account_id.clone();
     let _ = tokio::task::spawn_blocking(move || {
-        database::set_message_flagged(&app_handle, "inbox", uid, should_star)
+        database::set_message_flagged(&app_handle, &account_id, "inbox", uid, should_star)
     }).await;
 
     Ok(())
@@ -136,12 +146,14 @@ pub async fn toggle_star(app_handle: AppHandle, uid: u32, should_star: bool, fol
 #[tauri::command]
 pub async fn delete_message(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    let account_id = account.id.clone();
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
 
     let app_handle_clone = app_handle.clone();
     if folder_str != "inbox" {
+        let account_id = account_id.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            database::delete_message_local(&app_handle_clone, &folder_str, uid)
+            database::delete_message_local(&app_handle_clone, &account_id, &folder_str, uid)
         }).await;
         crate::tray_state::refresh_unread_count_from_db(&app_handle);
         return Ok(());
@@ -172,8 +184,9 @@ pub async fn delete_message(app_handle: AppHandle, uid: u32, folder: Option<Stri
 
     let app_handle_clone2 = app_handle.clone();
     // Delete locally
+    let account_id = account_id.clone();
     let _ = tokio::task::spawn_blocking(move || {
-        database::delete_message_local(&app_handle_clone2, "inbox", uid)
+        database::delete_message_local(&app_handle_clone2, &account_id, "inbox", uid)
     }).await;
     
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
@@ -188,13 +201,15 @@ pub async fn get_messages_page(
     before_uid: Option<u32>,
     limit: u32,
 ) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     let safe_limit = limit.min(100);
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
     
     let app_handle_clone = app_handle.clone();
     let folder_clone = folder.clone();
+    let account_id = account.id;
     let pages = tokio::task::spawn_blocking(move || {
-        database::load_messages_page(&app_handle_clone, &folder_clone, before_uid, safe_limit)
+        database::load_messages_page(&app_handle_clone, &account_id, &folder_clone, before_uid, safe_limit)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -361,14 +376,15 @@ pub fn show_main_window(app_handle: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::collections::HashMap<String, u32>, String> {
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     tokio::task::spawn_blocking(move || {
         let db_path = crate::mail::database::get_db_path(&app_handle)?;
         let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
 
         let mut counts = std::collections::HashMap::new();
 
-        let mut stmt = conn.prepare("SELECT folder, COUNT(*) FROM messages WHERE seen = 0 GROUP BY folder").unwrap();
-        let rows = stmt.query_map([], |row| {
+        let mut stmt = conn.prepare("SELECT folder, COUNT(*) FROM messages WHERE account_id = ?1 AND seen = 0 GROUP BY folder").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([account.id.as_str()], |row| {
             let folder: String = row.get(0)?;
             let count: u32 = row.get(1)?;
             Ok((folder, count))
@@ -380,8 +396,8 @@ pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::coll
             }
         }
 
-        let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE seen = 0 AND flagged = 1").unwrap();
-        if let Ok(count) = stmt.query_row([], |row| row.get(0)) {
+        let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE account_id = ?1 AND seen = 0 AND flagged = 1").map_err(|e| e.to_string())?;
+        if let Ok(count) = stmt.query_row([account.id.as_str()], |row| row.get(0)) {
             counts.insert("starred".to_string(), count);
         }
 
@@ -401,9 +417,10 @@ pub struct DiagnosticsSyncStatus {
 
 #[tauri::command]
 pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<DiagnosticsSyncStatus, String> {
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     tokio::task::spawn_blocking(move || {
-        let global_state = crate::mail::database::get_global_sync_state(&app_handle).unwrap_or_default();
-        let unread = crate::mail::database::get_global_unread_count(&app_handle).unwrap_or(0);
+        let global_state = crate::mail::database::get_global_sync_state(&app_handle, &account.id).unwrap_or_default();
+        let unread = crate::mail::database::get_global_unread_count(&app_handle, &account.id).unwrap_or(0);
 
         Ok(DiagnosticsSyncStatus {
             unread_count: unread,

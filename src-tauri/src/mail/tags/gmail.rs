@@ -72,9 +72,9 @@ pub async fn sync_tags(app_handle: &AppHandle, account: &Account) -> Result<(), 
     let _ = app_handle.emit("mail:tags_updated", ());
 
     // Update global sync state
-    let mut state = database::get_global_sync_state(app_handle).unwrap_or_default();
+    let mut state = database::get_global_sync_state(app_handle, &account.id).unwrap_or_default();
     state.last_tag_sync_at = Some(now);
-    let _ = database::update_global_sync_state(app_handle, &state);
+    let _ = database::update_global_sync_state(app_handle, &account.id, &state);
 
     Ok(())
 }

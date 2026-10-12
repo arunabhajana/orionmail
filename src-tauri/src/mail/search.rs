@@ -87,13 +87,13 @@ pub struct ProviderCapabilities {
 }
 
 pub trait LocalSearchEngine: Send + Sync {
-    fn search(&self, app_handle: &AppHandle, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String>;
+    fn search(&self, app_handle: &AppHandle, account_id: &str, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String>;
 }
 
 pub struct FTS5SearchEngine;
 impl LocalSearchEngine for FTS5SearchEngine {
-    fn search(&self, app_handle: &AppHandle, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
-        database::search_messages_local(app_handle, folder, query, limit)
+    fn search(&self, app_handle: &AppHandle, account_id: &str, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
+        database::search_messages_local(app_handle, account_id, folder, query, limit)
     }
 }
 
@@ -379,7 +379,7 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
         Err("Could not retrieve message header.".to_string())
     }).await?;
 
-    let _ = database::insert_or_update_messages(app_handle, &[fetch_res]);
+    let _ = database::insert_or_update_messages(app_handle, &account.id, &[fetch_res]);
 
     Ok(MessageDetail {
         body: "Search match found in mailbox history.".to_string(),
@@ -395,7 +395,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
     // 1. Cancel previous searches for this account+folder
     let mut to_remove = Vec::new();
     for entry in ACTIVE_SEARCHES.iter() {
-        if entry.value().account.email == account.email && entry.value().folder == folder {
+        if entry.value().account.id == account.id && entry.value().folder == folder {
             entry.value().cancellation_token.cancel();
             to_remove.push(entry.key().clone());
         }
@@ -406,7 +406,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
 
     // 2. Perform Local FTS5 Search instantly
     let local_engine = FTS5SearchEngine;
-    let local_results = local_engine.search(&app_handle, &folder, &query, 100)?;
+    let local_results = local_engine.search(&app_handle, &account.id, &folder, &query, 100)?;
     let local_ms = start_time.elapsed().as_millis();
 
     // 3. Create SearchContext
@@ -456,12 +456,18 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         });
 
         let remote_start = Instant::now();
-        let cache_key = format!("{}_{}_{}", account.email, folder_bg, query_bg.to_lowercase());
-        let uidvalidity = database::get_mailbox_validity(&app_handle_bg, &folder_bg).unwrap_or(Some(1)).unwrap_or(1);
+        let cache_key = format!("{}_{}_{}", account.id, folder_bg, query_bg.to_lowercase());
+        let uidvalidity = database::get_mailbox_validity(&app_handle_bg, &account.id, &folder_bg).unwrap_or(Some(1)).unwrap_or(1);
 
         let mut cached_uids = None;
         if let Some(entry) = SEARCH_CACHE.get(&cache_key) {
-            if entry.uidvalidity == uidvalidity && entry.timestamp.elapsed() < Duration::from_secs(300) {
+            if entry.account_id == account.id
+                && entry.folder == folder_bg
+                && entry.query.eq_ignore_ascii_case(&query_bg)
+                && entry.provider == format!("{:?}", account.provider)
+                && entry.uidvalidity == uidvalidity
+                && entry.timestamp.elapsed() < Duration::from_secs(300)
+            {
                 cached_uids = Some(entry.uids.clone());
             }
         }
@@ -520,7 +526,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
                 Ok(mut u) => {
                     u.truncate(500); // Cap at 500 newest UIDs
                     SEARCH_CACHE.insert(cache_key, SearchCacheEntry {
-                        account_id: account.email.clone(),
+                        account_id: account.id.clone(),
                         folder: folder_bg.clone(),
                         query: query_bg.clone(),
                         provider: format!("{:?}", account.provider),
@@ -559,10 +565,10 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         });
 
         // Reconcile UIDs
-        let existing = database::get_existing_uids(&app_handle_bg, &folder_bg, &uids).unwrap_or_default();
+        let existing = database::get_existing_uids(&app_handle_bg, &account.id, &folder_bg, &uids).unwrap_or_default();
         if !existing.is_empty() {
             let existing_vec: Vec<u32> = existing.iter().copied().collect();
-            if let Ok(existing_msgs) = database::get_messages_by_uids(&app_handle_bg, &folder_bg, &existing_vec) {
+            if let Ok(existing_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &existing_vec) {
                 let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                     search_id: search_id_bg.clone(),
                     query: query_bg.clone(),
@@ -635,7 +641,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
 
                 // Coalesce updates every 150ms in batches of 25
                 if batch_buffer.len() >= 25 || last_emit.elapsed() >= Duration::from_millis(150) {
-                    if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &folder_bg, &batch_buffer) {
+                    if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &batch_buffer) {
                         let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                             search_id: search_id_bg.clone(),
                             query: query_bg.clone(),
@@ -650,7 +656,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         }
 
         if !batch_buffer.is_empty() {
-            if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &folder_bg, &batch_buffer) {
+            if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &batch_buffer) {
                 let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                     search_id: search_id_bg.clone(),
                     query: query_bg.clone(),
@@ -732,10 +738,10 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
                     let backend = get_search_backend(&account.provider);
                     if let Ok(Ok(mut uids)) = tokio::time::timeout(Duration::from_secs(10), backend.load_more(&account, &imap_mailbox, &query, cur)).await {
                         uids.truncate(500);
-                    let existing = database::get_existing_uids(&app_handle_bg, &folder, &uids).unwrap_or_default();
+                    let existing = database::get_existing_uids(&app_handle_bg, &account.id, &folder, &uids).unwrap_or_default();
                     if !existing.is_empty() {
                         let existing_vec: Vec<u32> = existing.iter().copied().collect();
-                        if let Ok(existing_msgs) = database::get_messages_by_uids(&app_handle_bg, &folder, &existing_vec) {
+                        if let Ok(existing_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder, &existing_vec) {
                             let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                                 search_id: search_id_bg.clone(),
                                 query: query.clone(),
@@ -782,7 +788,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
                 }
 
                 if batch_buffer.len() >= 25 || last_emit.elapsed() >= Duration::from_millis(150) {
-                    if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &folder, &batch_buffer) {
+                    if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder, &batch_buffer) {
                         let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                             search_id: search_id_bg.clone(),
                             query: query.clone(),
@@ -797,7 +803,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
         }
 
         if !batch_buffer.is_empty() {
-            if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &folder, &batch_buffer) {
+            if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder, &batch_buffer) {
                 let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                     search_id: search_id_bg.clone(),
                     query: query.clone(),

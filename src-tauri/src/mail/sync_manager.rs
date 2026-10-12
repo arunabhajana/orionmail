@@ -6,19 +6,20 @@ use crate::auth::account::Account;
 use crate::mail::folder::MailFolder;
 
 // Tracks which folders are currently waiting in the queue
-pub static SYNC_QUEUE: Lazy<AsyncMutex<HashSet<MailFolder>>> = Lazy::new(|| AsyncMutex::new(HashSet::new()));
+pub static SYNC_QUEUE: Lazy<AsyncMutex<HashSet<(String, MailFolder)>>> = Lazy::new(|| AsyncMutex::new(HashSet::new()));
 
 // Ensures only one folder syncs at a time across the entire application
 pub static SYNC_LOCK: Lazy<AsyncMutex<()>> = Lazy::new(|| AsyncMutex::new(()));
 
 pub async fn enqueue_sync(app_handle: AppHandle, account: Account, folder: MailFolder) {
+    let queue_key = (account.id.clone(), folder.clone());
     // 1. Deduplication Check
     let mut queue = SYNC_QUEUE.lock().await;
-    if queue.contains(&folder) {
+    if queue.contains(&queue_key) {
         log::info!("Sync for folder {} is already pending. Ignoring duplicate.", folder);
         return;
     }
-    queue.insert(folder.clone());
+    queue.insert(queue_key.clone());
     drop(queue);
 
     // 2. Spawn worker that waits for the global sync lock
@@ -28,11 +29,11 @@ pub async fn enqueue_sync(app_handle: AppHandle, account: Account, folder: MailF
         // Remove from queue because we are now the active sync
         {
             let mut q = SYNC_QUEUE.lock().await;
-            q.remove(&folder);
+            q.remove(&queue_key);
         }
 
         // Check folder-specific minimum sync intervals
-        let last_synced_at = crate::mail::database::get_folder_sync_state(&app_handle, &folder.to_string())
+        let last_synced_at = crate::mail::database::get_folder_sync_state(&app_handle, &account.id, &folder.to_string())
             .unwrap_or(None)
             .map(|state| state.last_synced_at)
             .unwrap_or(0);
@@ -56,9 +57,10 @@ pub async fn enqueue_sync(app_handle: AppHandle, account: Account, folder: MailF
         use tauri::Emitter;
         let _ = app_handle.emit("mail:sync_started", folder.to_string());
         
+        let account_id = account.id.clone();
         if let Err(e) = crate::mail::sync::sync_folder(&app_handle, account, folder.clone()).await {
             log::error!("Sync failed for folder {}: {}", folder, e);
-            let _ = crate::mail::database::set_folder_sync_error(&app_handle, &folder.to_string(), &e);
+            let _ = crate::mail::database::set_folder_sync_error(&app_handle, &account_id, &folder.to_string(), &e);
             let _ = app_handle.emit("mail:sync_error", serde_json::json!({
                 "folder": folder.to_string(),
                 "error": e.to_string()

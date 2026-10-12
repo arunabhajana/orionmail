@@ -114,9 +114,10 @@ pub async fn sync_mail_folder(app_handle: AppHandle, folder: String) -> Result<u
 }
 
 #[command]
-pub fn get_folder_messages(app_handle: AppHandle, folder: String, before_uid: Option<u32>, limit: u32) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
+pub async fn get_folder_messages(app_handle: AppHandle, folder: String, before_uid: Option<u32>, limit: u32) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
-    crate::mail::database::load_messages_page(&app_handle, &folder, before_uid, limit)
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    crate::mail::database::load_messages_page(&app_handle, &account.id, &folder, before_uid, limit)
 }
 
 #[command]
@@ -127,7 +128,7 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
     log::info!("Frontend requested get_message_body for folder='{}', uid={}", folder, uid);
     
     // Check cache first before enqueueing
-    if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = crate::mail::database::get_message_body_cache(&app_handle, &folder, uid) {
+    if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = crate::mail::database::get_message_body_cache(&app_handle, &account.id, &folder, uid) {
         let needs_reextraction = match &extracted_data_json {
             Some(json) => match serde_json::from_str::<crate::mail::extraction::ExtractedData>(json) {
                 Ok(data) => data.version < crate::mail::extraction::CURRENT_EXTRACTOR_VERSION,
@@ -168,21 +169,15 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
 }
 
 #[command]
-pub fn get_cached_messages(app_handle: AppHandle) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
-    crate::mail::database::load_cached_messages(&app_handle, 25)
+pub async fn get_cached_messages(app_handle: AppHandle) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    crate::mail::database::load_cached_messages(&app_handle, &account.id, 25)
 }
 
 #[tauri::command]
 pub async fn clear_local_cache(app_handle: AppHandle) -> Result<(), String> {
-    let db_path = crate::mail::database::get_db_path(&app_handle)?;
-    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
-    
-    // Wipe all tracked messages and sync states to force a clean bootstrap
-    conn.execute("DELETE FROM messages", ()).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM folder_sync_state", ()).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM global_sync_state", ()).map_err(|e| e.to_string())?;
-    
-    Ok(())
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    crate::mail::database::clear_account_cache(&app_handle, &account.id)
 }
 
 #[tauri::command]

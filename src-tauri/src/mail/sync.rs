@@ -16,7 +16,7 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
 
 pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailFolder) -> Result<u32, String> {
     // Check global state for tags sync
-    let global_state = database::get_global_sync_state(app_handle).unwrap_or_default();
+    let global_state = database::get_global_sync_state(app_handle, &account.id).unwrap_or_default();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
     
     if global_state.last_tag_sync_at.unwrap_or(0) + 900 < now {
@@ -49,17 +49,19 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
     let folder_name_clone = folder_name.clone();
     let folder_clone = folder.clone();
     let account_clone = account.clone();
+    let account_id = account.id.clone();
 
     let new_messages_count_future = crate::mail::imap_session::execute_with_session(
         &account,
         crate::mail::imap_session::SessionKind::Sync,
         move |session| {
             // Use the drop guard to automatically clear sync_in_progress if we panic
-            let _progress_guard = database::SyncProgressGuard::new(app_handle_clone.clone(), folder_name_clone.clone())?;
+            let _progress_guard = database::SyncProgressGuard::new(app_handle_clone.clone(), account_id.clone(), folder_name_clone.clone())?;
 
-            let mut sync_state = database::get_folder_sync_state(&app_handle_clone, &folder_name_clone)
+            let mut sync_state = database::get_folder_sync_state(&app_handle_clone, &account_id, &folder_name_clone)
                 .unwrap_or(None)
                 .unwrap_or_else(|| database::FolderSyncState {
+                    account_id: account_id.clone(),
                     folder: folder_name_clone.clone(),
                     last_uid: 0,
                     last_synced_at: 0,
@@ -68,7 +70,7 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
                     last_error: None,
                 });
 
-            let stored_validity = database::get_mailbox_validity(&app_handle_clone, &imap_mailbox).unwrap_or(None);
+            let stored_validity = database::get_mailbox_validity(&app_handle_clone, &account_id, &imap_mailbox).unwrap_or(None);
 
             let mailbox = if folder_clone == MailFolder::Inbox {
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?
@@ -86,8 +88,8 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             // 1. UIDVALIDITY Check
             if stored_validity != Some(server_validity) {
                 log::info!("UIDVALIDITY changed ({} -> {}). Clearing cache.", stored_validity.unwrap_or(0), server_validity);
-                database::clear_messages(&app_handle_clone, &folder_name_clone).map_err(|e| e.to_string())?;
-                database::update_mailbox_validity(&app_handle_clone, &imap_mailbox, server_validity).map_err(|e| e.to_string())?;
+                database::clear_messages(&app_handle_clone, &account_id, &folder_name_clone).map_err(|e| e.to_string())?;
+                database::update_mailbox_validity(&app_handle_clone, &account_id, &imap_mailbox, server_validity).map_err(|e| e.to_string())?;
                 sync_state.last_uid = 0;
             }
 
@@ -154,7 +156,7 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
             }
 
             log::info!("Grabbed {} new messages for {}!", num_new, folder_name_clone);
-            database::insert_or_update_messages(&app_handle_clone, &messages).map_err(|e| e.to_string())?;
+            database::insert_or_update_messages(&app_handle_clone, &account_id, &messages).map_err(|e| e.to_string())?;
 
             if num_new > 0 {
                 if let Err(e) = crate::mail::tags::sync_message_tags(
@@ -186,14 +188,14 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
                     for msg in &messages {
                         notif_batch.push((msg.from.clone(), msg.subject.clone(), msg.uid));
                     }
-                    notifications::show_new_emails(&app_handle_clone, &notif_batch);
+                    notifications::show_new_emails(&app_handle_clone, &account_id, &notif_batch);
                 }
             }
 
             if folder_clone == MailFolder::Inbox {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
-                let _ = crate::mail::database::update_global_sync_time(&app_handle_clone, Some(now), None);
-                crate::tray_state::set_last_sync_time(&app_handle_clone);
+                let _ = crate::mail::database::update_global_sync_time(&app_handle_clone, &account_id, Some(now), None);
+                crate::tray_state::set_last_sync_time(&app_handle_clone, &account_id);
                 crate::tray_state::refresh_unread_count_from_db(&app_handle_clone);
             }
 
@@ -210,11 +212,12 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
         Ok(Ok(count)) => count,
         Ok(Err(e)) => {
             // Error handling
-            let mut sync_state = database::get_folder_sync_state(&app_handle, &folder_name).unwrap_or(None).unwrap_or_default();
+            let mut sync_state = database::get_folder_sync_state(&app_handle, &account.id, &folder_name).unwrap_or(None).unwrap_or_default();
+            sync_state.account_id = account.id.clone();
             sync_state.last_error = Some(e.clone());
             let _ = database::update_folder_sync_state(&app_handle, &sync_state);
             if folder == MailFolder::Inbox {
-                let _ = crate::mail::database::update_global_sync_time(&app_handle, None, Some(e.clone()));
+                let _ = crate::mail::database::update_global_sync_time(&app_handle, &account.id, None, Some(e.clone()));
             }
             return Err(e);
         },
@@ -222,7 +225,7 @@ pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailF
     };
 
     // Enqueue top 10 most recent UIDs for prefetching immediately after sync
-    let uids = database::get_unfetched_recent_uids(app_handle, &folder_name, 10).unwrap_or_default();
+    let uids = database::get_unfetched_recent_uids(app_handle, &account.id, &folder_name, 10).unwrap_or_default();
     
     for uid in uids {
         let pf_app = app_handle.clone();
