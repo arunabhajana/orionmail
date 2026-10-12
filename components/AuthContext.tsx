@@ -29,6 +29,7 @@ interface AuthContextType {
     needsRefresh: boolean;
     isAuthenticated: boolean;
     loginWithGoogle: () => Promise<void>;
+    updateDisplayName: (displayName: string) => Promise<void>;
     logout: (accountId: string) => Promise<void>;
 }
 
@@ -243,6 +244,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    const updateDisplayName = async (displayName: string) => {
+        const updatedUser = await invoke<User>("update_display_name", { displayName });
+        setUser(updatedUser);
+        localStorage.setItem("orion_user", JSON.stringify(updatedUser));
+    };
+
     /**
      * Terminates the current account session.
      */
@@ -274,6 +281,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 needsRefresh,
                 isAuthenticated: !!user,
                 loginWithGoogle,
+                updateDisplayName,
                 logout,
             }}
         >

@@ -1,16 +1,12 @@
 "use client";
 
-import React, { memo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { toast } from 'sonner';
 import { useAuth } from '@/components/AuthContext';
+import { useSettings } from './SettingsContext';
 
-interface SectionHeaderProps {
-    title: string;
-    description: string;
-    action?: React.ReactNode;
-}
-
-export const SectionHeader = ({ title, description, action }: SectionHeaderProps) => (
+export const SectionHeader = ({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) => (
     <div className="flex items-start justify-between mb-8">
         <div>
             <h1 className="text-3xl font-bold text-foreground mb-2">{title}</h1>
@@ -21,79 +17,82 @@ export const SectionHeader = ({ title, description, action }: SectionHeaderProps
 );
 SectionHeader.displayName = "SectionHeader";
 
-// Wrap in functional component to use hooks
 export const AccountSection = () => {
-    const { user } = useAuth();
+    const { user, updateDisplayName } = useAuth();
+    const { registerSection, unregisterSection, markDirty } = useSettings();
+    const [alias, setAlias] = useState(user?.name ?? '');
+    const [savedAlias, setSavedAlias] = useState(user?.name ?? '');
+    const [isSaving, setIsSaving] = useState(false);
+    const normalizedAlias = alias.trim();
+    const isDirty = normalizedAlias !== savedAlias;
 
-    // Fallback values if user data is missing
-    const userName = user?.name || "User";
-    const userEmail = user?.email || "";
-    // Display initials if no picture is available
-    const initials = userName.split(' ').map(n => n.charAt(0)).join('').substring(0, 2).toUpperCase();
+    useEffect(() => {
+        const currentName = user?.name ?? '';
+        setAlias(currentName);
+        setSavedAlias(currentName);
+    }, [user?.id, user?.name]);
+
+    useEffect(() => {
+        registerSection({
+            id: 'account',
+            isDirty,
+            save: async () => {
+                if (!normalizedAlias) throw new Error('Alias cannot be empty.');
+                if (normalizedAlias.length > 50) throw new Error('Alias must be 50 characters or fewer.');
+                setIsSaving(true);
+                try {
+                    await updateDisplayName(normalizedAlias);
+                    setAlias(normalizedAlias);
+                    setSavedAlias(normalizedAlias);
+                    toast.success('Alias updated.');
+                } catch (error) {
+                    toast.error(typeof error === 'string' ? error : 'Could not update alias.');
+                    throw error;
+                } finally {
+                    setIsSaving(false);
+                }
+            },
+            reset: () => setAlias(savedAlias),
+        });
+        return () => unregisterSection('account');
+    }, [alias, isDirty, savedAlias, registerSection, unregisterSection, updateDisplayName]);
+
+    useEffect(() => {
+        markDirty('account', isDirty);
+    }, [isDirty, markDirty]);
+
+    const initials = (normalizedAlias || user?.email || 'U').split(/[\s@.]+/).filter(Boolean).map(part => part[0]).join('').slice(0, 2).toUpperCase();
 
     return (
-        <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-8"
-        >
-            {/* Profile Card */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
             <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
-                <div className="flex items-start gap-6">
+                <div className="flex items-center gap-6">
                     {user?.picture ? (
-                        <img
-                            src={user.picture}
-                            referrerPolicy="no-referrer"
-                            className="w-24 h-24 rounded-full object-cover border-4 border-white/20 shadow-xl shrink-0"
-                            alt="User Avatar"
-                        />
+                        <img src={user.picture} referrerPolicy="no-referrer" className="w-20 h-20 rounded-full object-cover border-4 border-white/20 shadow-xl shrink-0" alt="Account avatar" />
                     ) : (
-                        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary to-primary/60 border-4 border-white/20 dark:border-white/10 shadow-xl flex items-center justify-center shrink-0">
-                            <span className="text-3xl font-bold text-white shadow-sm">{initials}</span>
+                        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary to-primary/60 border-4 border-white/20 dark:border-white/10 shadow-xl flex items-center justify-center shrink-0">
+                            <span className="text-2xl font-bold text-white">{initials}</span>
                         </div>
                     )}
-
-                    <div className="flex-1 pt-1">
-                        <h2 className="text-2xl font-bold text-foreground mb-1">{userName}</h2>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-                            <span>Connected via {user?.provider?.type || "Google"}</span>
-                            <span>•</span>
-                            <span>Pro Plan Member</span>
-                        </div>
-                        <div className="flex gap-3">
-                            <button className="px-4 py-2 bg-white dark:bg-black/40 text-black dark:text-white dark:border dark:border-white/10 font-medium rounded-lg shadow-sm hover:bg-white/90 dark:hover:bg-black/60 transition-colors text-sm">
-                                Change Photo
-                            </button>
-                            <button className="px-4 py-2 bg-red-500/10 text-red-600 font-medium rounded-lg hover:bg-red-500/20 transition-colors text-sm">
-                                Remove
-                            </button>
-                        </div>
+                    <div className="min-w-0">
+                        <h2 className="text-2xl font-bold text-foreground mb-1 truncate">{normalizedAlias || 'Your alias'}</h2>
+                        <p className="text-sm text-muted-foreground">Connected via {user?.provider?.type || 'Google'}</p>
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6 mt-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
                     <div className="space-y-2">
-                        <label className="text-sm font-semibold text-muted-foreground ml-1">Full Name</label>
-                        <input
-                            type="text"
-                            defaultValue={userName}
-                            className="w-full px-4 py-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground placeholder:text-muted-foreground/50"
-                        />
+                        <label htmlFor="account-alias" className="text-sm font-semibold text-muted-foreground ml-1">Alias</label>
+                        <input id="account-alias" type="text" value={alias} maxLength={50} onChange={event => setAlias(event.target.value)} placeholder="Choose a display name" autoComplete="nickname" className="w-full px-4 py-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground placeholder:text-muted-foreground/50" />
+                        <p className="text-xs text-muted-foreground px-1">This name appears in your OrionMail profile.</p>
                     </div>
                     <div className="space-y-2">
-                        <label className="text-sm font-semibold text-muted-foreground ml-1">Email Address</label>
-                        <input
-                            type="email"
-                            defaultValue={userEmail}
-                            readOnly
-                            className="w-full px-4 py-3 rounded-xl bg-white/10 dark:bg-black/40 border border-white/10 dark:border-white/5 outline-none opacity-70 cursor-not-allowed select-none transition-all text-foreground"
-                        />
+                        <label htmlFor="account-email" className="text-sm font-semibold text-muted-foreground ml-1">Email Address</label>
+                        <input id="account-email" type="email" value={user?.email ?? ''} readOnly className="w-full px-4 py-3 rounded-xl bg-white/10 dark:bg-black/40 border border-white/10 dark:border-white/5 outline-none opacity-70 cursor-not-allowed select-none text-foreground" />
                     </div>
                 </div>
-
-                <button className="mt-8 text-primary font-semibold text-sm hover:underline">
-                    Change Password
-                </button>
+                {isDirty && <p role="status" className="mt-5 text-sm text-primary">Alias changes are ready to save.</p>}
+                {isSaving && <p role="status" className="sr-only">Saving alias…</p>}
             </div>
         </motion.div>
     );

@@ -69,7 +69,7 @@ export const UserProfile = memo(() => {
     }
 
     const initials = user.name
-        ? user.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)
+        ? user.name.trim().split(/\s+/).map(n => n[0]).join("").toUpperCase().slice(0, 2)
         : user.email[0].toUpperCase();
 
     return (

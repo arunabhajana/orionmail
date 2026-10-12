@@ -170,6 +170,7 @@ pub fn run() {
       get_boot_error,
       login_google,
       get_current_user,
+      update_display_name,
       list_accounts,
       logout_user,
       bootstrap_accounts,

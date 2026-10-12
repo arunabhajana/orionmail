@@ -28,6 +28,23 @@ pub fn get_current_user(app_handle: AppHandle) -> Option<UserProfile> {
 }
 
 #[command]
+pub fn update_display_name(app_handle: AppHandle, display_name: String) -> Result<UserProfile, String> {
+    let display_name = display_name.trim();
+    if display_name.is_empty() {
+        return Err("Display name cannot be empty".to_string());
+    }
+    if display_name.chars().count() > 50 {
+        return Err("Display name must be 50 characters or fewer".to_string());
+    }
+
+    let mut account = session::get_active_account(&app_handle)
+        .ok_or_else(|| "No active account found".to_string())?;
+    account.profile_name = display_name.to_string();
+    session::save_account(&app_handle, account.clone(), true)?;
+    Ok(UserProfile::from(account))
+}
+
+#[command]
 pub fn list_accounts(app_handle: AppHandle) -> Vec<UserProfile> {
     session::load_accounts(&app_handle)
         .into_iter()
