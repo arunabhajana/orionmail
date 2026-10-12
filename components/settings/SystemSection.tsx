@@ -124,7 +124,7 @@ export function SystemSection() {
                 <h3 className="text-lg font-semibold text-foreground dark:text-white/90 mb-4">Startup Behavior</h3>
                 
                 <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
+                    <div data-setting-id="system.autostart" className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
                         <div>
                             <p className="font-medium text-foreground dark:text-white/90">Launch at Startup</p>
                             <p className="text-sm text-muted-foreground mt-1">Automatically start Orion Mail when you log into your computer.</p>
@@ -135,7 +135,7 @@ export function SystemSection() {
                         </label>
                     </div>
 
-                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl opacity-100 transition-opacity">
+                    <div data-setting-id="system.hidden" className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl opacity-100 transition-opacity">
                         <div>
                             <p className="font-medium text-foreground dark:text-white/90">Start Hidden</p>
                             <p className="text-sm text-muted-foreground mt-1">When launched at startup, start minimized in the system tray without showing the main window.</p>
@@ -152,7 +152,7 @@ export function SystemSection() {
                 <h3 className="text-lg font-semibold text-foreground dark:text-white/90 mb-4">Window Behavior</h3>
                 
                 <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
+                    <div data-setting-id="system.tray" className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
                         <div>
                             <p className="font-medium text-foreground dark:text-white/90">Minimize to Tray</p>
                             <p className="text-sm text-muted-foreground mt-1">When clicking the close (X) button, hide the window to the system tray instead of quitting the app.</p>
@@ -169,7 +169,7 @@ export function SystemSection() {
                 <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-4">Data Management</h3>
                 
                 <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
+                    <div data-setting-id="system.cache" className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
                         <div>
                             <p className="font-medium text-foreground dark:text-white/90">Clear Local Cache</p>
                             <p className="text-sm text-muted-foreground mt-1">Delete all locally stored emails and force a complete resynchronization from the server.</p>

@@ -51,7 +51,7 @@ export function DeveloperSection() {
     return (
         <div className="space-y-6">
             <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
-                <div className="flex items-center justify-between">
+                <div data-setting-id="developer.tools" className="flex items-center justify-between rounded-xl">
                     <div>
                         <div className="flex items-center gap-2 mb-1">
                             <Terminal className="w-5 h-5 text-primary" strokeWidth={2} />

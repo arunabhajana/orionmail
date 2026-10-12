@@ -26,7 +26,7 @@ export const AppearanceSection = () => {
 
                 <div className="grid grid-cols-3 gap-6">
                     {/* Light Mode */}
-                    <button onClick={() => setTheme('light')} className="flex flex-col gap-3 group">
+                    <button data-setting-id="appearance.light" onClick={() => setTheme('light')} className="flex flex-col gap-3 group">
                         <div className={cn(
                             "aspect-[4/3] w-full bg-white dark:bg-[#fafafa] rounded-lg border-2 shadow-sm overflow-hidden relative p-2 transition-all",
                             mounted && theme === 'light' ? "border-primary" : "border-black/5 dark:border-white/5 group-hover:border-black/20 dark:group-hover:border-white/20"
@@ -43,7 +43,7 @@ export const AppearanceSection = () => {
                     </button>
 
                     {/* Dark Mode */}
-                    <button onClick={() => setTheme('dark')} className="flex flex-col gap-3 group">
+                    <button data-setting-id="appearance.dark" onClick={() => setTheme('dark')} className="flex flex-col gap-3 group">
                         <div className={cn(
                             "aspect-[4/3] w-full bg-[#1e1e1e] rounded-lg border-2 shadow-sm overflow-hidden relative p-2 transition-all",
                             mounted && theme === 'dark' ? "border-primary" : "border-black/5 dark:border-transparent group-hover:border-black/20 dark:group-hover:border-white/10"
@@ -60,7 +60,7 @@ export const AppearanceSection = () => {
                     </button>
 
                     {/* System */}
-                    <button onClick={() => setTheme('system')} className="flex flex-col gap-3 group">
+                    <button data-setting-id="appearance.system" onClick={() => setTheme('system')} className="flex flex-col gap-3 group">
                         <div className={cn(
                             "aspect-[4/3] w-full bg-gradient-to-br from-white to-[#1e1e1e] rounded-lg border-2 shadow-sm overflow-hidden relative p-2 transition-all",
                             mounted && theme === 'system' ? "border-primary" : "border-transparent group-hover:border-black/10 dark:group-hover:border-white/10"
@@ -77,7 +77,7 @@ export const AppearanceSection = () => {
                     </button>
                 </div>
 
-                <div className="mt-10 flex items-center justify-between">
+                <div data-setting-id="appearance.density" className="mt-10 flex items-center justify-between rounded-xl">
                     <div>
                         <h4 className="font-semibold text-foreground">Message Density</h4>
                         <p className="text-sm text-muted-foreground mt-1">Control how much information you see at once.</p>
@@ -97,7 +97,7 @@ export const AppearanceSection = () => {
                     </div>
                 </div>
 
-                <div className="mt-10 flex items-center justify-between">
+                <div data-setting-id="appearance.accent" className="mt-10 flex items-center justify-between rounded-xl">
                     <h4 className="font-semibold text-foreground">Accent Color</h4>
                     <div className="flex gap-3">
                         {([

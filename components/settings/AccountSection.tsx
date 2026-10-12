@@ -81,12 +81,12 @@ export const AccountSection = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-                    <div className="space-y-2">
+                    <div data-setting-id="account.alias" className="space-y-2 rounded-xl">
                         <label htmlFor="account-alias" className="text-sm font-semibold text-muted-foreground ml-1">Alias</label>
                         <input id="account-alias" type="text" value={alias} maxLength={50} onChange={event => setAlias(event.target.value)} placeholder="Choose a display name" autoComplete="nickname" className="w-full px-4 py-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground placeholder:text-muted-foreground/50" />
                         <p className="text-xs text-muted-foreground px-1">This name appears in your OrionMail profile.</p>
                     </div>
-                    <div className="space-y-2">
+                    <div data-setting-id="account.email" className="space-y-2 rounded-xl">
                         <label htmlFor="account-email" className="text-sm font-semibold text-muted-foreground ml-1">Email Address</label>
                         <input id="account-email" type="email" value={user?.email ?? ''} readOnly className="w-full px-4 py-3 rounded-xl bg-white/10 dark:bg-black/40 border border-white/10 dark:border-white/5 outline-none opacity-70 cursor-not-allowed select-none text-foreground" />
                     </div>

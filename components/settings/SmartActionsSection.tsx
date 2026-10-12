@@ -80,7 +80,7 @@ export const SmartActionsSection = () => {
             className="space-y-6"
         >
             <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
-                <div className="flex items-center justify-between mb-8">
+                <div data-setting-id="smartactions.global" className="flex items-center justify-between mb-8 rounded-xl">
                     <div>
                         <div className="flex items-center gap-2 mb-1">
                             <Sparkles className="w-5 h-5 text-primary" strokeWidth={2} />
@@ -95,7 +95,7 @@ export const SmartActionsSection = () => {
                 </div>
 
                 <div className={`space-y-4 transition-opacity ${!localPrefs.smartActionsGlobal ? 'opacity-50 pointer-events-none' : ''}`}>
-                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
+                    <div data-setting-id="smartactions.otp" className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
                         <div>
                             <p className="font-medium text-foreground dark:text-white/90">Authentication Codes (OTP)</p>
                             <p className="text-sm text-muted-foreground mt-1 dark:text-white/60">Show quick copy buttons for login codes and 2FA.</p>
@@ -106,7 +106,7 @@ export const SmartActionsSection = () => {
                         </label>
                     </div>
 
-                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
+                    <div data-setting-id="smartactions.meetings" className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
                         <div>
                             <p className="font-medium text-foreground dark:text-white/90">Meetings & Events</p>
                             <p className="text-sm text-muted-foreground mt-1 dark:text-white/60">Extract join links and calendar invites.</p>
@@ -117,7 +117,7 @@ export const SmartActionsSection = () => {
                         </label>
                     </div>
 
-                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
+                    <div data-setting-id="smartactions.commerce" className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
                         <div>
                             <p className="font-medium text-foreground dark:text-white/90">Commerce & Tracking</p>
                             <p className="text-sm text-muted-foreground mt-1 dark:text-white/60">Track packages, view receipts, and monitor orders.</p>
@@ -128,7 +128,7 @@ export const SmartActionsSection = () => {
                         </label>
                     </div>
 
-                    <div className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
+                    <div data-setting-id="smartactions.travel" className="flex items-center justify-between p-4 bg-white/40 dark:bg-black/20 rounded-xl">
                         <div>
                             <p className="font-medium text-foreground dark:text-white/90">Travel & Bookings</p>
                             <p className="text-sm text-muted-foreground mt-1 dark:text-white/60">Quick access to flight details, hotel bookings, and itineraries.</p>

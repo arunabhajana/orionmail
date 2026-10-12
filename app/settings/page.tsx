@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     User,
     Palette,
@@ -41,18 +41,54 @@ interface SettingsTabConfig {
     id: SettingsTab;
     label: string;
     icon: React.ElementType;
+}
+
+interface SettingsSearchResult {
+    id: string;
+    title: string;
+    section: SettingsTab;
     keywords: string;
 }
 
 const SETTINGS_TABS: SettingsTabConfig[] = [
-    { id: 'account', label: 'Account', icon: User, keywords: 'alias display name profile email avatar connected' },
-    { id: 'appearance', label: 'Appearance', icon: Palette, keywords: 'theme dark light color accent interface' },
-    { id: 'notifications', label: 'Notifications', icon: Bell, keywords: 'alerts sounds email desktop' },
-    { id: 'smartactions', label: 'Smart Actions', icon: Sparkles, keywords: 'otp authentication codes meetings events calendar commerce tracking orders travel bookings' },
-    { id: 'security', label: 'Privacy & Security', icon: Shield, keywords: 'privacy security blocked senders data' },
-    { id: 'system', label: 'System & Behavior', icon: MonitorSmartphone, keywords: 'startup tray minimize launch windows hello app lock cache storage' },
-    { id: 'developer', label: 'Developer', icon: Terminal, keywords: 'developer diagnostics debugging tools' },
-    { id: 'about', label: 'About', icon: Info, keywords: 'version features developer credits orionmail' },
+    { id: 'account', label: 'Account', icon: User },
+    { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
+    { id: 'smartactions', label: 'Smart Actions', icon: Sparkles },
+    { id: 'security', label: 'Privacy & Security', icon: Shield },
+    { id: 'system', label: 'System & Behavior', icon: MonitorSmartphone },
+    { id: 'developer', label: 'Developer', icon: Terminal },
+    { id: 'about', label: 'About', icon: Info },
+];
+
+const SETTINGS_SEARCH_INDEX: SettingsSearchResult[] = [
+    { id: 'account.alias', title: 'Alias', section: 'account', keywords: 'display name profile name nickname' },
+    { id: 'account.email', title: 'Email address', section: 'account', keywords: 'connected account mailbox' },
+    { id: 'appearance.light', title: 'Light mode', section: 'appearance', keywords: 'theme brightness white' },
+    { id: 'appearance.dark', title: 'Dark mode', section: 'appearance', keywords: 'theme night black' },
+    { id: 'appearance.system', title: 'Use system theme', section: 'appearance', keywords: 'theme automatic windows' },
+    { id: 'appearance.density', title: 'Message density', section: 'appearance', keywords: 'compact default relaxed spacing' },
+    { id: 'appearance.accent', title: 'Accent color', section: 'appearance', keywords: 'blue purple rose emerald orange color' },
+    { id: 'notifications.desktop', title: 'Desktop notifications', section: 'notifications', keywords: 'new email alerts push notification' },
+    { id: 'notifications.sound-toggle', title: 'Play notification sound', section: 'notifications', keywords: 'audio ping alert' },
+    { id: 'notifications.sound', title: 'Notification sound', section: 'notifications', keywords: 'tone chime bell orbit' },
+    { id: 'notifications.unread', title: 'Show unread count', section: 'notifications', keywords: 'badge sidebar taskbar count' },
+    { id: 'smartactions.global', title: 'Smart Actions', section: 'smartactions', keywords: 'automatically extract email information' },
+    { id: 'smartactions.otp', title: 'Authentication codes (OTP)', section: 'smartactions', keywords: '2fa one-time password login code' },
+    { id: 'smartactions.meetings', title: 'Meetings & events', section: 'smartactions', keywords: 'calendar join links invites' },
+    { id: 'smartactions.commerce', title: 'Commerce & tracking', section: 'smartactions', keywords: 'orders receipts packages shipping' },
+    { id: 'smartactions.travel', title: 'Travel & bookings', section: 'smartactions', keywords: 'flight hotel itinerary' },
+    { id: 'security.2fa', title: 'Two-factor authentication', section: 'security', keywords: '2fa account login' },
+    { id: 'security.app-lock', title: 'Windows Hello app lock', section: 'security', keywords: 'require password biometric launch unlock pin' },
+    { id: 'security.images', title: 'Block external images', section: 'security', keywords: 'privacy tracking pixels remote images' },
+    { id: 'security.blocklist', title: 'Blocked senders', section: 'security', keywords: 'blocklist spam addresses' },
+    { id: 'security.cache', title: 'Clear local cache', section: 'security', keywords: 'delete downloaded mail storage data' },
+    { id: 'system.autostart', title: 'Launch at startup', section: 'system', keywords: 'start windows login boot automatically' },
+    { id: 'system.hidden', title: 'Start hidden', section: 'system', keywords: 'startup tray minimized' },
+    { id: 'system.tray', title: 'Minimize to tray', section: 'system', keywords: 'close window background behavior' },
+    { id: 'system.cache', title: 'Clear local cache', section: 'system', keywords: 'delete downloaded emails storage resync' },
+    { id: 'developer.tools', title: 'Developer tools', section: 'developer', keywords: 'debug experimental diagnostics simulate errors' },
+    { id: 'about.version', title: 'App version', section: 'about', keywords: 'release build about OrionMail' },
 ];
 
 // --- Main Page Component ---
@@ -61,14 +97,75 @@ function SettingsPageInner() {
     const [activeTab, setActiveTab] = useState<SettingsTab>('account');
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
+    const [pendingSearchResult, setPendingSearchResult] = useState<SettingsSearchResult | null>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+    const searchPanelRef = useRef<HTMLDivElement>(null);
     const { user, logout } = useAuth();
     const router = useRouter();
     const { dirtySections, requestNavigation } = useSettings();
     const searchResults = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
         if (!query) return [];
-        return SETTINGS_TABS.filter(tab => `${tab.label} ${tab.keywords}`.toLowerCase().includes(query));
+        const words = query.split(/\s+/);
+        return SETTINGS_SEARCH_INDEX.map(result => {
+            const haystack = `${result.title} ${result.keywords} ${SETTINGS_TABS.find(tab => tab.id === result.section)?.label ?? ''}`.toLowerCase();
+            const score = words.reduce((total, word) => {
+                if (result.title.toLowerCase() === word) return total + 10;
+                if (result.title.toLowerCase().startsWith(word)) return total + 6;
+                if (result.title.toLowerCase().includes(word)) return total + 4;
+                if (haystack.includes(word)) return total + 1;
+                return total;
+            }, 0);
+            return { ...result, score, matches: words.every(word => haystack.includes(word)) };
+        }).filter(result => result.matches)
+            .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
+            .slice(0, 8);
     }, [searchQuery]);
+
+    const closeSearch = () => {
+        setSearchOpen(false);
+        setSearchQuery('');
+        setSelectedSearchIndex(0);
+        setPendingSearchResult(null);
+    };
+
+    const focusSetting = (result: SettingsSearchResult) => {
+        closeSearch();
+        requestNavigation(() => {
+            setActiveTab(result.section);
+            setPendingSearchResult(result);
+        });
+    };
+
+    useEffect(() => {
+        setSelectedSearchIndex(0);
+    }, [searchQuery]);
+
+    useEffect(() => {
+        if (!searchOpen) return;
+        const onPointerDown = (event: PointerEvent) => {
+            if (!searchPanelRef.current?.contains(event.target as Node) && !searchInputRef.current?.contains(event.target as Node)) closeSearch();
+        };
+        document.addEventListener('pointerdown', onPointerDown);
+        return () => document.removeEventListener('pointerdown', onPointerDown);
+    }, [searchOpen]);
+
+    useEffect(() => {
+        if (!pendingSearchResult || pendingSearchResult.section !== activeTab) return;
+        const frame = window.requestAnimationFrame(() => {
+            const target = document.querySelector<HTMLElement>(`[data-setting-id="${pendingSearchResult.id}"]`);
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.classList.add('ring-2', 'ring-primary/50', 'rounded-xl');
+                const focusable = target.matches('button, input, select') ? target : target.querySelector<HTMLElement>('button, input, select');
+                focusable?.focus({ preventScroll: true });
+                window.setTimeout(() => target.classList.remove('ring-2', 'ring-primary/50', 'rounded-xl'), 1800);
+            }
+            setPendingSearchResult(null);
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [activeTab, pendingSearchResult]);
 
     const handleTabClick = (tabId: SettingsTab) => {
         if (tabId === activeTab) return;
@@ -101,22 +198,29 @@ function SettingsPageInner() {
                         </button>
                         <div className="flex items-center justify-between">
                             <h1 className="text-2xl font-bold tracking-tight text-foreground dark:text-white/90">Settings</h1>
-                            <button type="button" aria-label={searchOpen ? 'Close settings search' : 'Search settings'} onClick={() => { setSearchOpen(open => !open); setSearchQuery(''); }} className="p-2 rounded-lg text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground transition-colors">
+                            <button type="button" aria-label={searchOpen ? 'Close settings search' : 'Search settings'} onClick={() => { if (searchOpen) closeSearch(); else { setSearchOpen(true); window.setTimeout(() => searchInputRef.current?.focus(), 0); } }} className="p-2 rounded-lg text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground transition-colors">
                                 {searchOpen ? <X className="w-4 h-4" /> : <Search className="w-4 h-4" />}
                             </button>
                         </div>
                     </div>
 
-                    {searchOpen && <div className="relative mb-4">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                        <input autoFocus value={searchQuery} onChange={event => setSearchQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && searchResults[0]) { handleTabClick(searchResults[0].id); } if (event.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); } }} placeholder="Search settings…" aria-label="Search settings" className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/60 dark:bg-black/30 border border-black/5 dark:border-white/10 text-sm outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground" />
-                        {searchQuery && <div className="absolute top-full left-0 right-0 z-30 mt-2 p-1.5 rounded-xl border border-black/5 dark:border-white/10 bg-white dark:bg-[#222228] shadow-xl max-h-64 overflow-y-auto">
-                            {searchResults.length ? searchResults.map(result => { const ResultIcon = result.icon; return <button key={result.id} type="button" onClick={() => handleTabClick(result.id)} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left rounded-lg hover:bg-black/5 dark:hover:bg-white/10"><ResultIcon className="w-4 h-4 text-primary" />{result.label}</button>; }) : <p className="px-3 py-3 text-sm text-muted-foreground">No matching settings found.</p>}
+                    {searchOpen && <div ref={searchPanelRef} className="relative mb-4">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                        <input ref={searchInputRef} value={searchQuery} onChange={event => setSearchQuery(event.target.value)} onKeyDown={event => {
+                            if (event.key === 'ArrowDown' && searchResults.length) { event.preventDefault(); setSelectedSearchIndex(index => (index + 1) % searchResults.length); }
+                            if (event.key === 'ArrowUp' && searchResults.length) { event.preventDefault(); setSelectedSearchIndex(index => (index - 1 + searchResults.length) % searchResults.length); }
+                            if (event.key === 'Enter' && searchResults[selectedSearchIndex]) { event.preventDefault(); focusSetting(searchResults[selectedSearchIndex]); }
+                            if (event.key === 'Escape') closeSearch();
+                        }} placeholder="Search settings" aria-label="Search settings" aria-expanded={Boolean(searchQuery)} aria-controls="settings-search-results" aria-activedescendant={searchResults[selectedSearchIndex] ? `settings-search-${searchResults[selectedSearchIndex].id}` : undefined} role="combobox" aria-autocomplete="list" className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-white/60 dark:bg-black/30 border border-black/5 dark:border-white/10 text-sm outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground" />
+                        {searchQuery && <button type="button" aria-label="Clear search" onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10"><X className="size-4" /></button>}
+                        {searchQuery && <div id="settings-search-results" role="listbox" className="absolute top-full left-0 right-0 z-30 mt-2 p-1.5 rounded-xl border border-black/5 dark:border-white/10 bg-white dark:bg-[#222228] shadow-xl max-h-72 overflow-y-auto">
+                            {searchResults.length ? searchResults.map((result, index) => { const ResultIcon = SETTINGS_TABS.find(tab => tab.id === result.section)!.icon; return <button id={`settings-search-${result.id}`} key={result.id} type="button" role="option" aria-selected={selectedSearchIndex === index} onMouseEnter={() => setSelectedSearchIndex(index)} onClick={() => focusSetting(result)} className={cn("w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left rounded-lg transition-colors", selectedSearchIndex === index ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10")}><ResultIcon className="w-4 h-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 truncate">{result.title}</span><span className="text-xs text-muted-foreground">{SETTINGS_TABS.find(tab => tab.id === result.section)?.label}</span></button>; }) : <p className="px-3 py-3 text-sm text-muted-foreground">No matching settings found.</p>}
+                            <p className="px-3 pt-2 pb-1 text-[11px] text-muted-foreground border-t border-black/5 dark:border-white/10 mt-1">↑↓ to navigate · Enter to open · Esc to close</p>
                         </div>}
                     </div>}
 
                     <nav className="flex-1 space-y-1">
-                        {SETTINGS_TABS.map((tab) => {
+                        {!searchOpen && SETTINGS_TABS.map((tab) => {
                             const Icon = tab.icon;
                             const isActive = activeTab === tab.id;
                             const isDirty = dirtySections[tab.id]?.isDirty;
@@ -142,7 +246,7 @@ function SettingsPageInner() {
                             );
                         })}
 
-                        <div className="my-4 h-px bg-black/5 dark:bg-white/5 mx-2" />
+                        {!searchOpen && <div className="my-4 h-px bg-black/5 dark:bg-white/5 mx-2" />}
 
                         <button
                             onClick={() => {
@@ -239,7 +343,7 @@ function SettingsPageInner() {
                                     <div className="relative flex flex-col md:flex-row md:items-center gap-6">
                                         <div className="size-16 rounded-2xl bg-primary text-white shadow-lg shadow-primary/25 flex items-center justify-center"><Mail className="size-8" /></div>
                                         <div className="flex-1"><p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">Your email, in focus</p><h2 className="mt-2 text-3xl font-bold tracking-tight">OrionMail</h2><p className="mt-2 max-w-xl text-muted-foreground">A native-feeling mail workspace that brings your inbox, smart actions, and desktop workflow together.</p></div>
-                                        <div className="rounded-2xl border border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/20 px-5 py-4 min-w-36"><p className="text-xs uppercase tracking-wider text-muted-foreground">Version</p><p className="mt-1 text-xl font-semibold">{packageInfo.version}</p><p className="text-xs text-muted-foreground">Desktop release</p></div>
+                                        <div data-setting-id="about.version" className="rounded-2xl border border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/20 px-5 py-4 min-w-36"><p className="text-xs uppercase tracking-wider text-muted-foreground">Version</p><p className="mt-1 text-xl font-semibold">{packageInfo.version}</p><p className="text-xs text-muted-foreground">Desktop release</p></div>
                                     </div>
                                 </div>
                                 <div className="grid sm:grid-cols-2 gap-4">

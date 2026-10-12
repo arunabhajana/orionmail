@@ -14,7 +14,7 @@ export const NotificationsSection = () => (
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Email Alerts</h3>
 
             <div className="space-y-6">
-                <div className="flex items-center justify-between">
+                <div data-setting-id="notifications.desktop" className="flex items-center justify-between rounded-xl">
                     <div>
                         <h4 className="font-semibold text-foreground">Desktop Notifications</h4>
                         <p className="text-sm text-muted-foreground mt-1">Receive push notifications for new emails.</p>
@@ -28,7 +28,7 @@ export const NotificationsSection = () => (
 
                 <div className="h-px bg-white/10 dark:bg-white/5 w-full" />
 
-                <div className="flex items-center justify-between">
+                <div data-setting-id="notifications.sound-toggle" className="flex items-center justify-between rounded-xl">
                     <div>
                         <h4 className="font-semibold text-foreground">Play Notification Sound</h4>
                         <p className="text-sm text-muted-foreground mt-1">Audible ping when a new message arrives.</p>
@@ -40,7 +40,7 @@ export const NotificationsSection = () => (
                 </div>
             </div>
 
-            <div className="mt-8 flex items-center justify-between">
+            <div data-setting-id="notifications.sound" className="mt-8 flex items-center justify-between rounded-xl">
                 <div>
                     <h4 className="font-semibold text-foreground">Notification Sound</h4>
                     <p className="text-sm text-muted-foreground mt-1">Choose the alert tone.</p>
@@ -58,7 +58,7 @@ export const NotificationsSection = () => (
         <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Badges</h3>
 
-            <div className="flex items-center justify-between">
+            <div data-setting-id="notifications.unread" className="flex items-center justify-between rounded-xl">
                 <div>
                     <h4 className="font-semibold text-foreground">Show Unread Count</h4>
                     <p className="text-sm text-muted-foreground mt-1">Display unread metric in the app sidebar and taskbar.</p>

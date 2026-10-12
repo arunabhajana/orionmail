@@ -78,7 +78,7 @@ export const SecuritySection = () => {
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Login Security</h3>
 
             <div className="space-y-6">
-                <div className="flex items-center justify-between">
+                <div data-setting-id="security.2fa" className="flex items-center justify-between rounded-xl">
                     <div>
                         <h4 className="font-semibold text-foreground">Two-Factor Authentication</h4>
                         <p className="text-sm text-muted-foreground mt-1">Add an extra layer of security to your account.</p>
@@ -93,7 +93,7 @@ export const SecuritySection = () => {
                 <div className="h-px bg-white/10 dark:bg-white/5 w-full" />
 
                 {helloAvailable && (
-                    <div className="flex items-center justify-between">
+                    <div data-setting-id="security.app-lock" className="flex items-center justify-between rounded-xl">
                         <div>
                             <h4 className="font-semibold text-foreground">Require Password on App Launch</h4>
                             <p className="text-sm text-muted-foreground mt-1">Prompt for Windows Hello when opening OrionMail.</p>
@@ -117,7 +117,7 @@ export const SecuritySection = () => {
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Privacy Controls</h3>
 
             <div className="space-y-6">
-                <div className="flex items-center justify-between">
+                <div data-setting-id="security.images" className="flex items-center justify-between rounded-xl">
                     <div>
                         <h4 className="font-semibold text-foreground">Block External Images</h4>
                         <p className="text-sm text-muted-foreground mt-1">Prevent senders from tracking you via spy pixels.</p>
@@ -130,7 +130,7 @@ export const SecuritySection = () => {
 
                 <div className="h-px bg-white/10 dark:bg-white/5 w-full" />
 
-                <div className="flex items-center justify-between">
+                <div data-setting-id="security.blocklist" className="flex items-center justify-between rounded-xl">
                     <div className="flex-1 pr-6">
                         <h4 className="font-semibold text-foreground">Blocked Senders</h4>
                         <p className="text-sm text-muted-foreground mt-1">Manage addresses you have blocked from messaging you.</p>
@@ -141,7 +141,7 @@ export const SecuritySection = () => {
                 </div>
             </div>
 
-            <div className="mt-10">
+            <div data-setting-id="security.cache" className="mt-10 rounded-xl">
                 <button className="px-5 py-2.5 bg-red-500/10 text-red-600 font-semibold rounded-xl hover:bg-red-500/20 transition-colors text-sm flex items-center gap-2">
                     Clear Local Cache Data
                 </button>
