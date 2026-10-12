@@ -418,8 +418,66 @@ pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<Diagno
 
 #[tauri::command]
 pub async fn open_url(url: String) -> Result<(), String> {
-    open::that(&url).map_err(|e| format!("Failed to open URL: {}", e))?;
+    let validated_url = validate_external_url(&url)?;
+    open::that(validated_url.as_str()).map_err(|e| format!("Failed to open URL: {}", e))?;
     Ok(())
+}
+
+fn validate_external_url(raw: &str) -> Result<url::Url, String> {
+    const MAX_URL_LENGTH: usize = 8192;
+
+    if raw.is_empty()
+        || raw.len() > MAX_URL_LENGTH
+        || raw.trim() != raw
+        || raw.chars().any(char::is_control)
+    {
+        return Err("URL is empty, too long, or contains invalid whitespace".to_string());
+    }
+
+    let parsed = url::Url::parse(raw).map_err(|_| "URL must be absolute and valid".to_string())?;
+
+    match parsed.scheme() {
+        "http" | "https" => {
+            if parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() {
+                return Err("HTTP links must have a host and cannot contain credentials".to_string());
+            }
+        }
+        "mailto" => {
+            if parsed.path().is_empty() || parsed.host_str().is_some() || parsed.fragment().is_some() {
+                return Err("Mail links must contain a recipient and cannot contain a fragment".to_string());
+            }
+
+            // Prevent encoded control characters from being reinterpreted by an OS mail handler.
+            let mut encoded = raw.to_ascii_lowercase();
+            for _ in 0..4 {
+                if encoded.as_bytes().windows(3).any(|triplet| {
+                    triplet[0] == b'%'
+                        && u8::from_str_radix(std::str::from_utf8(&triplet[1..]).unwrap_or(""), 16)
+                            .map(|value| value < 0x20 || value == 0x7f)
+                            .unwrap_or(false)
+                }) {
+                    return Err("Mail links cannot contain encoded control characters".to_string());
+                }
+                let decoded_percent = encoded.replace("%25", "%");
+                if decoded_percent == encoded {
+                    break;
+                }
+                encoded = decoded_percent;
+            }
+
+            for (name, value) in parsed.query_pairs() {
+                if !matches!(name.to_ascii_lowercase().as_str(), "subject" | "body" | "cc" | "bcc")
+                    || name.chars().any(char::is_control)
+                    || value.chars().any(char::is_control)
+                {
+                    return Err("Mail link contains an unsupported or invalid header".to_string());
+                }
+            }
+        }
+        _ => return Err("Only HTTP, HTTPS, and mail links can be opened".to_string()),
+    }
+
+    Ok(parsed)
 }
 
 #[tauri::command]

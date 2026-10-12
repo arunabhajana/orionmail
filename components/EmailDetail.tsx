@@ -39,6 +39,7 @@ interface EmailDetailProps {
 // --- Main Component ---
 
 const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onMarkAsRead }) => {
+    const emailIframeRef = React.useRef<HTMLIFrameElement>(null);
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === 'dark';
     const { preferences } = useAppPreferences();
@@ -48,6 +49,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         email?.uid,
         email?.unread,
         email?.folder,
+        emailIframeRef,
         onMarkAsRead
     );
 
@@ -153,9 +155,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                             </div>
                         ) : (
                             <iframe
+                                ref={emailIframeRef}
                                 title="Email Content"
                                 className="w-full border-0 email-content-iframe bg-white dark:bg-[#111111]"
-                                sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
+                                sandbox="allow-scripts"
                                 scrolling="no"
                                 style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}
                                 srcDoc={`

@@ -11,6 +11,7 @@ import { AppPreferencesProvider } from "@/components/AppPreferencesContext";
 import { BackgroundTasksProvider } from "@/components/BackgroundTasksContext";
 import { Toaster } from "sonner";
 import { GlobalLoader } from "@/components/GlobalLoader";
+import { AppLockGate } from "@/components/AppLockGate";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -47,14 +48,16 @@ export default function RootLayout({
                 <AuthProvider>
                   <SyncProvider>
                     <DownloadProvider>
-                      <GlobalLoader />
-                      <div className="app-window">
-                        <TitlebarWrapper />
-                        <div className="pt-[30px] h-full w-full overflow-hidden">
-                          {children}
+                      <AppLockGate>
+                        <div className="app-window">
+                          <GlobalLoader />
+                          <TitlebarWrapper />
+                          <div className="pt-[30px] h-full w-full overflow-hidden">
+                            {children}
+                          </div>
+                          <Toaster theme="system" richColors position="top-center" />
                         </div>
-                        <Toaster theme="system" richColors position="top-center" />
-                      </div>
+                      </AppLockGate>
                     </DownloadProvider>
                   </SyncProvider>
                 </AuthProvider>

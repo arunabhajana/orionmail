@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useRouter } from "next/navigation";
@@ -17,6 +17,9 @@ export interface User {
 interface AuthContextType {
     user: User | null;
     loading: boolean;
+    appLockStatus: "checking" | "locked" | "unlocked" | "error";
+    appLockError: string | null;
+    retryAppUnlock: () => Promise<void>;
     mailboxLoading: boolean;
     setMailboxLoading: (loading: boolean) => void;
     mailboxConnected: boolean;
@@ -31,6 +34,30 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+type HelloVerification = { verified: boolean; error?: string };
+let helloVerificationPromise: Promise<HelloVerification> | null = null;
+let helloVerificationResult: HelloVerification | null = null;
+
+function verifyHelloOnce(retry = false): Promise<HelloVerification> {
+    if (retry) helloVerificationResult = null;
+    if (helloVerificationResult) return Promise.resolve(helloVerificationResult);
+    if (helloVerificationPromise) return helloVerificationPromise;
+
+    helloVerificationPromise = (async () => {
+        try {
+            const verified = await invoke<boolean>("authenticate_hello", { message: "Unlock OrionMail" });
+            helloVerificationResult = { verified };
+        } catch (error) {
+            helloVerificationResult = { verified: false, error: String(error) };
+        } finally {
+            helloVerificationPromise = null;
+        }
+        return helloVerificationResult!;
+    })();
+
+    return helloVerificationPromise;
+}
+
 /**
  * Global authentication provider.
  * Manages user state, session persistence, and primary auth flows.
@@ -43,10 +70,51 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [mailboxConnected, setMailboxConnected] = useState(false);
     const [isBootstrappingInbox, setBootstrappingInbox] = useState(false);
     const [sessionExpired, setSessionExpired] = useState(false);
+    const [appLockStatus, setAppLockStatus] = useState<AuthContextType["appLockStatus"]>("checking");
+    const [appLockError, setAppLockError] = useState<string | null>(null);
+    const initializationRef = useRef<Promise<void> | null>(null);
+    const bootstrapStartedRef = useRef(false);
     const router = useRouter();
 
+    const bootstrapOnce = async () => {
+        if (bootstrapStartedRef.current) return;
+        bootstrapStartedRef.current = true;
+        await bootstrap();
+    };
+
     useEffect(() => {
-        bootstrap();
+        const checkAppLock = async (): Promise<boolean> => {
+            setAppLockStatus("checking");
+            setAppLockError(null);
+            try {
+                const settings = await invoke<{ app_lock_enabled?: boolean }>("get_app_settings");
+                if (!settings.app_lock_enabled) {
+                    setAppLockStatus("unlocked");
+                    return true;
+                }
+
+                const result = await verifyHelloOnce();
+                if (result.error) {
+                    setAppLockError(result.error);
+                    setAppLockStatus("error");
+                    return false;
+                }
+
+                setAppLockStatus(result.verified ? "unlocked" : "locked");
+                return result.verified;
+            } catch (error) {
+                console.error("App lock verification failed", error);
+                setAppLockError(String(error));
+                setAppLockStatus("error");
+                return false;
+            }
+        };
+
+        // Keep the shell hidden until the lock preference and Windows Hello result are known.
+        // Reuse the same initialization promise across React Strict Mode effect replays.
+        initializationRef.current ??= (async () => {
+            if (await checkAppLock()) await bootstrapOnce();
+        })();
 
         const unlisten = listen("auth:session_expired", () => {
             setSessionExpired(true);
@@ -54,7 +122,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         const handleOnline = () => {
             // Retry bootstrap when internet becomes available to refresh tokens if needed
-            bootstrap();
+            if (bootstrapStartedRef.current) void bootstrap();
         };
         window.addEventListener("online", handleOnline);
 
@@ -64,11 +132,38 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         };
     }, []);
 
+    const retryAppUnlock = async () => {
+        setAppLockError(null);
+        setAppLockStatus("checking");
+        try {
+            const settings = await invoke<{ app_lock_enabled?: boolean }>("get_app_settings");
+            if (!settings.app_lock_enabled) {
+                setAppLockStatus("unlocked");
+                await bootstrapOnce();
+                return;
+            }
+
+            const result = await verifyHelloOnce(true);
+            if (result.error) {
+                setAppLockError(result.error);
+                setAppLockStatus("error");
+                return;
+            }
+
+            setAppLockStatus(result.verified ? "unlocked" : "locked");
+            if (result.verified) await bootstrapOnce();
+        } catch (error) {
+            console.error("App unlock failed", error);
+            setAppLockError(String(error));
+            setAppLockStatus("error");
+        }
+    };
+
     /**
      * Bootstraps the application session.
      * Fetches active account status and validates tokens.
      */
-    const bootstrap = async () => {
+    async function bootstrap() {
         try {
             const result = await invoke<{ user: User | null; needs_refresh: boolean }>("bootstrap_accounts");
 
@@ -102,7 +197,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }
 
     /**
      * Initiates the Google OAuth login flow via Tauri.
@@ -167,6 +262,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             value={{
                 user,
                 loading,
+                appLockStatus,
+                appLockError,
+                retryAppUnlock,
                 mailboxLoading,
                 setMailboxLoading,
                 mailboxConnected,

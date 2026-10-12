@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -6,13 +6,30 @@ import { Attachment } from "@/lib/types";
 
 import { ExtractedData } from "@/lib/smart-actions";
 
+function isAllowedExternalUrl(raw: string): boolean {
+    if (!raw || raw.length > 8192 || raw.trim() !== raw || /[\u0000-\u001f\u007f]/.test(raw)) return false;
+
+    try {
+        const parsed = new URL(raw);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+            return Boolean(parsed.hostname) && !parsed.username && !parsed.password;
+        }
+        if (parsed.protocol === "mailto:") {
+            return Boolean(parsed.pathname) && !parsed.hostname && !parsed.hash;
+        }
+        return false;
+    } catch {
+        return false;
+    }
+}
+
 interface MessageDetail {
     body: string;
     attachments: Attachment[];
     extractedData?: ExtractedData;
 }
 
-export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, onMarkAsRead?: (id: string) => void) {
+export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, iframeRef: RefObject<HTMLIFrameElement | null>, onMarkAsRead?: (id: string) => void) {
     const [bodyContent, setBodyContent] = useState<string>("");
     const [attachments, setAttachments] = useState<Attachment[]>([]);
     const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
@@ -143,18 +160,22 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     // Handle iframe messages sent from the injected srcDoc script
     useEffect(() => {
         const handleMessage = (event: MessageEvent) => {
-            if (event.data?.id === emailId) {
-                if (event.data?.type === 'resize') {
-                    setIframeHeight(event.data.height + 30); // Add a small buffer
-                } else if (event.data?.type === 'open_url' && event.data.url) {
-                    invoke('open_url', { url: event.data.url }).catch(console.error);
+            if (!emailId || event.source !== iframeRef.current?.contentWindow) return;
+            if (event.origin !== "null" || !event.data || typeof event.data !== "object" || event.data.id !== emailId) return;
+
+            if (event.data.type === "resize") {
+                const height = event.data.height;
+                if (typeof height === "number" && Number.isFinite(height) && height >= 0 && height <= 20000) {
+                    setIframeHeight(height + 30);
                 }
+            } else if (event.data.type === "open_url" && typeof event.data.url === "string" && isAllowedExternalUrl(event.data.url)) {
+                invoke("open_url", { url: event.data.url }).catch(console.error);
             }
         };
 
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, [emailId]);
+    }, [emailId, iframeRef]);
 
     return { bodyContent, attachments, extractedData, isLoadingBody, iframeHeight, error, retry: fetchBody };
 }
