@@ -561,6 +561,24 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
         (),
     ).map_err(|e| e.to_string())?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pending_message_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id TEXT NOT NULL,
+            folder TEXT NOT NULL,
+            mailbox TEXT NOT NULL,
+            uid INTEGER NOT NULL,
+            action TEXT NOT NULL CHECK(action IN ('seen', 'flagged', 'delete')),
+            desired INTEGER,
+            created_at INTEGER NOT NULL,
+            last_error TEXT,
+            UNIQUE(account_id, folder, uid, action)
+        )",
+        (),
+    ).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_message_actions_account ON pending_message_actions(account_id, id)", ())
+        .map_err(|e| e.to_string())?;
+
     conn.execute("CREATE INDEX IF NOT EXISTS idx_message_tags_message ON message_tags(account_id, folder, message_uid)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_message_tags_tag ON message_tags(account_id, tag_id)", ()).map_err(|e| e.to_string())?;
 
@@ -605,6 +623,7 @@ pub fn clear_account_cache(app_handle: &AppHandle, account_id: &str) -> Result<(
     tx.execute("DELETE FROM mailbox_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM folder_sync_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM global_sync_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM pending_message_actions WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM tags WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
@@ -904,6 +923,71 @@ pub fn delete_message_local(app_handle: &AppHandle, account_id: &str, folder: &s
     ).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingMessageAction {
+    pub id: i64,
+    pub account_id: String,
+    pub folder: String,
+    pub mailbox: String,
+    pub uid: u32,
+    pub action: String,
+    pub desired: Option<bool>,
+}
+
+pub fn enqueue_message_action(
+    app_handle: &AppHandle,
+    account_id: &str,
+    folder: &str,
+    mailbox: &str,
+    uid: u32,
+    action: &str,
+    desired: Option<bool>,
+) -> Result<i64, String> {
+    let conn = open_connection(app_handle)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    conn.execute(
+        "INSERT INTO pending_message_actions (account_id, folder, mailbox, uid, action, desired, created_at, last_error)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)
+         ON CONFLICT(account_id, folder, uid, action) DO UPDATE SET
+            mailbox = excluded.mailbox, desired = excluded.desired, created_at = excluded.created_at, last_error = NULL",
+        rusqlite::params![account_id, folder, mailbox, uid, action, desired.map(|v| if v { 1 } else { 0 }), now],
+    ).map_err(|e| e.to_string())?;
+    conn.query_row(
+        "SELECT id FROM pending_message_actions WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND action = ?4",
+        rusqlite::params![account_id, folder, uid, action],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())
+}
+
+pub fn list_pending_message_actions(app_handle: &AppHandle, account_id: &str, limit: u32) -> Result<Vec<PendingMessageAction>, String> {
+    let conn = open_connection(app_handle)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, account_id, folder, mailbox, uid, action, desired FROM pending_message_actions
+         WHERE account_id = ?1 ORDER BY id LIMIT ?2",
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![account_id, limit], |row| {
+        let desired: Option<i32> = row.get(6)?;
+        Ok(PendingMessageAction {
+            id: row.get(0)?, account_id: row.get(1)?, folder: row.get(2)?, mailbox: row.get(3)?,
+            uid: row.get(4)?, action: row.get(5)?, desired: desired.map(|v| v != 0),
+        })
+    }).map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+}
+
+pub fn complete_message_action(app_handle: &AppHandle, id: i64) -> Result<(), String> {
+    open_connection(app_handle)?.execute("DELETE FROM pending_message_actions WHERE id = ?1", [id])
+        .map(|_| ()).map_err(|e| e.to_string())
+}
+
+pub fn record_message_action_error(app_handle: &AppHandle, id: i64, error: &str) -> Result<(), String> {
+    open_connection(app_handle)?.execute("UPDATE pending_message_actions SET last_error = ?1 WHERE id = ?2", rusqlite::params![error, id])
+        .map(|_| ()).map_err(|e| e.to_string())
 }
 
 pub fn insert_sent_message(

@@ -22,6 +22,7 @@ import { CreateTagModal } from '@/components/tags/CreateTagModal';
 import { EditTagModal } from '@/components/tags/EditTagModal';
 import { DeleteTagModal } from '@/components/tags/DeleteTagModal';
 import { Tag } from '@/lib/types';
+import { toast } from 'sonner';
 interface FolderSearchState {
     searchQuery: string;
     activeSearchId: string | null;
@@ -160,6 +161,7 @@ export default function MainLayout() {
                 window.location.href = "/";
                 return;
             }
+            toast.error("Couldn't update star", { description: String(err) });
             // Rollback
             setEmails(prev => prev.map(email =>
                 email.id === emailId ? { ...email, starred: !newStarredState } : email
@@ -191,6 +193,7 @@ export default function MainLayout() {
                 window.location.href = "/";
                 return;
             }
+            toast.error("Couldn't update read status", { description: String(err) });
             // Rollback
             setEmails(prev => prev.map(email =>
                 email.id === emailId ? { ...email, unread: target.unread } : email
@@ -220,6 +223,7 @@ export default function MainLayout() {
                 window.location.href = "/";
                 return;
             }
+            toast.error("Couldn't mark message as read", { description: String(err) });
             // Rollback
             setEmails(prev => prev.map(email =>
                 email.id === emailId ? { ...email, unread: true } : email
@@ -252,6 +256,7 @@ export default function MainLayout() {
                 window.location.href = "/";
                 return;
             }
+            toast.error("Couldn't delete message", { description: String(err) });
             // Rollback via DB fetch since array splicing is tricky to reverse
             await fetchCache(currentFolder);
         }

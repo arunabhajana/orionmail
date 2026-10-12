@@ -1,196 +1,39 @@
 use crate::mail::database;
-use crate::mail::imap_session::{execute_with_session, SessionKind};
 use tauri::AppHandle;
 use crate::BootError;
 
 #[tauri::command]
 pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
-    log::info!("mark_as_read command invoked for UID {}", uid);
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    let account_id = account.id.clone();
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-
-    // Idempotency Check: Don't hit IMAP if already updated locally
-    let is_already_seen = tokio::task::spawn_blocking({
-        let app = app_handle.clone();
-        let folder_str = folder_str.clone();
-        let account_id = account_id.clone();
-        move || {
-            let seen = database::is_message_seen(&app, &account_id, &folder_str, uid);
-            log::info!("is_message_seen for UID {}: {:?}", uid, seen);
-            seen
-        }
-    }).await.map_err(|e| e.to_string())??;
-
-    if is_already_seen {
-        log::info!("UID {} is already marked as read locally. Skipping IMAP update.", uid);
-        return Ok(());
-    }
-
-    if folder_str != "inbox" {
-        let app_handle_clone = app_handle.clone();
-        let account_id = account_id.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            database::set_message_seen(&app_handle_clone, &account_id, &folder_str, uid, true)
-        }).await;
-        crate::tray_state::refresh_unread_count_from_db(&app_handle);
-        return Ok(());
-    }
-
-    log::info!("Updating IMAP seen flag for UID {}", uid);
-    // Update IMAP (Silent Flag to avoid untagged responses)
-    let imap_res = execute_with_session(&account, SessionKind::Primary, move |session| {
-        log::info!("Executing uid_store +FLAGS.SILENT (\\Seen) for UID {} on IMAP", uid);
-        session.uid_store(uid.to_string(), "+FLAGS.SILENT (\\Seen)")
-            .map_err(|e| format!("IMAP Error marking read: {}", e))?;
-        log::info!("IMAP uid_store success for UID {}", uid);
-        Ok::<(), String>(())
-    }).await;
-
-    if let Err(e) = &imap_res {
-        log::error!("IMAP uid_store failed for UID {}: {}", uid, e);
-        return Err(e.clone());
-    }
-
-    log::info!("Updating SQLite seen flag to true for UID {}", uid);
-    // Update SQLite
-    let app_handle_clone = app_handle.clone();
-    let account_id = account_id.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        database::set_message_seen(&app_handle_clone, &account_id, "inbox", uid, true)
-    }).await;
-    
+    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "seen", Some(true)).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
-
-    log::info!("mark_as_read completed successfully for UID {}", uid);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    let account_id = account.id.clone();
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-
-    let app_handle_clone = app_handle.clone();
-    if folder_str != "inbox" {
-        let account_id = account_id.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            database::set_message_seen(&app_handle_clone, &account_id, &folder_str, uid, should_read)
-        }).await;
-        crate::tray_state::refresh_unread_count_from_db(&app_handle);
-        return Ok(());
-    }
-
-    // Update IMAP
-    let flag_cmd = if should_read {
-        "+FLAGS.SILENT (\\Seen)"
-    } else {
-        "-FLAGS.SILENT (\\Seen)"
-    };
-
-    execute_with_session(&account, SessionKind::Primary, move |session| {
-        session.uid_store(uid.to_string(), flag_cmd)
-            .map_err(|e| format!("IMAP Error toggling read: {}", e))?;
-        Ok::<(), String>(())
-    }).await?;
-
-    let app_handle_clone2 = app_handle.clone();
-    // Update SQLite
-    let account_id = account_id.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        database::set_message_seen(&app_handle_clone2, &account_id, "inbox", uid, should_read)
-    }).await;
-    
+    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "seen", Some(should_read)).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
-
     Ok(())
 }
 
 #[tauri::command]
 pub async fn toggle_star(app_handle: AppHandle, uid: u32, should_star: bool, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    let account_id = account.id.clone();
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-
-    if folder_str != "inbox" {
-        let account_id = account_id.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            database::set_message_flagged(&app_handle, &account_id, &folder_str, uid, should_star)
-        }).await;
-        return Ok(());
-    }
-
-    // Update IMAP
-    let flag_cmd = if should_star {
-        "+FLAGS.SILENT (\\Flagged)"
-    } else {
-        "-FLAGS.SILENT (\\Flagged)"
-    };
-
-    execute_with_session(&account, SessionKind::Primary, move |session| {
-        session.uid_store(uid.to_string(), flag_cmd)
-            .map_err(|e| format!("IMAP Error toggling star: {}", e))?;
-        Ok::<(), String>(())
-    }).await?;
-
-    // Update SQLite
-    let account_id = account_id.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        database::set_message_flagged(&app_handle, &account_id, "inbox", uid, should_star)
-    }).await;
-
+    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "flagged", Some(should_star)).await?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_message(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    let account_id = account.id.clone();
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-
-    let app_handle_clone = app_handle.clone();
-    if folder_str != "inbox" {
-        let account_id = account_id.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            database::delete_message_local(&app_handle_clone, &account_id, &folder_str, uid)
-        }).await;
-        crate::tray_state::refresh_unread_count_from_db(&app_handle);
-        return Ok(());
-    }
-
-    let provider_clone = account.provider.clone();
-    // IMAP Action: Try MOVE, fallback to Label + Deleted Flag
-    execute_with_session(&account, SessionKind::Primary, move |session| {
-        let trash_folder = match provider_clone {
-            crate::auth::account::MailProvider::Google => "[Gmail]/Trash",
-            crate::auth::account::MailProvider::Outlook => "Deleted Items",
-            crate::auth::account::MailProvider::Custom { .. } => "Trash",
-        };
-        // Attempt standard IMAP MOVE to provider's trash
-        let move_result = session.uid_mv(uid.to_string(), trash_folder);
-        
-        if let Err(e) = move_result {
-            log::warn!("MOVE to Trash failed, attempting fallback: {}", e);
-            // Fallback: Gmail Labels extension (if Google) + \Deleted
-            if matches!(provider_clone, crate::auth::account::MailProvider::Google) {
-                let _ = session.uid_store(uid.to_string(), "+X-GM-LABELS (\\Trash)");
-            }
-            let _ = session.uid_store(uid.to_string(), "+FLAGS.SILENT (\\Deleted)");
-        }
-        
-        Ok::<(), String>(())
-    }).await?;
-
-    let app_handle_clone2 = app_handle.clone();
-    // Delete locally
-    let account_id = account_id.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        database::delete_message_local(&app_handle_clone2, &account_id, "inbox", uid)
-    }).await;
-    
+    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "delete", None).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
-
     Ok(())
 }
 

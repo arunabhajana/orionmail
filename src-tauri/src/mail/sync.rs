@@ -15,6 +15,7 @@ pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32,
 }
 
 pub async fn sync_folder(app_handle: &AppHandle, account: Account, folder: MailFolder) -> Result<u32, String> {
+    crate::mail::message_actions::retry_pending(app_handle, &account).await;
     // Check global state for tags sync
     let global_state = database::get_global_sync_state(app_handle, &account.id).unwrap_or_default();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
