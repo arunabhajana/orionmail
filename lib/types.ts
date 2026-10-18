@@ -6,8 +6,10 @@ export interface Attachment {
 }
 
 export interface Email {
+    tagsPending?: boolean;
     id: string;
     uid: number;
+    uidValidity?: number;
     messageId?: string;
     sender: string;
     senderEmail: string;

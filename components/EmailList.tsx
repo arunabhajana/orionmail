@@ -13,9 +13,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { PendingSentMessage } from '@/hooks/usePendingSentMessages';
 import { PendingEmailListItem } from './inbox/PendingEmailListItem';
 import { EmailContextMenu, EmailContextMenuState } from './inbox/EmailContextMenu';
+import { MessageTagPicker } from './inbox/MessageTagPicker';
 import { Tag } from '@/lib/types';
 import { useAppPreferences } from './AppPreferencesContext';
 import { listen } from '@tauri-apps/api/event';
+import {useVisibleMailLabels} from '@/hooks/useVisibleMailLabels';
+import {useAuth} from './AuthContext';
 
 // Global cache states removed as predictive prefetch happens in Rust backend now
 
@@ -43,6 +46,7 @@ interface EmailListProps {
     onSearchClear?: () => void;
     searchProgress?: SearchProgressData | null;
     onSearchLoadMore?: () => void;
+    onAddTags?: (email: Email, addIds: string[], removeIds: string[]) => void;
 }
 
 // --- Constants ---
@@ -70,12 +74,14 @@ const EmailList: React.FC<EmailListProps> = ({
     onSearchQueryChange,
     onSearchClear,
     searchProgress,
-    onSearchLoadMore
+    onSearchLoadMore,
+    onAddTags
 }) => {
     const { preferences } = useAppPreferences();
     const [currentFilter, setCurrentFilter] = React.useState<FilterType>('all');
     const [allTags, setAllTags] = React.useState<Record<string, import('@/lib/types').Tag>>({});
     const [contextMenuState, setContextMenuState] = React.useState<EmailContextMenuState | null>(null);
+    const [tagPickerEmail, setTagPickerEmail] = React.useState<Email | null>(null);
 
     React.useEffect(() => {
         let active = true;
@@ -102,6 +108,9 @@ const EmailList: React.FC<EmailListProps> = ({
         listRef,
         getItemKey: (index) => displayedEmails[index]?.id || index,
     });
+    const {user}=useAuth();
+    const visibleEmails=virtualItems.map(item=>displayedEmails[item.index]).filter((email):email is Email=>Boolean(email));
+    useVisibleMailLabels(user?.id,visibleEmails,!preferences.syncPaused);
 
     React.useEffect(() => { rowVirtualizer.measure(); }, [preferences.density, preferences.previewLines, preferences.showAvatars, rowVirtualizer]);
 
@@ -374,7 +383,9 @@ const EmailList: React.FC<EmailListProps> = ({
                     : null}
                 onClose={() => setContextMenuState(null)} 
                 onToggleRead={onToggleRead} 
+                onAddTags={onAddTags && !emails.find(email => email.id === contextMenuState?.emailId)?.tagsPending ? id => setTagPickerEmail(emails.find(email => email.id === id) || null) : undefined}
             />
+            {tagPickerEmail && onAddTags && <MessageTagPicker email={tagPickerEmail} tags={Object.values(allTags)} onApply={onAddTags} onClose={() => setTagPickerEmail(null)} />}
         </main>
     );
 };

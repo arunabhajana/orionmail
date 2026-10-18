@@ -1,9 +1,8 @@
 use crate::auth::account::Account;
 use crate::mail::database::{self, Tag};
-use tauri::AppHandle;
 use reqwest::Client;
 use serde::Deserialize;
-use std::collections::HashMap;
+use tauri::AppHandle;
 
 #[derive(Deserialize, Debug)]
 struct GmailColor {
@@ -29,7 +28,9 @@ struct GmailLabelsResponse {
 
 pub async fn sync_tags(app_handle: &AppHandle, account: &Account) -> Result<(), String> {
     log::info!("Syncing Gmail labels for account {}", account.id);
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build().map_err(|e| e.to_string())?;
     let res = client
         .get("https://gmail.googleapis.com/gmail/v1/users/me/labels")
         .bearer_auth(&account.access_token)
@@ -43,7 +44,7 @@ pub async fn sync_tags(app_handle: &AppHandle, account: &Account) -> Result<(), 
     }
 
     let parsed: GmailLabelsResponse = res.json().await.map_err(|e| e.to_string())?;
-    
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -55,7 +56,10 @@ pub async fn sync_tags(app_handle: &AppHandle, account: &Account) -> Result<(), 
             account_id: account.id.clone(),
             id: label.id,
             name: label.name,
-            tag_type: label.label_type.unwrap_or_else(|| "user".to_string()).to_lowercase(),
+            tag_type: label
+                .label_type
+                .unwrap_or_else(|| "user".to_string())
+                .to_lowercase(),
             bg_color: label.color.as_ref().map(|c| c.bg_color.clone()),
             text_color: label.color.as_ref().map(|c| c.text_color.clone()),
             provider: "google".to_string(),
@@ -86,119 +90,75 @@ pub fn sync_message_tags(
     account_id: &str,
     app_handle: &AppHandle,
 ) -> Result<(), String> {
-    log::info!("Fetching X-GM-LABELS for range {} in folder {}", range, folder);
-    
-    let all_tags = database::get_all_tags(app_handle, account_id)?;
-    if all_tags.is_empty() {
+    sync_memberships(session, range, folder, account_id, app_handle, &[])
+}
+
+pub fn refresh_cached_memberships(
+    session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    folder: &str,
+    account_id: &str,
+    app_handle: &AppHandle,
+) -> Result<(), String> {
+    let conn = database::open_connection(app_handle)?;
+    let mut stmt=conn.prepare("SELECT uid FROM messages WHERE account_id=?1 AND folder=?2 ORDER BY uid DESC LIMIT 200").map_err(|e|e.to_string())?;
+    let uids = stmt
+        .query_map(rusqlite::params![account_id, folder], |r| {
+            r.get::<_, u32>(0)
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    if uids.is_empty() {
         return Ok(());
     }
+    let range = uids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    sync_memberships(session, &range, folder, account_id, app_handle, &uids)
+}
 
-    // name -> id map
-    let mut name_to_id = HashMap::new();
-    for tag in all_tags {
-        name_to_id.insert(tag.name, tag.id);
+fn sync_memberships(
+    session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    range: &str,
+    folder: &str,
+    account_id: &str,
+    app_handle: &AppHandle,
+    expected: &[u32],
+) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    let generation = super::assignment::LABEL_GENERATION.load(Ordering::SeqCst);
+    let all_tags = database::get_all_tags(app_handle, account_id)?;
+    // imap 2.4 cannot parse extension FETCH attributes, even through its raw
+    // command API. SEARCH returns ordinary UID lists and needs no custom parser.
+    let labels = all_tags
+        .iter()
+        .filter(|tag| tag.tag_type == "user")
+        .map(|tag| Ok((tag.id.clone(), super::assignment::quote_label(&tag.name)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let batch = super::assignment::fetch_memberships(session, range, &labels)?;
+    // Network scans never block interactive label updates. If an update landed
+    // during this scan, leave its confirmed local result intact.
+    let _mutation = crate::mail::message_actions::MUTATION_LOCK.blocking_lock();
+    if super::assignment::LABEL_GENERATION.load(Ordering::SeqCst) != generation {
+        return Ok(());
     }
-
-    let cmd = format!("UID FETCH {} (UID X-GM-LABELS)", range);
-    let response = session.run_command_and_read_response(&cmd).map_err(|e| e.to_string())?;
-
-    let mut batch = Vec::new();
-
-    // Parse the raw response lines
-    // Example: * 1 FETCH (X-GM-LABELS ("\\Inbox" "\\Sent" "Personal") UID 1)
-    for line_bytes in response.split(|&b| b == b'\n') {
-        if let Ok(line) = std::str::from_utf8(line_bytes) {
-            if !line.starts_with('*') { continue; }
-            if !line.contains("FETCH") { continue; }
-            
-            // Extract UID
-            let mut uid = 0;
-            if let Some(uid_idx) = line.find("UID ") {
-                let rest = &line[uid_idx + 4..];
-                let end_idx = rest.find(' ').or_else(|| rest.find(')')).unwrap_or(rest.len());
-                if let Ok(u) = rest[..end_idx].parse::<u32>() {
-                    uid = u;
-                }
-            }
-            if uid == 0 { continue; }
-
-            // Extract X-GM-LABELS
-            let mut tag_ids = Vec::new();
-            if let Some(lbl_idx) = line.find("X-GM-LABELS (") {
-                let rest = &line[lbl_idx + 13..];
-                if let Some(end_idx) = rest.find(')') {
-                    let labels_str = &rest[..end_idx];
-                    
-                    // Parse quotes and escaped strings. Simple space split works mostly, but labels can have spaces.
-                    // "My Label" "\\Inbox"
-                    let mut in_quotes = false;
-                    let mut current_label = String::new();
-                    let mut i = 0;
-                    let chars: Vec<char> = labels_str.chars().collect();
-                    
-                    while i < chars.len() {
-                        let c = chars[i];
-                        if c == '"' {
-                            in_quotes = !in_quotes;
-                            if !in_quotes && !current_label.is_empty() {
-                                if let Some(tid) = name_to_id.get(&current_label) {
-                                    tag_ids.push(tid.clone());
-                                }
-                                current_label.clear();
-                            }
-                        } else if c == '\\' && !in_quotes && i + 1 < chars.len() {
-                            // System label like \Inbox
-                            let mut sys_label = String::new();
-                            while i < chars.len() && chars[i] != ' ' {
-                                sys_label.push(chars[i]);
-                                i += 1;
-                            }
-                            // Map \Inbox to INBOX for Google (often mapped this way in REST API)
-                            // The REST API returns "INBOX" for name when type is "system".
-                            let sys_name = sys_label.replace('\\', "").to_uppercase();
-                            if let Some(tid) = name_to_id.get(&sys_name) {
-                                tag_ids.push(tid.clone());
-                            } else {
-                                // fallback exactly
-                                if let Some(tid) = name_to_id.get(&sys_label) {
-                                    tag_ids.push(tid.clone());
-                                }
-                            }
-                            continue;
-                        } else if !in_quotes && c == ' ' {
-                            if !current_label.is_empty() {
-                                if let Some(tid) = name_to_id.get(&current_label) {
-                                    tag_ids.push(tid.clone());
-                                }
-                                current_label.clear();
-                            }
-                        } else {
-                            if in_quotes || c != ' ' {
-                                current_label.push(c);
-                            }
-                        }
-                        i += 1;
-                    }
-                    if !current_label.is_empty() {
-                        if let Some(tid) = name_to_id.get(&current_label) {
-                            tag_ids.push(tid.clone());
-                        }
-                    }
-                }
-            }
-
-            batch.push((uid, tag_ids));
-        }
-        if batch.len() >= 500 {
-            database::set_message_tags_batch(app_handle, account_id, folder, &batch)?;
-            batch.clear();
-        }
+    // Commit once, after every label query succeeds. Never clear assignments
+    // from a partial or failed provider snapshot.
+    let present: std::collections::HashSet<_> = batch.iter().map(|(uid, _)| *uid).collect();
+    let missing: Vec<_> = expected
+        .iter()
+        .filter(|uid| !present.contains(uid))
+        .copied()
+        .collect();
+    let validity = database::get_folder_sync_state(app_handle, account_id, folder)?
+        .and_then(|state| state.uid_validity)
+        .ok_or("No mailbox identity for tag refresh")?;
+    if super::cache::apply_snapshot(app_handle, account_id, folder, validity, &batch, &missing)? {
+        use tauri::Emitter;
+        let _ = app_handle.emit("mail:labels_changed", account_id);
     }
-
-    if !batch.is_empty() {
-        database::set_message_tags_batch(app_handle, account_id, folder, &batch)?;
-    }
-
     Ok(())
 }
 
@@ -210,9 +170,13 @@ pub async fn update_tag(
     bg_color: Option<&str>,
     text_color: Option<&str>,
 ) -> Result<(), String> {
-    log::info!("Updating Gmail label for account {}, tag {}", account.id, tag_id);
+    log::info!(
+        "Updating Gmail label for account {}, tag {}",
+        account.id,
+        tag_id
+    );
     let client = Client::new();
-    
+
     let mut payload = serde_json::json!({
         "name": name,
     });
@@ -224,7 +188,10 @@ pub async fn update_tag(
         });
     }
 
-    let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/labels/{}", tag_id);
+    let url = format!(
+        "https://gmail.googleapis.com/gmail/v1/users/me/labels/{}",
+        tag_id
+    );
     let res = client
         .patch(&url)
         .bearer_auth(&account.access_token)
@@ -268,10 +235,17 @@ pub async fn delete_tag(
     account: &Account,
     tag_id: &str,
 ) -> Result<(), String> {
-    log::info!("Deleting Gmail label for account {}, tag {}", account.id, tag_id);
+    log::info!(
+        "Deleting Gmail label for account {}, tag {}",
+        account.id,
+        tag_id
+    );
     let client = Client::new();
-    
-    let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/labels/{}", tag_id);
+
+    let url = format!(
+        "https://gmail.googleapis.com/gmail/v1/users/me/labels/{}",
+        tag_id
+    );
     let res = client
         .delete(&url)
         .bearer_auth(&account.access_token)
@@ -291,18 +265,20 @@ pub async fn delete_tag(
     let mut conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    
+
     // First, remove the tag from any messages
     tx.execute(
         "DELETE FROM message_tags WHERE account_id = ?1 AND tag_id = ?2",
         rusqlite::params![account.id, tag_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     // Next, delete the tag itself
     tx.execute(
         "DELETE FROM tags WHERE account_id = ?1 AND id = ?2",
         rusqlite::params![account.id, tag_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     tx.commit().map_err(|e| e.to_string())?;
 
@@ -319,9 +295,13 @@ pub async fn create_tag(
     bg_color: Option<&str>,
     text_color: Option<&str>,
 ) -> Result<(), String> {
-    log::info!("Creating Gmail label for account {}, name {}", account.id, name);
+    log::info!(
+        "Creating Gmail label for account {}, name {}",
+        account.id,
+        name
+    );
     let client = Client::new();
-    
+
     let mut payload = serde_json::json!({
         "name": name,
         "labelListVisibility": "labelShow",
@@ -350,7 +330,7 @@ pub async fn create_tag(
     }
 
     let label: GmailLabel = res.json().await.map_err(|e| e.to_string())?;
-    
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -360,7 +340,10 @@ pub async fn create_tag(
         account_id: account.id.clone(),
         id: label.id,
         name: label.name,
-        tag_type: label.label_type.unwrap_or_else(|| "user".to_string()).to_lowercase(),
+        tag_type: label
+            .label_type
+            .unwrap_or_else(|| "user".to_string())
+            .to_lowercase(),
         bg_color: label.color.as_ref().map(|c| c.bg_color.clone()),
         text_color: label.color.as_ref().map(|c| c.text_color.clone()),
         provider: "google".to_string(),
@@ -368,7 +351,7 @@ pub async fn create_tag(
     };
 
     database::upsert_tags(app_handle, &[db_tag])?;
-    
+
     use tauri::Emitter;
     let _ = app_handle.emit("mail:tags_updated", ());
 

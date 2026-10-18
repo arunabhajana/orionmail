@@ -3,36 +3,40 @@ use tauri::AppHandle;
 use crate::BootError;
 
 #[tauri::command]
-pub async fn mark_as_read(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
+pub async fn mark_as_read(app_handle: AppHandle, account_id:String,expected_uid_validity:u32,uid: u32, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "seen", Some(true)).await?;
+    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "seen", Some(true),expected_uid_validity).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn toggle_read(app_handle: AppHandle, uid: u32, should_read: bool, folder: Option<String>) -> Result<(), String> {
+pub async fn toggle_read(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, should_read: bool, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "seen", Some(should_read)).await?;
+    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "seen", Some(should_read),expected_uid_validity).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn toggle_star(app_handle: AppHandle, uid: u32, should_star: bool, folder: Option<String>) -> Result<(), String> {
+pub async fn toggle_star(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, should_star: bool, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "flagged", Some(should_star)).await?;
+    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "flagged", Some(should_star),expected_uid_validity).await?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_message(app_handle: AppHandle, uid: u32, folder: Option<String>) -> Result<(), String> {
+pub async fn delete_message(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, folder: Option<String>) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "delete", None).await?;
+    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "delete", None,expected_uid_validity).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
     Ok(())
 }
@@ -42,6 +46,7 @@ pub async fn get_messages_page(
     app_handle: AppHandle,
     folder: String,
     before_uid: Option<u32>,
+    before_folder: Option<String>,
     limit: u32,
 ) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
@@ -52,7 +57,7 @@ pub async fn get_messages_page(
     let folder_clone = folder.clone();
     let account_id = account.id;
     let pages = tokio::task::spawn_blocking(move || {
-        database::load_messages_page(&app_handle_clone, &account_id, &folder_clone, before_uid, safe_limit)
+        database::load_messages_page_with_cursor(&app_handle_clone, &account_id, &folder_clone, before_uid, before_folder.as_deref(), safe_limit)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -209,7 +214,8 @@ pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::coll
 
         let mut counts = std::collections::HashMap::new();
 
-        let mut stmt = conn.prepare("SELECT folder, COUNT(*) FROM messages WHERE account_id = ?1 AND seen = 0 GROUP BY folder").map_err(|e| e.to_string())?;
+        let sql=format!("SELECT folder, COUNT(DISTINCT {}) FROM messages WHERE account_id=?1 AND seen=0 GROUP BY folder",database::CACHED_MESSAGE_IDENTITY_SQL);
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = stmt.query_map([account.id.as_str()], |row| {
             let folder: String = row.get(0)?;
             let count: u32 = row.get(1)?;
@@ -222,7 +228,8 @@ pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::coll
             }
         }
 
-        let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE account_id = ?1 AND seen = 0 AND flagged = 1").map_err(|e| e.to_string())?;
+        let sql=format!("SELECT COUNT(DISTINCT {}) FROM messages WHERE account_id=?1 AND seen=0 AND flagged=1",database::CACHED_MESSAGE_IDENTITY_SQL);
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         if let Ok(count) = stmt.query_row([account.id.as_str()], |row| row.get(0)) {
             counts.insert("starred".to_string(), count);
         }
@@ -378,6 +385,33 @@ pub async fn get_message_tags(app_handle: tauri::AppHandle, folder: String, mess
     tokio::task::spawn_blocking(move || {
         crate::mail::database::get_message_tags(&app_clone, &account.id, &folder, message_uid)
     }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn update_message_tags(app_handle:tauri::AppHandle,account_id:String,expected_uid_validity:u32,folder:String,uid:u32,add_ids:Vec<String>,remove_ids:Vec<String>)->Result<Vec<String>,String>{
+    let account=crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if account.id!=account_id{return Err("Account changed. Reopen the message and retry.".into());}
+    crate::mail::tags::assignment::update(&app_handle,&account,folder,uid,add_ids,remove_ids,expected_uid_validity).await
+}
+
+#[tauri::command]
+pub async fn refresh_message_labels(app_handle:tauri::AppHandle,account_id:String,requests:Vec<crate::mail::tags::refresh::LabelTarget>)->Result<(),String>{
+    let account=crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if account.id!=account_id{return Err("Account changed".into());}
+    crate::mail::tags::refresh::visible(&app_handle,&account,requests).await
+}
+
+#[tauri::command]
+pub async fn get_cached_message_headers(app_handle:tauri::AppHandle,requests:Vec<crate::mail::tags::refresh::LabelTarget>)->Result<Vec<crate::mail::message_list::MessageHeader>,String>{
+    let account=crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if requests.len()>1000{return Err("Too many cached messages".into());}
+    tokio::task::spawn_blocking(move||{
+        let mut groups:std::collections::BTreeMap<String,Vec<u32>>=std::collections::BTreeMap::new();
+        for request in requests{groups.entry(request.folder).or_default().push(request.uid);}
+        let mut messages=Vec::new();
+        for(folder,uids)in groups{for batch in uids.chunks(200){messages.extend(database::get_messages_by_uids(&app_handle,&account.id,&folder,batch)?);}}
+        Ok(messages)
+    }).await.map_err(|e|e.to_string())?
 }
 
 /// Logical cached content sizes for the active account; excludes database indexes and free pages.

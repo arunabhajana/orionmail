@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Email } from '@/lib/types';
+import { dedupeMail, sameMail,mailIdentity } from '@/lib/mail-identity';
 import { formatEmailTime } from '@/lib/utils';
 import { AlertCircle } from 'lucide-react';
 
@@ -51,6 +52,12 @@ export default function MainLayout() {
     const [currentFolder, setCurrentFolder] = useState<string>(preferences.defaultFolder);
     const currentFolderRef = useRef<string>(preferences.defaultFolder); // Live reference to avoid stale closures in event listeners
     const [emails, setEmails] = useState<Email[]>([]);
+    const [pendingTagAdds, setPendingTagAdds] = useState<Record<string, { accountId: string; email: Email; tags: string[]; removed: string[] }>>({});
+    const tagRequests = useRef(new Set<string>());
+    const [pendingFlags,setPendingFlags]=useState<Record<string,{accountId:string;email:Email;patch:Partial<Email>}>>({});
+    const flagVersions=useRef(new Map<string,number>());
+    const [pendingDeletes,setPendingDeletes]=useState<Record<string,{accountId:string;email:Email}>>({});
+    const deleteRequests=useRef(new Set<string>());
     const { isSyncing, setIsSyncing, setSyncMessage, unreadCounts, setUnreadCounts, syncTriggerCount, triggerSync } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
     const [isLoadingFolder, setIsLoadingFolder] = useState(false); // Loading skeleton when switching folders
@@ -65,6 +72,8 @@ export default function MainLayout() {
     const cacheRevisionRef = useRef(0);
 
     const [folderSearchContexts, setFolderSearchContexts] = useState<Record<string, FolderSearchState>>({});
+    const folderSearchRef=useRef(folderSearchContexts);
+    folderSearchRef.current=folderSearchContexts;
 
     const activeSearchState = folderSearchContexts[currentFolder] || {
         searchQuery: '',
@@ -100,14 +109,31 @@ export default function MainLayout() {
 
     // --- Derived State ---
 
-    const filteredEmails = activeSearchState.searchQuery ? activeSearchState.searchResults : emails.filter(email => {
+    const pendingTags = Object.values(pendingTagAdds).filter(item => item.accountId === user?.id);
+    const overlayTags = (email: Email): Email => {
+        const flagEdits=Object.values(pendingFlags).filter(edit=>edit.accountId===user?.id&&sameMail(edit.email,email));
+        email=Object.assign({},email,...flagEdits.map(edit=>edit.patch));
+        const pending = pendingTags.find(item => sameMail(item.email,email));
+        return pending ? { ...email, tags: [...new Set([...email.tags, ...pending.tags])].filter(id => !pending.removed.includes(id)), tagsPending: true } : email;
+    };
+    const visibleCandidates = emails.map(overlayTags);
+    if (currentFolder.startsWith('tag:')) {
+        for (const pending of pendingTags) {
+            if (pending.tags.includes(currentFolder.slice(4)) && !visibleCandidates.some(item => sameMail(item,pending.email))) {
+                visibleCandidates.unshift(overlayTags(pending.email));
+            }
+        }
+    }
+    const filteredEmails = activeSearchState.searchQuery ? activeSearchState.searchResults.map(overlayTags) : visibleCandidates.filter(email => {
         if (currentFolder === 'starred') {
             return email.starred;
         }
+        if (currentFolder.startsWith('tag:')) return email.tags.includes(currentFolder.slice(4));
         return email.folder === currentFolder;
     });
+    const visibleEmails=filteredEmails.filter(email=>!Object.values(pendingDeletes).some(edit=>edit.accountId===user?.id&&sameMail(edit.email,email)));
 
-    const selectedEmail = activeSearchState.searchQuery ? activeSearchState.searchResults.find(e => e.id === selectedEmailId) : emails.find(e => e.id === selectedEmailId);
+    const selectedEmail = visibleEmails.find(e => e.id === selectedEmailId);
 
 
     const fetchUnreadCounts = async () => {
@@ -137,12 +163,27 @@ export default function MainLayout() {
     }, []);
 
     // --- Handlers ---
+    const patchMessage=(target:Email,patch:Partial<Email>)=>{
+        const update=(items:Email[])=>items.map(email=>sameMail(email,target)?{...email,...patch}:email);
+        setEmails(update);
+        setFolderSearchContexts(prev=>Object.fromEntries(Object.entries(prev).map(([folder,state])=>[folder,{...state,searchResults:update(state.searchResults)}])));
+    };
+    const beginFlagEdit=(email:Email,field:'unread'|'starred',value:boolean)=>{
+        const accountId=user?.id??'';const key=JSON.stringify([accountId,mailIdentity(email),field]);
+        const version=(flagVersions.current.get(key)??0)+1;flagVersions.current.set(key,version);
+        setPendingFlags(prev=>({...prev,[key]:{accountId,email,patch:{[field]:value}}}));
+        return{
+            current:()=>activeAccountRef.current===accountId&&flagVersions.current.get(key)===version,
+            finish:()=>{if(flagVersions.current.get(key)===version)setPendingFlags(prev=>{const next={...prev};delete next[key];return next;});}
+        };
+    };
 
     const toggleStar = async (emailId: string) => {
-        const target = emails.find(e => e.id === emailId);
+        const target = filteredEmails.find(e => e.id === emailId);
         if (!target) return;
 
         const newStarredState = !target.starred;
+        const edit=beginFlagEdit(target,'starred',newStarredState);
 
         // Optimistic Update
         setEmails(prev => prev.map(email =>
@@ -158,9 +199,11 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder || "inbox";
-            await invoke('toggle_star', { uid: target.uid, shouldStar: newStarredState, folder: folderName });
+            await invoke('toggle_star', { accountId:user?.id, expectedUidValidity:target.uidValidity??0, uid: target.uid, shouldStar: newStarredState, folder: folderName });
+            if(edit.current())patchMessage(target,{starred:newStarredState});
             fetchUnreadCounts();
         } catch (err) {
+            if(!edit.current())return;
             console.error("Failed to toggle star", err);
             if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
@@ -169,17 +212,16 @@ export default function MainLayout() {
             }
             toast.error("Couldn't update star", { description: String(err) });
             // Rollback
-            setEmails(prev => prev.map(email =>
-                email.id === emailId ? { ...email, starred: !newStarredState } : email
-            ));
-        }
+            patchMessage(target,{starred:target.starred});
+        }finally{edit.finish();}
     };
 
     const toggleRead = async (emailId: string) => {
-        const target = emails.find(e => e.id === emailId);
+        const target = filteredEmails.find(e => e.id === emailId);
         if (!target) return;
 
         const newReadState = Boolean(target.unread);
+        const edit=beginFlagEdit(target,'unread',!newReadState);
 
         // Optimistic Update
         setEmails(prev => prev.map(email =>
@@ -190,9 +232,11 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder || "inbox";
-            await invoke('toggle_read', { uid: target.uid, shouldRead: newReadState, folder: folderName });
+            await invoke('toggle_read', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, shouldRead: newReadState, folder: folderName });
+            if(edit.current())patchMessage(target,{unread:!newReadState});
             fetchUnreadCounts();
         } catch (err) {
+            if(!edit.current())return;
             console.error("Failed to toggle read", err);
             if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
@@ -201,16 +245,15 @@ export default function MainLayout() {
             }
             toast.error("Couldn't update read status", { description: String(err) });
             // Rollback
-            setEmails(prev => prev.map(email =>
-                email.id === emailId ? { ...email, unread: target.unread } : email
-            ));
+            patchMessage(target,{unread:target.unread});
             fetchUnreadCounts();
-        }
+        }finally{edit.finish();}
     };
 
     const markAsRead = async (emailId: string) => {
-        const target = emails.find(e => e.id === emailId);
+        const target = filteredEmails.find(e => e.id === emailId);
         if (!target || !target.unread) return;
+        const edit=beginFlagEdit(target,'unread',false);
 
         // Optimistic Update
         setEmails(prev => prev.map(email =>
@@ -221,9 +264,11 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder || "inbox";
-            await invoke('mark_as_read', { uid: target.uid, folder: folderName });
+            await invoke('mark_as_read', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, folder: folderName });
+            if(edit.current())patchMessage(target,{unread:false});
             fetchUnreadCounts();
         } catch (err) {
+            if(!edit.current())return;
             console.error("Failed to mark as read", err);
             if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
@@ -232,20 +277,26 @@ export default function MainLayout() {
             }
             toast.error("Couldn't mark message as read", { description: String(err) });
             // Rollback
-            setEmails(prev => prev.map(email =>
-                email.id === emailId ? { ...email, unread: true } : email
-            ));
-        }
+            patchMessage(target,{unread:target.unread});
+        }finally{edit.finish();}
     };
 
     const deleteMessage = async (emailId: string) => {
         const target = filteredEmails.find(e => e.id === emailId);
         if (!target) return;
+        const deleteKey=JSON.stringify([user?.id,mailIdentity(target)]);
+        if(deleteRequests.current.has(deleteKey))return;
+        deleteRequests.current.add(deleteKey);
+        setPendingDeletes(prev=>({...prev,[deleteKey]:{accountId:user?.id??'',email:target}}));
+        const removeFromViews=()=>{
+            setEmails(prev=>prev.filter(email=>!sameMail(email,target)));
+            setFolderSearchContexts(prev=>Object.fromEntries(Object.entries(prev).map(([folder,state])=>[folder,{...state,searchResults:state.searchResults.filter(email=>!sameMail(email,target))}])));
+        };
         const deletedSelected = selectedEmailId === emailId;
         const targetIndex = filteredEmails.findIndex(e => e.id === emailId);
         const nextId = filteredEmails[targetIndex + 1]?.id || filteredEmails[targetIndex - 1]?.id || null;
         // Optimistic Update
-        setEmails(prev => prev.filter(email => email.id !== emailId));
+        removeFromViews();
         if (selectedEmailId === emailId) {
             setSelectedEmailId(null);
         }
@@ -256,10 +307,12 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder || "inbox";
-            await invoke('delete_message', { uid: target.uid, folder: folderName });
+            await invoke('delete_message', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, folder: folderName });
+            if(activeAccountRef.current===user?.id)removeFromViews();
             if (deletedSelected && preferences.autoSelectNext && currentFolderRef.current === currentFolder && activeAccountRef.current === user?.id) setSelectedEmailId(current => current === null ? nextId : current);
             fetchUnreadCounts();
         } catch (err) {
+            if(activeAccountRef.current!==user?.id)return;
             console.error("Failed to delete message", err);
             if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                 localStorage.removeItem("orion_user");
@@ -269,27 +322,13 @@ export default function MainLayout() {
             toast.error("Couldn't delete message", { description: String(err) });
             // Rollback via DB fetch since array splicing is tricky to reverse
             await fetchCache(currentFolder);
+        }finally{
+            deleteRequests.current.delete(deleteKey);
+            setPendingDeletes(prev=>{const next={...prev};delete next[deleteKey];return next;});
         }
     };
 
-    const dedupeEmails = (emailArray: Email[]) => {
-        const emailMap = new Map();
-        for (const email of emailArray) {
-            if (emailMap.has(email.id)) {
-                console.warn("Duplicate email detected", email.id);
-            }
-            emailMap.set(email.id, email);
-        }
-        
-        const unique = Array.from(emailMap.values());
-        // Sort: primary by timestamp descending, secondary by uid descending
-        return unique.sort((a, b) => {
-            if (b.timestamp !== a.timestamp) {
-                return b.timestamp - a.timestamp;
-            }
-            return b.uid - a.uid;
-        });
-    };
+    const dedupeEmails = dedupeMail;
 
     const formatEmailFromMessage = (msg: any): Email => {
         let folder = msg.folder;
@@ -306,6 +345,7 @@ export default function MainLayout() {
         return {
             id: `${folder}-${msg.uid}`,
             uid: msg.uid,
+            uidValidity:msg.uid_validity,
             messageId: msg.message_id,
             sender: senderName,
             senderEmail: msg.from,
@@ -317,7 +357,7 @@ export default function MainLayout() {
             timestamp: msg.date * 1000,
             unread: !msg.seen,
             folder: folder,
-            tags: [],
+            tags: msg.tags || [],
             starred: msg.flagged,
             body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
             attachments: [],
@@ -357,6 +397,43 @@ export default function MainLayout() {
             return false;
         }
     };
+
+    useEffect(()=>{
+        let disposed=false;let stop:(()=>void)|undefined;let timer:ReturnType<typeof setTimeout>|undefined;
+        const refresh=async(accountId:string)=>{
+            if(disposed||accountId!==activeAccountRef.current)return;
+            const folder=currentFolderRef.current;const revision=++cacheRevisionRef.current;
+            const loaded=emailsRef.current.slice(0,1000);
+            const requested=[...new Map([...loaded,...Object.values(folderSearchRef.current).flatMap(state=>state.searchResults)].map(email=>[email.id,email])).values()].slice(0,1000);
+            try{
+                const [existing,head]=await Promise.all([
+                    invoke<Parameters<typeof formatEmailFromMessage>[0][]>('get_cached_message_headers',{requests:requested.map(email=>({folder:email.folder,uid:email.uid}))}),
+                    invoke<Parameters<typeof formatEmailFromMessage>[0][]>('get_folder_messages',{folder,beforeUid:null,limit:50})
+                ]);
+                if(disposed||accountId!==activeAccountRef.current||folder!==currentFolderRef.current||revision!==cacheRevisionRef.current)return;
+                const matchesView=(email:Email)=>folder==='starred'?email.starred:folder.startsWith('tag:')?email.tags.includes(folder.slice(4)):email.folder===folder;
+                const loadedIds=new Set(loaded.map(email=>email.id));
+                const next=dedupeEmails([...head.map(formatEmailFromMessage),...existing.map(formatEmailFromMessage).filter(email=>loadedIds.has(email.id))].filter(matchesView));
+                setEmails(next);
+                setSelectedEmailId(previous=>{
+                    if(next.some(email=>email.id===previous))return previous;
+                    const selected=loaded.find(email=>email.id===previous);
+                    return selected?next.find(email=>sameMail(email,selected))?.id??null:previous;
+                });
+                setFolderSearchContexts(prev=>Object.fromEntries(Object.entries(prev).map(([key,state])=>{
+                    const map=new Map(existing.map(formatEmailFromMessage).map(email=>[email.id,email]));
+                    const queried=new Set(requested.map(email=>email.id));
+                    return[key,{...state,searchResults:dedupeEmails(state.searchResults.flatMap(email=>map.has(email.id)?[map.get(email.id)!]:queried.has(email.id)?[]:[email])).filter(email=>key==='starred'?email.starred:key.startsWith('tag:')?email.tags.includes(key.slice(4)):email.folder===key)}];
+                })));
+                void fetchUnreadCounts();
+            }catch(error){console.error('Could not refresh cached label changes',error);}
+        };
+        void listen<string>('mail:labels_changed',event=>{
+            if(timer)clearTimeout(timer);
+            timer=setTimeout(()=>{void refresh(event.payload);},80);
+        }).then(unlisten=>{if(disposed)unlisten();else stop=unlisten;}).catch(console.error);
+        return()=>{disposed=true;if(timer)clearTimeout(timer);stop?.();};
+    },[]);
 
     const refreshNewEmails = async (folderToFetch = currentFolderRef.current) => {
         const revision = cacheRevisionRef.current;
@@ -411,7 +488,7 @@ export default function MainLayout() {
             const lastEmail = currentEmails[currentEmails.length - 1];
             const beforeUid = lastEmail.uid;
 
-            const nextBatch: any[] = await invoke('get_folder_messages', { folder: currentFolder, beforeUid, limit: 50 });
+            const nextBatch: any[] = await invoke('get_folder_messages', { folder: currentFolder, beforeUid, beforeFolder: lastEmail.folder, limit: 50 });
             if (revision !== cacheRevisionRef.current || currentFolderRef.current !== currentFolder) return;
             if (nextBatch.length === 0) {
                 setHasMore(false);
@@ -433,6 +510,37 @@ export default function MainLayout() {
             }
         } finally {
             setIsLoadingMore(false);
+        }
+    };
+
+    const handleAddTags = async (email: Email, tags: string[], removed: string[]) => {
+        const accountId = activeAccountRef.current;
+        if (!accountId) return;
+        const key = `${accountId}:${email.id}`;
+        if (tagRequests.current.has(key)) return;
+        tagRequests.current.add(key);
+        setPendingTagAdds(prev => ({ ...prev, [key]: { accountId, email, tags, removed } }));
+        try {
+            const assigned = await invoke<string[]>('update_message_tags', { accountId,expectedUidValidity:email.uidValidity??0,folder: email.folder, uid: email.uid, addIds: tags, removeIds: removed });
+            if (activeAccountRef.current !== accountId) return;
+            cacheRevisionRef.current += 1;
+            const matches = (item: Email) => sameMail(item,email);
+            const update = (items: Email[]) => items.filter(item => !matches(item) || !removed.some(id => item.folder === `tag:${id}`)).map(item => matches(item) ? { ...item, tags: assigned } : item);
+            setEmails(prev => {
+                const updated = update(prev);
+                if (currentFolderRef.current.startsWith('tag:') && assigned.includes(currentFolderRef.current.slice(4)) && !updated.some(item => sameMail(item,email))) {
+                    if (!removed.some(id => email.folder === `tag:${id}`)) return dedupeEmails([{ ...email, tags: assigned }, ...updated]);
+                }
+                return updated;
+            });
+            setFolderSearchContexts(prev => Object.fromEntries(Object.entries(prev).map(([folder, state]) => [folder, { ...state, searchResults: update(state.searchResults) }])));
+        } catch (error) {
+            if (activeAccountRef.current === accountId) {
+                toast.error(String(error).includes('Saved on this device') ? 'Tag update queued for retry' : 'Could not save tags', { description: String(error), action: { label: 'Retry', onClick: () => { void handleAddTags(email, tags, removed); } } });
+            }
+        } finally {
+            tagRequests.current.delete(key);
+            setPendingTagAdds(prev => { const next = { ...prev }; delete next[key]; return next; });
         }
     };
 
@@ -503,7 +611,8 @@ export default function MainLayout() {
 
     useEffect(() => {
         const interval = setInterval(() => {
-            invoke('sync_mail_folder', { folder: 'inbox' }).catch(console.error);
+            if(preferencesRef.current.syncPaused)return;
+            invoke('sync_mail_folder', { folder: 'inbox', automatic:true }).catch(console.error);
             fetchUnreadCounts();
         }, 60000);
         return () => clearInterval(interval);
@@ -969,21 +1078,7 @@ export default function MainLayout() {
                     for (const [folder, context] of Object.entries(next)) {
                         if (context.activeSearchId === payload.search_id) {
                             const newEmails = payload.new_messages.map(formatEmailFromMessage);
-                            const existingMap = new Map();
-                            for (const item of context.searchResults) {
-                                existingMap.set(item.id, item);
-                            }
-                            for (const item of newEmails) {
-                                if (!existingMap.has(item.id)) {
-                                    existingMap.set(item.id, item);
-                                }
-                            }
-                            const merged = Array.from(existingMap.values()).sort((a, b) => {
-                                if (b.timestamp !== a.timestamp) {
-                                    return b.timestamp - a.timestamp;
-                                }
-                                return b.uid - a.uid;
-                            });
+                            const merged = dedupeEmails([...newEmails,...context.searchResults]);
 
                             next[folder] = {
                                 ...context,
@@ -1090,13 +1185,14 @@ export default function MainLayout() {
 
                     </>}
                     className="flex-1 overflow-hidden"
-                    emails={filteredEmails}
+                    emails={visibleEmails}
                     pendingMessages={currentFolder === 'sent' ? pendingMessages : []}
                     selectedEmailId={selectedEmailId}
                 onSelectEmail={(id) => setSelectedEmailId(id)}
                 onToggleStar={toggleStar}
                 onToggleRead={toggleRead}
                 onDeleteMessage={deleteMessage}
+                onAddTags={(email, tags, removed) => { void handleAddTags(email, tags, removed); }}
                 onSync={handleSync}
                 isSyncing={isSyncing || isLoadingFolder || syncingFolders.has(currentFolder)}
                 onLoadMore={loadMoreEmails}

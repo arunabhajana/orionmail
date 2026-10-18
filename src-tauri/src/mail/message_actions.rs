@@ -5,7 +5,7 @@ use crate::mail::{database, folder::MailFolder, imap_session::{execute_with_sess
 use std::str::FromStr;
 use tauri::AppHandle;
 
-fn resolve_mailbox(app: &AppHandle, account: &Account, folder: &str) -> Result<String, String> {
+pub(crate) fn resolve_mailbox(app: &AppHandle, account: &Account, folder: &str) -> Result<String, String> {
     match MailFolder::from_str(folder) {
         Ok(MailFolder::Inbox) => Ok("INBOX".to_string()),
         Ok(MailFolder::Sent) => MailFolder::Sent.to_imap_mailbox(&account.provider)
@@ -135,7 +135,10 @@ mod tests {
     }
 }
 
-fn apply_local_action(app: &AppHandle, item: &database::PendingMessageAction) -> Result<(), String> {
+fn apply_local_action(app: &AppHandle, item: &database::PendingMessageAction, provider: &MailProvider) -> Result<(), String> {
+    if matches!(provider,MailProvider::Google){
+        return crate::mail::tags::cache::apply_message_action(app,&item.account_id,&item.folder,item.uid,item.uid_validity.ok_or("Missing mailbox identity")?,&item.action,item.desired);
+    }
     match item.action.as_str() {
         "seen" => database::set_message_seen(app, &item.account_id, &item.folder, item.uid,
             item.desired.ok_or_else(|| "Missing read state".to_string())?),
@@ -147,6 +150,7 @@ fn apply_local_action(app: &AppHandle, item: &database::PendingMessageAction) ->
 }
 
 fn notify_action_applied(app: &AppHandle, item: &database::PendingMessageAction) {
+    crate::mail::tags::assignment::LABEL_GENERATION.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
     use tauri::Emitter;
     let (flags, removed) = if item.action == "delete" {
         (Vec::<crate::mail::reconciliation::Flags>::new(), vec![item.uid])
@@ -160,14 +164,16 @@ fn notify_action_applied(app: &AppHandle, item: &database::PendingMessageAction)
     // previously rolled-back delete or update an older loaded search result.
     let _ = app.emit("mail:reconciled", serde_json::json!({"account_id":item.account_id,"folder":item.folder,"updated_flags":flags,"removed_uids":removed}));
     let _ = app.emit("mail:updated", &item.folder);
+    let _ = app.emit("mail:labels_changed", &item.account_id);
     crate::tray_state::refresh_unread_count_from_db(app);
 }
 
-pub async fn perform(app: &AppHandle, account: &Account, folder: &str, uid: u32, action: &str, desired: Option<bool>) -> Result<(), String> {
+pub async fn perform(app: &AppHandle, account: &Account, folder: &str, uid: u32, action: &str, desired: Option<bool>,expected_uid_validity:u32) -> Result<(), String> {
     let _mutation = MUTATION_LOCK.lock().await;
     let uid_validity = database::message_uid_validity(app, &account.id, folder, uid)?;
+    validate_uid_validity(Some(expected_uid_validity),Some(uid_validity))?;
     let mailbox = resolve_mailbox(app, account, folder)?;
-    let id = database::enqueue_message_action(app, &account.id, folder, &mailbox, uid, action, desired)?;
+    let id = database::enqueue_message_action(app, &account.id, folder, &mailbox, uid, action, desired,matches!(account.provider,MailProvider::Google))?;
     let item = database::PendingMessageAction {
         id, account_id: account.id.clone(), folder: folder.to_string(), mailbox, uid,
         action: action.to_string(), desired, uid_validity: Some(uid_validity),
@@ -179,7 +185,7 @@ pub async fn perform(app: &AppHandle, account: &Account, folder: &str, uid: u32,
         log::warn!("Queued {} action {} for account {} (UID {}): {}", action, id, account.id, uid, remote_error);
         return Err(format!("Provider did not confirm the {} operation; it is queued for retry: {}", action, remote_error));
     }
-    if let Err(local_error) = apply_local_action(app, &item) {
+    if let Err(local_error) = apply_local_action(app, &item, &account.provider) {
         let _ = database::record_message_action_error(app, id, &local_error);
         return Err(format!("Provider accepted the operation, but the local cache update failed; it is queued for repair: {}", local_error));
     }
@@ -202,7 +208,7 @@ pub async fn retry_pending(app: &AppHandle, account: &Account) {
     for item in items {
         let result = async {
             execute_remote_action(account, &item).await?;
-            apply_local_action(app, &item)?;
+            apply_local_action(app, &item, &account.provider)?;
             database::complete_message_action(app, item.id)
         }.await;
         if let Err(error) = result {

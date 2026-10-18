@@ -11,10 +11,11 @@ export interface EmailContextMenuState {
     unread: boolean;
 }
 
-export function EmailContextMenu({ contextMenu, onClose, onToggleRead }: {
+export function EmailContextMenu({ contextMenu, onClose, onToggleRead, onAddTags }: {
     contextMenu: EmailContextMenuState | null;
     onClose: () => void;
     onToggleRead?: (id: string) => void;
+    onAddTags?: (id: string) => void;
 }) {
     const items: ContextMenuAction[] = [
         { id: 'reply', label: 'Reply', icon: <Reply size={16} /> },
@@ -28,7 +29,8 @@ export function EmailContextMenu({ contextMenu, onClose, onToggleRead }: {
           onSelect: () => { if (contextMenu) onToggleRead?.(contextMenu.emailId); } },
         { id: 'pin', label: 'Pin email', icon: <Pin size={16} />, separatorBefore: true },
         { id: 'snooze', label: 'Snooze', icon: <Clock size={16} /> },
-        { id: 'tags', label: 'Add tags', icon: <Tag size={16} /> },
+        { id: 'tags', label: 'Manage tags', icon: <Tag size={16} />, disabled: !onAddTags,
+          onSelect: () => { if (contextMenu) onAddTags?.(contextMenu.emailId); } },
     ];
     return <ContextMenu position={contextMenu} items={items} onClose={onClose} label="Message actions" />;
 }

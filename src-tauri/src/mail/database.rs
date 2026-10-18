@@ -695,6 +695,20 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     migrate_reconciliation_identity(&conn)?;
 
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS pending_tag_edits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id TEXT NOT NULL,
+        identity TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        remote_done INTEGER NOT NULL DEFAULT 0,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        UNIQUE(account_id,identity)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_tag_edits_account ON pending_tag_edits(account_id,id);")
+        .map_err(|e|e.to_string())?;
+
     conn.execute("CREATE INDEX IF NOT EXISTS idx_message_tags_message ON message_tags(account_id, folder, message_uid)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_message_tags_tag ON message_tags(account_id, tag_id)", ()).map_err(|e| e.to_string())?;
 
@@ -747,12 +761,17 @@ pub fn reset_mailbox_epoch(app: &AppHandle, account: &str, folder: &str, mailbox
 pub fn clear_account_cache(app_handle: &AppHandle, account_id: &str) -> Result<(), String> {
     let mut conn = open_connection(app_handle)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // Enqueue is intentionally independent of the network mutation lock.
+    // Check again in this transaction so a concurrent enqueue cannot be erased.
+    let pending: i64 = tx.query_row("SELECT (SELECT COUNT(*) FROM pending_message_actions WHERE account_id=?1) + (SELECT COUNT(*) FROM pending_tag_edits WHERE account_id=?1)", [account_id], |row| row.get(0)).map_err(|e|e.to_string())?;
+    if pending > 0 { return Err("Sync or resolve pending message actions before clearing cached mail.".into()); }
     tx.execute("DELETE FROM message_tags WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM messages WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM mailbox_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM folder_sync_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM global_sync_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM pending_message_actions WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM pending_tag_edits WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM tags WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
@@ -824,6 +843,9 @@ fn populate_message_tags(conn: &Connection, account_id: &str, messages: &mut [Me
                     }
                 }
             }
+            if let Some(tag_id) = msg.folder.strip_prefix("tag:") {
+                if !msg.tags.iter().any(|id| id == tag_id) { msg.tags.push(tag_id.to_string()); }
+            }
         }
     }
 }
@@ -833,6 +855,10 @@ pub fn load_cached_messages(app_handle: &AppHandle, account_id: &str, limit: usi
 }
 
 pub fn load_messages_page(app_handle: &AppHandle, account_id: &str, folder: &str, before_uid: Option<u32>, limit: u32) -> Result<Vec<MessageHeader>, String> {
+    load_messages_page_with_cursor(app_handle, account_id, folder, before_uid, None, limit)
+}
+
+pub fn load_messages_page_with_cursor(app_handle: &AppHandle, account_id: &str, folder: &str, before_uid: Option<u32>, before_folder: Option<&str>, limit: u32) -> Result<Vec<MessageHeader>, String> {
     let conn = open_connection(app_handle)?;
 
     let parse_row = |row: &rusqlite::Row| -> rusqlite::Result<MessageHeader> {
@@ -855,28 +881,62 @@ pub fn load_messages_page(app_handle: &AppHandle, account_id: &str, folder: &str
     };
 
     let mut messages = Vec::new();
-    let fields = "uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id";
-    // A provider label is synced into its own tag:<id> mailbox. Its UIDs belong
-    // to that mailbox, so do not mix relationship matches from Inbox/Sent here.
-    if folder.eq_ignore_ascii_case("starred") {
-        let sql = format!("SELECT {fields} FROM messages WHERE account_id = ?1 AND flagged = 1 AND (?2 IS NULL OR date < (SELECT date FROM messages WHERE account_id = ?1 AND uid = ?2 AND flagged = 1 LIMIT 1)) ORDER BY date DESC, uid DESC LIMIT ?3");
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(rusqlite::params![account_id, before_uid, limit], parse_row).map_err(|e| e.to_string())?;
-        for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
-    } else if let Some(uid) = before_uid {
-        let sql = format!("SELECT {fields} FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid < ?3 ORDER BY uid DESC LIMIT ?4");
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(rusqlite::params![account_id, folder, uid, limit], parse_row).map_err(|e| e.to_string())?;
-        for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
-    } else {
-        let sql = format!("SELECT {fields} FROM messages WHERE account_id = ?1 AND folder = ?2 ORDER BY uid DESC LIMIT ?3");
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(rusqlite::params![account_id, folder, limit], parse_row).map_err(|e| e.to_string())?;
-        for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
-    }
+    let mut stmt = conn.prepare(TAG_MESSAGES_SQL).map_err(|e| e.to_string())?;
+    let cursor_folder=before_folder.or_else(||if folder=="starred"||folder.starts_with("tag:"){None}else{Some(folder)});
+    let rows = stmt.query_map(rusqlite::params![account_id, folder, folder.strip_prefix("tag:"), before_uid, cursor_folder, limit.min(100)], parse_row).map_err(|e| e.to_string())?;
+    for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
 
     populate_message_tags(&conn, account_id, &mut messages);
     Ok(messages)
+}
+
+const TAG_MESSAGES_SQL: &str = "WITH membership AS (
+    SELECT folder, uid FROM messages WHERE account_id = ?1 AND ((?2='starred' AND flagged=1) OR folder=?2)
+    UNION SELECT folder, message_uid AS uid FROM message_tags WHERE account_id = ?1 AND tag_id = ?3 AND ?3 IS NOT NULL
+), candidates AS (
+    SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id,
+    ROW_NUMBER() OVER (
+        PARTITION BY CASE WHEN NULLIF(m.message_id, '') IS NOT NULL THEN json_array('id',m.message_id,m.date,m.sender,m.subject) ELSE json_array('row',m.folder,m.uid) END
+        ORDER BY CASE m.folder WHEN 'inbox' THEN 0 WHEN 'sent' THEN 1 ELSE 2 END, m.folder, m.uid DESC
+    ) AS copy_rank
+    FROM membership membership JOIN messages m ON m.account_id = ?1 AND m.folder = membership.folder AND m.uid = membership.uid
+), visible AS (SELECT * FROM candidates WHERE copy_rank = 1), cursor AS (
+    SELECT date, folder, uid FROM messages WHERE account_id=?1 AND uid = ?4 AND (?5 IS NULL OR folder = ?5) LIMIT 1
+)
+SELECT uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id
+FROM visible WHERE ?4 IS NULL OR (date, folder, uid) < (SELECT date, folder, uid FROM cursor)
+ORDER BY date DESC, folder DESC, uid DESC LIMIT ?6";
+
+#[cfg(test)]
+mod tag_view_tests {
+    use super::*;
+
+    #[test]
+    fn membership_view_keeps_source_uids_deduplicates_and_pages_collisions() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE messages(account_id TEXT, folder TEXT, uid INTEGER, uid_validity INTEGER DEFAULT 9, subject TEXT DEFAULT '', sender TEXT DEFAULT '', date INTEGER DEFAULT 100, seen INTEGER DEFAULT 0, flagged INTEGER DEFAULT 0, snippet TEXT, has_attachments INTEGER DEFAULT 0, thread_id TEXT, recipient TEXT, message_id TEXT);
+            CREATE TABLE message_tags(account_id TEXT, folder TEXT, message_uid INTEGER, tag_id TEXT);
+            INSERT INTO messages(account_id,folder,uid,message_id) VALUES ('a','inbox',42,'x'),('a','tag:paper',7,'x'),('a','sent',42,'y'),('a','inbox',43,'z'),('a','inbox',12,'outsider'),('b','inbox',99,'private');
+            INSERT INTO message_tags VALUES ('a','inbox',42,'paper'),('a','sent',42,'paper'),('a','inbox',43,'paper'),('b','inbox',99,'paper');").unwrap();
+        let page = |uid: Option<u32>, folder: Option<&str>| {
+            conn.prepare(TAG_MESSAGES_SQL).unwrap().query_map(rusqlite::params!["a", "tag:paper", "paper", uid, folder, 1], |r| Ok((r.get::<_, String>(8)?, r.get::<_, u32>(0)?)))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        assert_eq!(page(None, None), vec![("sent".into(), 42)]);
+        assert_eq!(page(Some(42), Some("sent")), vec![("inbox".into(), 43)]);
+        assert_eq!(page(Some(43), Some("inbox")), vec![("inbox".into(), 42)]);
+        assert!(page(Some(42), Some("inbox")).is_empty());
+        conn.execute("UPDATE messages SET flagged=1 WHERE uid IN(42,43,7,99)",[]).unwrap();
+        let starred:Vec<(String,u32)>=conn.prepare(TAG_MESSAGES_SQL).unwrap().query_map(rusqlite::params!["a","starred",Option::<String>::None,Option::<u32>::None,Option::<String>::None,100],|r|Ok((r.get(8)?,r.get(0)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(starred,vec![("sent".into(),42),("inbox".into(),43),("inbox".into(),42)]);
+        let sql=format!("SELECT COUNT(DISTINCT {CACHED_MESSAGE_IDENTITY_SQL}) FROM messages WHERE account_id='a' AND flagged=1");
+        assert_eq!(conn.query_row(&sql,[],|r|r.get::<_,i64>(0)).unwrap(),3);
+        conn.execute_batch("INSERT INTO messages(account_id,folder,uid,message_id,subject) VALUES('a','inbox',44,'x','Different'),('a','inbox',45,'x','');").unwrap();
+        let inbox:Vec<u32>=conn.prepare(TAG_MESSAGES_SQL).unwrap().query_map(rusqlite::params!["a","inbox",Option::<String>::None,Option::<u32>::None,Option::<String>::None,100],|r|r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(inbox,vec![45,44,43,12]);
+        conn.execute_batch("INSERT INTO messages(account_id,folder,uid,flagged) VALUES('a','inbox',50,1),('a','sent',50,1);").unwrap();
+        assert_eq!(conn.query_row(&sql,[],|r|r.get::<_,i64>(0)).unwrap(),5);
+    }
 }
 
 pub fn get_folder_sync_state(app_handle: &AppHandle, account_id: &str, folder: &str) -> Result<Option<FolderSyncState>, String> {
@@ -1080,25 +1140,30 @@ pub fn enqueue_message_action(
     uid: u32,
     action: &str,
     desired: Option<bool>,
+    collapse_copies:bool,
 ) -> Result<i64, String> {
     let uid_validity = message_uid_validity(app_handle, account_id, folder, uid)?;
-    let conn = open_connection(app_handle)?;
+    let mut conn = open_connection(app_handle)?;
+    let tx=conn.transaction().map_err(|e|e.to_string())?;
+    if collapse_copies{crate::mail::tags::cache::supersede_flags_in_tx(&tx,account_id,folder,uid,uid_validity,action)?;}
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
-    conn.execute(
+    tx.execute(
         "INSERT INTO pending_message_actions (account_id, folder, mailbox, uid, action, desired, created_at, last_error, uid_validity)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)
          ON CONFLICT(account_id, folder, uid, action) DO UPDATE SET
             mailbox = excluded.mailbox, desired = excluded.desired, created_at = excluded.created_at, last_error = NULL, uid_validity = excluded.uid_validity",
         rusqlite::params![account_id, folder, mailbox, uid, action, desired.map(|v| if v { 1 } else { 0 }), now, uid_validity],
     ).map_err(|e| e.to_string())?;
-    conn.query_row(
+    let id=tx.query_row(
         "SELECT id FROM pending_message_actions WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND action = ?4",
         rusqlite::params![account_id, folder, uid, action],
         |row| row.get(0),
-    ).map_err(|e| e.to_string())
+    ).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e|e.to_string())?;
+    Ok(id)
 }
 
 pub fn list_pending_message_actions(app_handle: &AppHandle, account_id: &str, limit: u32) -> Result<Vec<PendingMessageAction>, String> {
@@ -1238,10 +1303,13 @@ pub fn update_global_notification_time(app_handle: &AppHandle, account_id: &str,
 
 pub fn get_global_unread_count(app_handle: &AppHandle, account_id: &str) -> Result<u32, String> {
     let conn = open_connection(app_handle)?;
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM messages WHERE account_id = ?1 AND seen = 0").map_err(|e| e.to_string())?;
+    let sql=format!("SELECT COUNT(DISTINCT {CACHED_MESSAGE_IDENTITY_SQL}) FROM messages WHERE account_id=?1 AND seen=0");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let count: u32 = stmt.query_row([account_id], |row| row.get(0)).unwrap_or(0);
     Ok(count)
 }
+
+pub const CACHED_MESSAGE_IDENTITY_SQL:&str="CASE WHEN NULLIF(message_id,'') IS NOT NULL THEN json_array('id',message_id,date,sender,subject) ELSE json_array('row',folder,uid) END";
 
 pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
     let conn = open_connection(app_handle)?;
@@ -1273,7 +1341,9 @@ pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &
         "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
          FROM messages m
          JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
-         WHERE m.account_id = ?1 AND ((?2 = 'starred' AND m.flagged = 1) OR m.folder = ?2) AND messages_fts MATCH ?3
+         WHERE m.account_id = ?1 AND ((?2 = 'starred' AND m.flagged = 1) OR m.folder = ?2 OR (?2 LIKE 'tag:%' AND EXISTS (
+             SELECT 1 FROM message_tags mt WHERE mt.account_id = m.account_id AND mt.folder = m.folder AND mt.message_uid = m.uid AND mt.tag_id = substr(?2, 5)
+         ))) AND messages_fts MATCH ?3
          ORDER BY bm25(messages_fts, 0.0, 8.0, 5.0, 3.0, 1.0, 1.0) ASC, m.date DESC
          LIMIT ?4"
     };
@@ -1331,6 +1401,7 @@ pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &
         }
     }
 
+    populate_message_tags(&conn, account_id, &mut messages);
     Ok(messages)
 }
 
@@ -1400,6 +1471,7 @@ pub fn get_messages_by_uids(app_handle: &AppHandle, account_id: &str, folder: &s
             messages.push(msg);
         }
     }
+    populate_message_tags(&conn, account_id, &mut messages);
     Ok(messages)
 }
 
@@ -1450,13 +1522,12 @@ pub fn upsert_tags(app_handle: &AppHandle, tags: &[Tag]) -> Result<(), String> {
 }
 
 pub fn delete_missing_tags(app_handle: &AppHandle, account_id: &str, keep_ids: &[String]) -> Result<(), String> {
-    let conn = open_connection(app_handle)?;
+    let mut conn = open_connection(app_handle)?;
+    let tx=conn.transaction().map_err(|e|e.to_string())?;
     
     if keep_ids.is_empty() {
-        conn.execute("DELETE FROM tags WHERE account_id = ?", rusqlite::params![account_id]).map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
+        tx.execute("DELETE FROM tags WHERE account_id = ?", rusqlite::params![account_id]).map_err(|e| e.to_string())?;
+    } else {
     let placeholders: String = keep_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!("DELETE FROM tags WHERE account_id = ? AND id NOT IN ({})", placeholders);
     
@@ -1465,7 +1536,12 @@ pub fn delete_missing_tags(app_handle: &AppHandle, account_id: &str, keep_ids: &
         params.push(id);
     }
     
-    conn.execute(&sql, rusqlite::params_from_iter(params)).map_err(|e| e.to_string())?;
+    tx.execute(&sql, rusqlite::params_from_iter(params)).map_err(|e| e.to_string())?;
+    }
+    let removed=tx.execute("DELETE FROM message_tags WHERE account_id=?1 AND NOT EXISTS(SELECT 1 FROM tags t WHERE t.account_id=?1 AND t.id=message_tags.tag_id)",[account_id]).map_err(|e|e.to_string())?;
+    let pruned=tx.execute("DELETE FROM messages WHERE account_id=?1 AND folder LIKE 'tag:%' AND NOT EXISTS(SELECT 1 FROM tags t WHERE t.account_id=?1 AND t.id=substr(messages.folder,5))",[account_id]).map_err(|e|e.to_string())?;
+    tx.commit().map_err(|e|e.to_string())?;
+    if removed+pruned>0{use tauri::Emitter;let _=app_handle.emit("mail:labels_changed",account_id);}
     Ok(())
 }
 

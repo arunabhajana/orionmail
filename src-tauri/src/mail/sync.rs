@@ -30,6 +30,7 @@ pub async fn sync_folder_with_options(
 ) -> Result<u32, String> {
     crate::auth::app_lock::require_unlocked(app_handle)?;
     crate::mail::message_actions::retry_pending(app_handle, &account).await;
+    crate::mail::tags::outbox::retry_pending(app_handle, &account).await;
     // Check global state for tags sync
     let global_state = database::get_global_sync_state(app_handle, &account.id).unwrap_or_default();
     let now = std::time::SystemTime::now()
@@ -37,7 +38,7 @@ pub async fn sync_folder_with_options(
         .unwrap()
         .as_secs() as i64;
 
-    if global_state.last_tag_sync_at.unwrap_or(0) + 900 < now {
+    if global_state.last_tag_sync_at.unwrap_or(0) + 60 < now {
         log::info!("Tags are older than 15 mins, syncing tags via provider.");
         if let Err(e) = crate::mail::tags::sync_tags(app_handle, &account).await {
             log::error!("Failed to sync tags: {}", e);
@@ -171,7 +172,7 @@ pub async fn sync_folder_with_options(
                 let fetch_results = session
                     .uid_fetch(
                         &range,
-                        "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO)])",
+                        "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID)])",
                     )
                     .map_err(|e| format!("IMAP Fetch Error: {}", e))?;
 
@@ -250,6 +251,9 @@ pub async fn sync_folder_with_options(
                 database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
             }
 
+            if matches!(account_clone.provider, crate::auth::account::MailProvider::Google) && num_new == 0 {
+                crate::mail::tags::gmail::refresh_cached_memberships(session,&folder_name_clone,&account_id,&app_handle_clone)?;
+            }
             let now = chrono::Utc::now().timestamp();
             if crate::mail::reconciliation::is_due(
                 sync_state.last_full_sync_at,

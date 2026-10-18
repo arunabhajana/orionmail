@@ -122,10 +122,11 @@ pub async fn sync_mail_folder(app_handle: AppHandle, folder: String, automatic: 
 }
 
 #[command]
-pub async fn get_folder_messages(app_handle: AppHandle, folder: String, before_uid: Option<u32>, limit: u32) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
+pub async fn get_folder_messages(app_handle: AppHandle, folder: String, before_uid: Option<u32>, before_folder: Option<String>, limit: u32) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    crate::mail::database::load_messages_page(&app_handle, &account.id, &folder, before_uid, limit)
+    tokio::task::spawn_blocking(move || crate::mail::database::load_messages_page_with_cursor(&app_handle, &account.id, &folder, before_uid, before_folder.as_deref(), limit.min(100)))
+        .await.map_err(|e| e.to_string())?
 }
 
 #[command]
@@ -189,7 +190,7 @@ pub async fn clear_local_cache(app_handle: AppHandle) -> Result<(), String> {
     let _sync = crate::mail::sync_manager::SYNC_LOCK.lock().await;
     let _mutation = crate::mail::message_actions::MUTATION_LOCK.lock().await;
     let conn = crate::mail::database::open_connection(&app_handle)?;
-    let pending: i64 = conn.query_row("SELECT COUNT(*) FROM pending_message_actions WHERE account_id = ?1", [&account.id], |row| row.get(0)).map_err(|e| e.to_string())?;
+    let pending: i64 = conn.query_row("SELECT (SELECT COUNT(*) FROM pending_message_actions WHERE account_id = ?1) + (SELECT COUNT(*) FROM pending_tag_edits WHERE account_id = ?1)", [&account.id], |row| row.get(0)).map_err(|e| e.to_string())?;
     if pending > 0 { return Err("Sync or resolve pending message actions before clearing cached mail.".into()); }
     crate::mail::database::clear_account_cache(&app_handle, &account.id)
 }

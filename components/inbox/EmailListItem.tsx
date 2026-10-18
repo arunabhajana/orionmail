@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo } from 'react';
-import { Paperclip, Star } from 'lucide-react';
+import { Loader2, Paperclip, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email, Tag } from '@/lib/types';
 import { mailInitials, contactFromHeader, splitHeaderAddresses } from '@/lib/mail-display';
@@ -42,6 +42,7 @@ export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, 
                 {(tags.length > 0 || email.attachments.length > 0) && <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-hidden">
                     {tags.slice(0, 2).map(tag => <span key={tag.id} className="inline-flex max-w-28 items-center gap-1.5 truncate rounded-md bg-black/[0.035] px-1.5 py-0.5 text-[10px] text-muted-foreground dark:bg-white/[0.05]" title={tag.name}><span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: tag.bg_color || '#94a3b8' }} /><span className="truncate">{tag.name}</span></span>)}
                     {tags.length > 2 && <span className="text-[10px] text-muted-foreground">+{tags.length - 2}</span>}
+                    {email.tagsPending && <Loader2 aria-label="Saving tags to Gmail" className="size-3 shrink-0 animate-spin text-primary" />}
                     {email.attachments.length > 0 && <Paperclip aria-label="Has attachments" className="ml-auto size-3 text-muted-foreground" />}
                 </div>}
             </div>

@@ -1,4 +1,8 @@
 pub mod gmail;
+pub mod assignment;
+pub mod cache;
+pub mod refresh;
+pub mod outbox;
 
 use crate::auth::account::{Account, MailProvider};
 use tauri::AppHandle;

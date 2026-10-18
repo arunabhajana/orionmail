@@ -14,6 +14,7 @@ pub enum SessionKind {
     Prefetch,
     Idle,
     Search,
+    Labels,
 }
 
 pub struct ImapSession {
