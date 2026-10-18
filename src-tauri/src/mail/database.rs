@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, Result, OptionalExtension};
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
@@ -13,6 +13,7 @@ pub struct FolderSyncState {
     pub sync_in_progress: bool,
     pub last_full_sync_at: i64,
     pub last_error: Option<String>,
+    pub uid_validity: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, Default)]
@@ -245,7 +246,7 @@ pub fn get_db_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_dir.join("orbitmail.db"))
 }
 
-fn open_connection(app_handle: &AppHandle) -> Result<Connection, String> {
+pub(crate) fn open_connection(app_handle: &AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(get_db_path(app_handle)?).map_err(|e| e.to_string())?;
     conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
     Ok(conn)
@@ -303,6 +304,64 @@ mod account_scope_tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE folder_sync_state (folder TEXT PRIMARY KEY, last_uid INTEGER);").unwrap();
         assert!(!is_account_scoped(&conn, "folder_sync_state", &["account_id", "folder"]).unwrap());
+    }
+}
+
+fn migrate_reconciliation_identity(conn: &Connection) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    if !table_columns(&tx, "folder_sync_state")?.iter().any(|(name, _)| name == "uid_validity") {
+        tx.execute("ALTER TABLE folder_sync_state ADD COLUMN uid_validity INTEGER", ()).map_err(|e| e.to_string())?;
+        tx.execute_batch("UPDATE folder_sync_state SET uid_validity = (
+            SELECT CASE WHEN MIN(m.uid_validity) = MAX(m.uid_validity) AND COUNT(*) = COUNT(m.uid_validity)
+            THEN MIN(m.uid_validity) END FROM messages m
+            WHERE m.account_id = folder_sync_state.account_id AND m.folder = folder_sync_state.folder);")
+            .map_err(|e| e.to_string())?;
+    }
+    if !table_columns(&tx, "pending_message_actions")?.iter().any(|(name, _)| name == "uid_validity") {
+        tx.execute("ALTER TABLE pending_message_actions ADD COLUMN uid_validity INTEGER", ()).map_err(|e| e.to_string())?;
+        tx.execute_batch("UPDATE pending_message_actions SET uid_validity = (
+            SELECT m.uid_validity FROM messages m WHERE m.account_id = pending_message_actions.account_id
+            AND m.folder = pending_message_actions.folder AND m.uid = pending_message_actions.uid);
+            UPDATE pending_message_actions SET last_error = 'CONFLICT: Message UIDVALIDITY is unavailable; refresh before retrying'
+            WHERE uid_validity IS NULL OR uid_validity = 0;").map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod reconciliation_identity_tests {
+    use super::*;
+
+    fn fixture() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE messages(account_id TEXT,folder TEXT,uid INTEGER,uid_validity INTEGER);
+            CREATE TABLE folder_sync_state(account_id TEXT,folder TEXT,last_uid INTEGER);
+            CREATE TABLE pending_message_actions(account_id TEXT,folder TEXT,uid INTEGER,last_error TEXT);
+            INSERT INTO messages VALUES ('a','inbox',1,7),('a','inbox',2,7),('b','inbox',1,8);
+            INSERT INTO folder_sync_state VALUES ('a','inbox',2),('b','inbox',1),('a','tag:empty',100);
+            INSERT INTO pending_message_actions VALUES ('a','inbox',1,NULL),('a','inbox',99,NULL);").unwrap();
+        conn
+    }
+    #[test]
+    fn binds_existing_cursors_and_actions_without_crossing_accounts_or_losing_mail() {
+        let conn = fixture();
+        migrate_reconciliation_identity(&conn).unwrap();
+        migrate_reconciliation_identity(&conn).unwrap();
+        let epoch = |account: &str, folder: &str| conn.query_row("SELECT uid_validity FROM folder_sync_state WHERE account_id=?1 AND folder=?2", rusqlite::params![account,folder], |r| r.get::<_,Option<u32>>(0)).unwrap();
+        assert_eq!(epoch("a","inbox"),Some(7));
+        assert_eq!(epoch("b","inbox"),Some(8));
+        assert_eq!(epoch("a","tag:empty"),None);
+        assert_eq!(conn.query_row("SELECT uid_validity FROM pending_message_actions WHERE uid=1",[],|r|r.get::<_,u32>(0)).unwrap(),7);
+        assert!(conn.query_row("SELECT last_error FROM pending_message_actions WHERE uid=99",[],|r|r.get::<_,String>(0)).unwrap().starts_with("CONFLICT:"));
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM messages",[],|r|r.get::<_,i64>(0)).unwrap(),3);
+    }
+    #[test]
+    fn identity_migration_rolls_back_both_columns_if_backfill_fails() {
+        let conn = fixture();
+        conn.execute_batch("CREATE TRIGGER fail_backfill BEFORE UPDATE ON pending_message_actions BEGIN SELECT RAISE(FAIL,'simulated failure'); END;").unwrap();
+        assert!(migrate_reconciliation_identity(&conn).is_err());
+        assert!(!table_columns(&conn,"folder_sync_state").unwrap().iter().any(|(name,_)|name=="uid_validity"));
+        assert!(!table_columns(&conn,"pending_message_actions").unwrap().iter().any(|(name,_)|name=="uid_validity"));
     }
 }
 
@@ -569,6 +628,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
         (),
     ).map_err(|e| e.to_string())?;
 
+
     let mut stmt = conn.prepare("PRAGMA table_info(global_sync_state)").unwrap();
     let mut has_last_tag_sync_at = false;
     let rows = stmt.query_map([], |row| {
@@ -633,6 +693,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     ).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_message_actions_account ON pending_message_actions(account_id, id)", ())
         .map_err(|e| e.to_string())?;
+    migrate_reconciliation_identity(&conn)?;
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_message_tags_message ON message_tags(account_id, folder, message_uid)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_message_tags_tag ON message_tags(account_id, tag_id)", ()).map_err(|e| e.to_string())?;
@@ -646,7 +707,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
 pub fn get_mailbox_validity(app_handle: &AppHandle, account_id: &str, mailbox: &str) -> Result<Option<u32>, String> {
     let conn = open_connection(app_handle)?;
     let mut stmt = conn.prepare("SELECT uid_validity FROM mailbox_state WHERE account_id = ?1 AND mailbox = ?2").map_err(|e| e.to_string())?;
-    let validity = stmt.query_row(rusqlite::params![account_id, mailbox], |row| row.get(0)).ok();
+    let validity = stmt.query_row(rusqlite::params![account_id, mailbox], |row| row.get(0)).optional().map_err(|e| e.to_string())?;
 
     Ok(validity)
 }
@@ -668,6 +729,19 @@ pub fn clear_messages(app_handle: &AppHandle, account_id: &str, folder: &str) ->
     conn.execute("DELETE FROM messages WHERE account_id = ?1 AND folder = ?2", rusqlite::params![account_id, folder]).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+pub fn reset_mailbox_epoch(app: &AppHandle, account: &str, folder: &str, mailbox: &str, validity: u32) -> Result<usize, String> {
+    let mut conn = open_connection(app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM messages WHERE account_id = ?1 AND folder = ?2", rusqlite::params![account, folder]).map_err(|e| e.to_string())?;
+    let conflicts = tx.execute("UPDATE pending_message_actions SET last_error = 'CONFLICT: Mailbox UIDVALIDITY changed; action was not replayed'
+        WHERE account_id = ?1 AND mailbox = ?2 AND (uid_validity IS NULL OR uid_validity != ?3) AND (last_error IS NULL OR last_error NOT LIKE 'CONFLICT:%')",
+        rusqlite::params![account, mailbox, validity]).map_err(|e| e.to_string())?;
+    tx.execute("INSERT OR REPLACE INTO mailbox_state (account_id, mailbox, uid_validity) VALUES (?1,?2,?3)", rusqlite::params![account, mailbox, validity]).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE folder_sync_state SET last_uid = 0, last_full_sync_at = 0, uid_validity = ?3 WHERE account_id = ?1 AND folder = ?2", rusqlite::params![account, folder, validity]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(conflicts)
 }
 
 pub fn clear_account_cache(app_handle: &AppHandle, account_id: &str) -> Result<(), String> {
@@ -811,7 +885,7 @@ pub fn load_messages_page(app_handle: &AppHandle, account_id: &str, folder: &str
 pub fn get_folder_sync_state(app_handle: &AppHandle, account_id: &str, folder: &str) -> Result<Option<FolderSyncState>, String> {
     let conn = open_connection(app_handle)?;
 
-    let mut stmt = conn.prepare("SELECT account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error FROM folder_sync_state WHERE account_id = ?1 AND folder = ?2").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error, uid_validity FROM folder_sync_state WHERE account_id = ?1 AND folder = ?2").map_err(|e| e.to_string())?;
     let state = stmt.query_row(rusqlite::params![account_id, folder], |row| {
         Ok(FolderSyncState {
             account_id: row.get(0)?,
@@ -821,8 +895,9 @@ pub fn get_folder_sync_state(app_handle: &AppHandle, account_id: &str, folder: &
             sync_in_progress: row.get::<_, i32>(4)? != 0,
             last_full_sync_at: row.get(5)?,
             last_error: row.get(6)?,
+            uid_validity: row.get(7)?,
         })
-    }).ok();
+    }).optional().map_err(|e| e.to_string())?;
 
     Ok(state)
 }
@@ -831,7 +906,7 @@ pub fn update_folder_sync_state(app_handle: &AppHandle, state: &FolderSyncState)
     let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO folder_sync_state (account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT OR REPLACE INTO folder_sync_state (account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error, uid_validity) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             state.account_id,
             state.folder,
@@ -839,7 +914,8 @@ pub fn update_folder_sync_state(app_handle: &AppHandle, state: &FolderSyncState)
             state.last_synced_at,
             if state.sync_in_progress { 1 } else { 0 },
             state.last_full_sync_at,
-            state.last_error
+            state.last_error,
+            state.uid_validity
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -989,6 +1065,14 @@ pub struct PendingMessageAction {
     pub uid: u32,
     pub action: String,
     pub desired: Option<bool>,
+    pub uid_validity: Option<u32>,
+}
+
+pub fn message_uid_validity(app: &AppHandle, account: &str, folder: &str, uid: u32) -> Result<u32, String> {
+    let validity: Option<u32> = open_connection(app)?.query_row(
+        "SELECT uid_validity FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid = ?3",
+        rusqlite::params![account, folder, uid], |row| row.get(0)).map_err(|e| e.to_string())?;
+    validity.filter(|value| *value != 0).ok_or_else(|| "Message identity is unavailable. Refresh this folder before changing the message.".into())
 }
 
 pub fn enqueue_message_action(
@@ -1000,17 +1084,18 @@ pub fn enqueue_message_action(
     action: &str,
     desired: Option<bool>,
 ) -> Result<i64, String> {
+    let uid_validity = message_uid_validity(app_handle, account_id, folder, uid)?;
     let conn = open_connection(app_handle)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
     conn.execute(
-        "INSERT INTO pending_message_actions (account_id, folder, mailbox, uid, action, desired, created_at, last_error)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)
+        "INSERT INTO pending_message_actions (account_id, folder, mailbox, uid, action, desired, created_at, last_error, uid_validity)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)
          ON CONFLICT(account_id, folder, uid, action) DO UPDATE SET
-            mailbox = excluded.mailbox, desired = excluded.desired, created_at = excluded.created_at, last_error = NULL",
-        rusqlite::params![account_id, folder, mailbox, uid, action, desired.map(|v| if v { 1 } else { 0 }), now],
+            mailbox = excluded.mailbox, desired = excluded.desired, created_at = excluded.created_at, last_error = NULL, uid_validity = excluded.uid_validity",
+        rusqlite::params![account_id, folder, mailbox, uid, action, desired.map(|v| if v { 1 } else { 0 }), now, uid_validity],
     ).map_err(|e| e.to_string())?;
     conn.query_row(
         "SELECT id FROM pending_message_actions WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND action = ?4",
@@ -1022,14 +1107,14 @@ pub fn enqueue_message_action(
 pub fn list_pending_message_actions(app_handle: &AppHandle, account_id: &str, limit: u32) -> Result<Vec<PendingMessageAction>, String> {
     let conn = open_connection(app_handle)?;
     let mut stmt = conn.prepare(
-        "SELECT id, account_id, folder, mailbox, uid, action, desired FROM pending_message_actions
-         WHERE account_id = ?1 ORDER BY id LIMIT ?2",
+        "SELECT id, account_id, folder, mailbox, uid, action, desired, uid_validity FROM pending_message_actions
+         WHERE account_id = ?1 AND (last_error IS NULL OR last_error NOT LIKE 'CONFLICT:%') ORDER BY id LIMIT ?2",
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map(rusqlite::params![account_id, limit], |row| {
         let desired: Option<i32> = row.get(6)?;
         Ok(PendingMessageAction {
             id: row.get(0)?, account_id: row.get(1)?, folder: row.get(2)?, mailbox: row.get(3)?,
-            uid: row.get(4)?, action: row.get(5)?, desired: desired.map(|v| v != 0),
+            uid: row.get(4)?, action: row.get(5)?, desired: desired.map(|v| v != 0), uid_validity: row.get(7)?,
         })
     }).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())

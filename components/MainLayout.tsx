@@ -12,6 +12,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission, onAction, registerActionTypes, sendNotification } from '@tauri-apps/plugin-notification';
 import { useSync } from '@/components/SyncContext';
+import { useAuth } from '@/components/AuthContext';
 import LogoSpinner from '@/components/LogoSpinner';
 import Sidebar from '@/components/Sidebar';
 import EmailList from '@/components/EmailList';
@@ -33,6 +34,9 @@ interface FolderSearchState {
 }
 
 export default function MainLayout() {
+    const { user } = useAuth();
+    const activeAccountRef = useRef(user?.id);
+    useEffect(() => { activeAccountRef.current = user?.id; }, [user?.id]);
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
     const [isComposeOpen, setIsComposeOpen] = useState(false);
     const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
@@ -54,6 +58,7 @@ export default function MainLayout() {
     const [hasMore, setHasMore] = useState(true);
     const emailListContainerRef = useRef<HTMLDivElement>(null);
     const emailsRef = useRef<Email[]>([]);
+    const cacheRevisionRef = useRef(0);
 
     const [folderSearchContexts, setFolderSearchContexts] = useState<Record<string, FolderSearchState>>({});
 
@@ -318,6 +323,7 @@ export default function MainLayout() {
     };
 
     const fetchCache = async (folderToFetch = currentFolderRef.current) => {
+        const revision = cacheRevisionRef.current;
         if (folderToFetch === "drafts" || folderToFetch === "trash") {
             setEmails([]);
             setHasMore(false);
@@ -326,6 +332,7 @@ export default function MainLayout() {
 
         try {
             const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
+            if (revision !== cacheRevisionRef.current || folderToFetch !== currentFolderRef.current) return false;
             if (cached && cached.length > 0) {
                 const formattedEmails = cached.map(formatEmailFromMessage);
                 const deduped = dedupeEmails(formattedEmails);
@@ -350,11 +357,18 @@ export default function MainLayout() {
     };
 
     const refreshNewEmails = async (folderToFetch = currentFolderRef.current) => {
+        const revision = cacheRevisionRef.current;
         if (folderToFetch === "drafts" || folderToFetch === "trash") return;
 
         try {
             const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
-            if (!cached || cached.length === 0) return;
+            if (revision !== cacheRevisionRef.current || folderToFetch !== currentFolderRef.current) return;
+            if (!cached || cached.length === 0) {
+                setEmails([]);
+                setSelectedEmailId(null);
+                fetchUnreadCounts();
+                return;
+            }
 
             const existingEmails = emailsRef.current;
             if (existingEmails.length === 0) {
@@ -367,7 +381,7 @@ export default function MainLayout() {
             setEmails(prev => {
                 // Only merge if the current folder matches what we fetched
                 // (guards against race conditions when switching folders)
-                if (currentFolderRef.current !== folderToFetch && folderToFetch !== "starred") {
+                if (currentFolderRef.current !== folderToFetch || revision !== cacheRevisionRef.current) {
                     return prev;
                 }
                 const merged = [...formattedEmails, ...prev];
@@ -387,6 +401,7 @@ export default function MainLayout() {
     };
 
     const loadMoreEmails = async () => {
+        const revision = cacheRevisionRef.current;
         const currentEmails = emailsRef.current;
         if (isLoadingMore || !hasMore || currentEmails.length === 0 || currentFolder === "drafts" || currentFolder === "trash") return;
         setIsLoadingMore(true);
@@ -395,11 +410,13 @@ export default function MainLayout() {
             const beforeUid = lastEmail.uid;
 
             const nextBatch: any[] = await invoke('get_folder_messages', { folder: currentFolder, beforeUid, limit: 50 });
+            if (revision !== cacheRevisionRef.current || currentFolderRef.current !== currentFolder) return;
             if (nextBatch.length === 0) {
                 setHasMore(false);
             } else {
                 const formattedEmails = nextBatch.map(formatEmailFromMessage);
                 setEmails(prev => {
+                    if (revision !== cacheRevisionRef.current || currentFolderRef.current !== currentFolder) return prev;
                     const merged = [...prev, ...formattedEmails];
                     return dedupeEmails(merged);
                 });
@@ -623,15 +640,38 @@ export default function MainLayout() {
         let unlistenStarted: (() => void) | undefined;
         let unlistenFinished: (() => void) | undefined;
         let unlistenError: (() => void) | undefined;
+        let unlistenReconciled: (() => void) | undefined;
+        let unlistenConflict: (() => void) | undefined;
 
         const setupListener = async () => {
+            unlistenReconciled = await listen<{ account_id: string; folder: string; updated_flags: { uid: number; seen: boolean; flagged: boolean }[]; removed_uids: number[] }>('mail:reconciled', event => {
+                if (event.payload.account_id !== activeAccountRef.current) return;
+                cacheRevisionRef.current += 1;
+                const { folder, updated_flags, removed_uids } = event.payload;
+                const removed = new Set(removed_uids);
+                const flags = new Map(updated_flags.map(item => [item.uid, item]));
+                const reconcile = (items: Email[]) => items
+                    .filter(item => item.folder !== folder || !removed.has(item.uid))
+                    .map(item => {
+                        const next = item.folder === folder ? flags.get(item.uid) : undefined;
+                        return next ? { ...item, unread: !next.seen, starred: next.flagged } : item;
+                    });
+                setEmails(reconcile);
+                setFolderSearchContexts(prev => Object.fromEntries(Object.entries(prev).map(([key, context]) => [key, { ...context, searchResults: reconcile(context.searchResults) }])));
+                setSelectedEmailId(previous => emailsRef.current.some(item => item.id === previous && item.folder === folder && removed.has(item.uid)) ? null : previous);
+                fetchUnreadCounts();
+            });
+            unlistenConflict = await listen<{ account_id: string; error: string }>('mail:action_conflict', event => {
+                if (event.payload.account_id !== activeAccountRef.current) return;
+                toast.error('A queued message action needs attention', { description: event.payload.error });
+            });
             unlistenUpdated = await listen<string>('mail:updated', async (event) => {
                 const syncedFolder = event.payload;
                 const activeFolder = currentFolderRef.current;
 
                 const isRelevant = 
                     activeFolder === syncedFolder ||
-                    (activeFolder === 'starred' && (syncedFolder === 'inbox' || syncedFolder === 'sent'));
+                    (activeFolder === 'starred' && syncedFolder !== 'starred');
 
                 if (!isRelevant) return;
 
@@ -680,6 +720,8 @@ export default function MainLayout() {
             if (unlistenStarted) unlistenStarted();
             if (unlistenFinished) unlistenFinished();
             if (unlistenError) unlistenError();
+            if (unlistenReconciled) unlistenReconciled();
+            if (unlistenConflict) unlistenConflict();
         };
     }, []);
 

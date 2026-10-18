@@ -1,22 +1,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-    User,
-    Palette,
-    Bell,
-    Shield,
-    Info,
-    LogOut,
-    ChevronLeft,
-    MonitorSmartphone,
-    Terminal,
-    Sparkles,
-    Search, X, Mail, ShieldCheck, Zap, Inbox, Rocket, Code2, Heart
-} from 'lucide-react';
+import { LogOut, ChevronLeft, Search, X, ShieldCheck, Zap, Inbox, Rocket, Code2, Heart } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AnimatePresence, motion } from 'framer-motion';
-import Link from 'next/link';
+import { motion } from 'framer-motion';
+import Image from 'next/image';
+import { SETTINGS_TABS, SettingsTab, SettingsSearchResult, searchSettings } from '@/components/settings/settingsSearch';
+import { SettingsSearchResults } from '@/components/settings/SettingsSearchResults';
 
 // Modular Components
 import { AccountSection, SectionHeader } from '@/components/settings/AccountSection';
@@ -32,145 +22,95 @@ import { UnsavedChangesBar } from '@/components/settings/UnsavedChangesBar';
 import { ConfirmNavigationDialog } from '@/components/settings/ConfirmNavigationDialog';
 import { useRouter } from 'next/navigation';
 import packageInfo from '@/package.json';
-
-// --- Types ---
-
-type SettingsTab = 'account' | 'appearance' | 'notifications' | 'smartactions' | 'security' | 'system' | 'developer' | 'about';
-
-interface SettingsTabConfig {
-    id: SettingsTab;
-    label: string;
-    icon: React.ElementType;
-}
-
-interface SettingsSearchResult {
-    id: string;
-    title: string;
-    section: SettingsTab;
-    keywords: string;
-}
-
-const SETTINGS_TABS: SettingsTabConfig[] = [
-    { id: 'account', label: 'Account', icon: User },
-    { id: 'appearance', label: 'Appearance', icon: Palette },
-    { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'smartactions', label: 'Smart Actions', icon: Sparkles },
-    { id: 'security', label: 'Privacy & Security', icon: Shield },
-    { id: 'system', label: 'System & Behavior', icon: MonitorSmartphone },
-    { id: 'developer', label: 'Developer', icon: Terminal },
-    { id: 'about', label: 'About', icon: Info },
-];
-
-const SETTINGS_SEARCH_INDEX: SettingsSearchResult[] = [
-    { id: 'account.alias', title: 'Alias', section: 'account', keywords: 'display name profile name nickname' },
-    { id: 'account.email', title: 'Email address', section: 'account', keywords: 'connected account mailbox' },
-    { id: 'appearance.light', title: 'Light mode', section: 'appearance', keywords: 'theme brightness white' },
-    { id: 'appearance.dark', title: 'Dark mode', section: 'appearance', keywords: 'theme night black' },
-    { id: 'appearance.system', title: 'Use system theme', section: 'appearance', keywords: 'theme automatic windows' },
-    { id: 'appearance.density', title: 'Message density', section: 'appearance', keywords: 'compact default relaxed spacing' },
-    { id: 'appearance.accent', title: 'Accent color', section: 'appearance', keywords: 'blue purple rose emerald orange color' },
-    { id: 'notifications.desktop', title: 'Desktop notifications', section: 'notifications', keywords: 'new email alerts push notification' },
-    { id: 'notifications.sound-toggle', title: 'Play notification sound', section: 'notifications', keywords: 'audio ping alert' },
-    { id: 'notifications.sound', title: 'Notification sound', section: 'notifications', keywords: 'tone chime bell orbit' },
-    { id: 'notifications.unread', title: 'Show unread count', section: 'notifications', keywords: 'badge sidebar taskbar count' },
-    { id: 'smartactions.global', title: 'Smart Actions', section: 'smartactions', keywords: 'automatically extract email information' },
-    { id: 'smartactions.otp', title: 'Authentication codes (OTP)', section: 'smartactions', keywords: '2fa one-time password login code' },
-    { id: 'smartactions.meetings', title: 'Meetings & events', section: 'smartactions', keywords: 'calendar join links invites' },
-    { id: 'smartactions.commerce', title: 'Commerce & tracking', section: 'smartactions', keywords: 'orders receipts packages shipping' },
-    { id: 'smartactions.travel', title: 'Travel & bookings', section: 'smartactions', keywords: 'flight hotel itinerary' },
-    { id: 'security.2fa', title: 'Two-factor authentication', section: 'security', keywords: '2fa account login' },
-    { id: 'security.app-lock', title: 'Windows Hello app lock', section: 'security', keywords: 'require password biometric launch unlock pin' },
-    { id: 'security.images', title: 'Block external images', section: 'security', keywords: 'privacy tracking pixels remote images' },
-    { id: 'security.blocklist', title: 'Blocked senders', section: 'security', keywords: 'blocklist spam addresses' },
-    { id: 'security.cache', title: 'Clear local cache', section: 'security', keywords: 'delete downloaded mail storage data' },
-    { id: 'system.autostart', title: 'Launch at startup', section: 'system', keywords: 'start windows login boot automatically' },
-    { id: 'system.hidden', title: 'Start hidden', section: 'system', keywords: 'startup tray minimized' },
-    { id: 'system.tray', title: 'Minimize to tray', section: 'system', keywords: 'close window background behavior' },
-    { id: 'system.cache', title: 'Clear local cache', section: 'system', keywords: 'delete downloaded emails storage resync' },
-    { id: 'developer.tools', title: 'Developer tools', section: 'developer', keywords: 'debug experimental diagnostics simulate errors' },
-    { id: 'about.version', title: 'App version', section: 'about', keywords: 'release build about OrionMail' },
-];
+import { toast } from 'sonner';
 
 // --- Main Page Component ---
 
 function SettingsPageInner() {
     const [activeTab, setActiveTab] = useState<SettingsTab>('account');
-    const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
     const [pendingSearchResult, setPendingSearchResult] = useState<SettingsSearchResult | null>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
-    const searchPanelRef = useRef<HTMLDivElement>(null);
+    const contentRef = useRef<HTMLElement>(null);
     const { user, logout } = useAuth();
     const router = useRouter();
     const { dirtySections, requestNavigation } = useSettings();
-    const searchResults = useMemo(() => {
-        const query = searchQuery.trim().toLowerCase();
-        if (!query) return [];
-        const words = query.split(/\s+/);
-        return SETTINGS_SEARCH_INDEX.map(result => {
-            const haystack = `${result.title} ${result.keywords} ${SETTINGS_TABS.find(tab => tab.id === result.section)?.label ?? ''}`.toLowerCase();
-            const score = words.reduce((total, word) => {
-                if (result.title.toLowerCase() === word) return total + 10;
-                if (result.title.toLowerCase().startsWith(word)) return total + 6;
-                if (result.title.toLowerCase().includes(word)) return total + 4;
-                if (haystack.includes(word)) return total + 1;
-                return total;
-            }, 0);
-            return { ...result, score, matches: words.every(word => haystack.includes(word)) };
-        }).filter(result => result.matches)
-            .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
-            .slice(0, 8);
-    }, [searchQuery]);
+    const searchResults = useMemo(() => searchSettings(searchQuery), [searchQuery]);
+    const isSearching = Boolean(searchQuery.trim());
+    const visibleTabs = isSearching ? SETTINGS_TABS.filter(tab => searchResults.some(result => result.section === tab.id)) : SETTINGS_TABS;
 
     const closeSearch = () => {
-        setSearchOpen(false);
         setSearchQuery('');
         setSelectedSearchIndex(0);
         setPendingSearchResult(null);
+        contentRef.current?.scrollTo({ top: 0 });
     };
 
     const focusSetting = (result: SettingsSearchResult) => {
-        closeSearch();
-        requestNavigation(() => {
+        const openResult = () => {
+            closeSearch();
             setActiveTab(result.section);
             setPendingSearchResult(result);
-        });
+        };
+        if (result.section === activeTab) openResult();
+        else requestNavigation(openResult);
     };
 
     useEffect(() => {
-        setSelectedSearchIndex(0);
-    }, [searchQuery]);
-
-    useEffect(() => {
-        if (!searchOpen) return;
-        const onPointerDown = (event: PointerEvent) => {
-            if (!searchPanelRef.current?.contains(event.target as Node) && !searchInputRef.current?.contains(event.target as Node)) closeSearch();
+        const handleShortcut = (event: KeyboardEvent) => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+                event.preventDefault();
+                searchInputRef.current?.focus();
+                searchInputRef.current?.select();
+            }
         };
-        document.addEventListener('pointerdown', onPointerDown);
-        return () => document.removeEventListener('pointerdown', onPointerDown);
-    }, [searchOpen]);
+        window.addEventListener('keydown', handleShortcut);
+        return () => window.removeEventListener('keydown', handleShortcut);
+    }, []);
 
     useEffect(() => {
         if (!pendingSearchResult || pendingSearchResult.section !== activeTab) return;
-        const frame = window.requestAnimationFrame(() => {
-            const target = document.querySelector<HTMLElement>(`[data-setting-id="${pendingSearchResult.id}"]`);
-            if (target) {
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                target.classList.add('ring-2', 'ring-primary/50', 'rounded-xl');
-                const focusable = target.matches('button, input, select') ? target : target.querySelector<HTMLElement>('button, input, select');
-                focusable?.focus({ preventScroll: true });
-                window.setTimeout(() => target.classList.remove('ring-2', 'ring-primary/50', 'rounded-xl'), 1800);
-            }
+        let target: HTMLElement | null = null;
+        let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+        const tryFocus = () => {
+            if (target) return;
+            target = contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${pendingSearchResult.id}"]`) ?? null;
+            if (!target) return;
+            observer.disconnect();
+            clearTimeout(waitTimer);
+            target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+            target.classList.add('ring-2', 'ring-primary/50');
+            const focusable = target.matches('button, input, select') ? target : target.querySelector<HTMLElement>('button, input, select');
+            focusable?.focus({ preventScroll: true });
+            highlightTimer = setTimeout(() => setPendingSearchResult(null), 1800);
+        };
+        // Some controls, such as Windows Hello, appear after native availability
+        // checks. Wait for that control rather than losing the requested focus.
+        const observer = new MutationObserver(tryFocus);
+        const waitTimer = setTimeout(() => {
+            toast.info('This setting is not available on this device.');
             setPendingSearchResult(null);
-        });
-        return () => window.cancelAnimationFrame(frame);
+        }, 3000);
+        if (contentRef.current) observer.observe(contentRef.current, { childList: true, subtree: true });
+        tryFocus();
+        return () => {
+            observer.disconnect();
+            clearTimeout(waitTimer);
+            clearTimeout(highlightTimer);
+            target?.classList.remove('ring-2', 'ring-primary/50');
+        };
     }, [activeTab, pendingSearchResult]);
 
     const handleTabClick = (tabId: SettingsTab) => {
-        if (tabId === activeTab) return;
+        if (tabId === activeTab) {
+            if (isSearching) closeSearch();
+            return;
+        }
         requestNavigation(() => {
+            closeSearch();
             setActiveTab(tabId);
+            contentRef.current?.scrollTo({ top: 0 });
         });
     };
 
@@ -182,89 +122,54 @@ function SettingsPageInner() {
 
     return (
         <div className="flex h-full w-full bg-[#FAFAFA] dark:bg-black text-slate-900 dark:text-white transition-colors duration-200">
-            {/* Left Sidebar Navigation */}
-            <aside className="w-64 flex flex-col border-r border-white/20 dark:border-white/5 bg-white/40 dark:bg-[#1C1C21]/70 backdrop-blur-2xl transition-colors relative overflow-hidden">
-                {/* Dark Mode Purple Mesh Overlay */}
-                <div className="absolute inset-0 z-0 hidden dark:block pointer-events-none opacity-40">
-                    <div className="absolute top-[-10%] left-[-10%] w-[120%] h-[50%] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-purple-900/40 via-violet-900/10 to-transparent blur-3xl rounded-full mix-blend-screen" />
-                    <div className="absolute bottom-[-10%] right-[-10%] w-[100%] h-[50%] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-fuchsia-900/30 via-purple-900/10 to-transparent blur-3xl rounded-full mix-blend-screen" />
-                </div>
-                {/* Content Wrapper */}
-                <div className="relative z-10 flex flex-col h-full w-full p-4">
-                    <div className="mb-6 px-2">
-                        <button onClick={handleBackClick} className="flex items-center gap-2 text-muted-foreground dark:text-white/60 hover:text-foreground dark:hover:text-white/90 transition-colors mb-6 font-medium dark:font-normal">
-                            <ChevronLeft className="w-4 h-4" />
-                            <span className="text-sm">Back to Inbox</span>
-                        </button>
-                        <div className="flex items-center justify-between">
-                            <h1 className="text-2xl font-bold tracking-tight text-foreground dark:text-white/90">Settings</h1>
-                            <button type="button" aria-label={searchOpen ? 'Close settings search' : 'Search settings'} onClick={() => { if (searchOpen) closeSearch(); else { setSearchOpen(true); window.setTimeout(() => searchInputRef.current?.focus(), 0); } }} className="p-2 rounded-lg text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground transition-colors">
-                                {searchOpen ? <X className="w-4 h-4" /> : <Search className="w-4 h-4" />}
-                            </button>
-                        </div>
+            <aside className="w-60 lg:w-64 shrink-0 flex flex-col border-r border-black/[0.07] dark:border-white/[0.07] bg-[#f5f5f7] dark:bg-[#17181b]">
+                <div className="px-4 pt-6 pb-4">
+                    <div className="mb-5 flex items-center justify-between gap-3">
+                        <h1 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Settings</h1>
+                        <button type="button" onClick={handleBackClick} className="flex items-center gap-1.5 rounded-lg border border-black/[0.07] dark:border-white/[0.08] px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors"><ChevronLeft className="size-3.5" />Back</button>
                     </div>
-
-                    {searchOpen && <div ref={searchPanelRef} className="relative mb-4">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                        <input ref={searchInputRef} value={searchQuery} onChange={event => setSearchQuery(event.target.value)} onKeyDown={event => {
-                            if (event.key === 'ArrowDown' && searchResults.length) { event.preventDefault(); setSelectedSearchIndex(index => (index + 1) % searchResults.length); }
-                            if (event.key === 'ArrowUp' && searchResults.length) { event.preventDefault(); setSelectedSearchIndex(index => (index - 1 + searchResults.length) % searchResults.length); }
-                            if (event.key === 'Enter' && searchResults[selectedSearchIndex]) { event.preventDefault(); focusSetting(searchResults[selectedSearchIndex]); }
-                            if (event.key === 'Escape') closeSearch();
-                        }} placeholder="Search settings" aria-label="Search settings" aria-expanded={Boolean(searchQuery)} aria-controls="settings-search-results" aria-activedescendant={searchResults[selectedSearchIndex] ? `settings-search-${searchResults[selectedSearchIndex].id}` : undefined} role="combobox" aria-autocomplete="list" className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-white/60 dark:bg-black/30 border border-black/5 dark:border-white/10 text-sm outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground" />
-                        {searchQuery && <button type="button" aria-label="Clear search" onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10"><X className="size-4" /></button>}
-                        {searchQuery && <div id="settings-search-results" role="listbox" className="absolute top-full left-0 right-0 z-30 mt-2 p-1.5 rounded-xl border border-black/5 dark:border-white/10 bg-white dark:bg-[#222228] shadow-xl max-h-72 overflow-y-auto">
-                            {searchResults.length ? searchResults.map((result, index) => { const ResultIcon = SETTINGS_TABS.find(tab => tab.id === result.section)!.icon; return <button id={`settings-search-${result.id}`} key={result.id} type="button" role="option" aria-selected={selectedSearchIndex === index} onMouseEnter={() => setSelectedSearchIndex(index)} onClick={() => focusSetting(result)} className={cn("w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left rounded-lg transition-colors", selectedSearchIndex === index ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10")}><ResultIcon className="w-4 h-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 truncate">{result.title}</span><span className="text-xs text-muted-foreground">{SETTINGS_TABS.find(tab => tab.id === result.section)?.label}</span></button>; }) : <p className="px-3 py-3 text-sm text-muted-foreground">No matching settings found.</p>}
-                            <p className="px-3 pt-2 pb-1 text-[11px] text-muted-foreground border-t border-black/5 dark:border-white/10 mt-1">↑↓ to navigate · Enter to open · Esc to close</p>
-                        </div>}
-                    </div>}
-
-                    <nav className="flex-1 space-y-1">
-                        {!searchOpen && SETTINGS_TABS.map((tab) => {
-                            const Icon = tab.icon;
-                            const isActive = activeTab === tab.id;
-                            const isDirty = dirtySections[tab.id]?.isDirty;
-                            return (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => handleTabClick(tab.id)}
-                                    className={cn(
-                                        "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all duration-200",
-                                        isActive
-                                            ? "bg-white/60 dark:bg-white/10 text-foreground dark:text-white/90 font-medium shadow-sm ring-1 ring-black/5 dark:ring-white/5"
-                                            : "text-muted-foreground dark:text-white/60 hover:text-foreground dark:hover:text-white/90 hover:bg-white/40 dark:hover:bg-white/5 font-medium"
-                                    )}
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <Icon className={cn("w-5 h-5", isActive ? "text-primary" : "text-muted-foreground")} strokeWidth={2} />
-                                        {tab.label}
-                                    </div>
-                                    {isDirty && (
-                                        <span className="text-orange-500 font-bold px-2 text-lg leading-none">•</span>
-                                    )}
-                                </button>
-                            );
-                        })}
-
-                        {!searchOpen && <div className="my-4 h-px bg-black/5 dark:bg-white/5 mx-2" />}
-
-                        <button
-                            onClick={() => {
-                                if (user) logout(user.id);
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+                        <input ref={searchInputRef} type="search" value={searchQuery} maxLength={200}
+                            onChange={event => { setSearchQuery(event.target.value); setSelectedSearchIndex(0); contentRef.current?.scrollTo({ top: 0 }); }}
+                            onKeyDown={event => {
+                                if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && searchResults.length) {
+                                    event.preventDefault();
+                                    const next = (selectedSearchIndex + (event.key === 'ArrowDown' ? 1 : -1) + searchResults.length) % searchResults.length;
+                                    setSelectedSearchIndex(next);
+                                    document.getElementById('settings-search-' + searchResults[next].id)?.scrollIntoView({ block: 'nearest' });
+                                }
+                                if (event.key === 'Enter' && searchResults[selectedSearchIndex]) { event.preventDefault(); focusSetting(searchResults[selectedSearchIndex]); }
+                                if (event.key === 'Escape') closeSearch();
                             }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all duration-200"
-                        >
-                            <LogOut className="w-5 h-5" strokeWidth={2} />
-                            Sign Out
-                        </button>
-                    </nav>
+                            placeholder="Search settings and options" aria-label="Search settings and options" role="combobox" aria-autocomplete="list" aria-expanded={isSearching} aria-controls={isSearching ? 'settings-search-results' : undefined} aria-activedescendant={isSearching && searchResults[selectedSearchIndex] ? 'settings-search-' + searchResults[selectedSearchIndex].id : undefined}
+                            className="w-full rounded-xl border border-black/15 dark:border-white/15 bg-white dark:bg-[#101114] py-3 pl-9 pr-8 text-xs text-foreground outline-none transition-shadow focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:appearance-none" />
+                        {searchQuery && <button type="button" aria-label="Clear settings search" onClick={() => { closeSearch(); searchInputRef.current?.focus(); }} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10"><X className="size-3.5" /></button>}
+                    </div>
+                </div>
+                <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto space-y-1 px-3 pb-4 custom-scrollbar">
+                    {visibleTabs.map(tab => {
+                        const Icon = tab.icon;
+                        const selected = !isSearching && activeTab === tab.id;
+                        return <button key={tab.id} type="button" aria-current={selected ? 'page' : undefined} onClick={() => handleTabClick(tab.id)} className={cn('w-full flex items-center gap-3 rounded-xl px-2.5 py-2.5 text-left text-sm font-medium transition-colors', selected ? [tab.active, 'text-foreground'] : 'text-muted-foreground hover:bg-black/[0.035] dark:hover:bg-white/[0.04] hover:text-foreground')}>
+                            <span className={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-lg', tab.color)}><Icon className="size-[17px]" strokeWidth={1.8} /></span>
+                            <span className="flex-1">{tab.label}</span>
+                            {dirtySections[tab.id]?.isDirty && <span aria-label="Unsaved changes" className="size-1.5 rounded-full bg-amber-500" />}
+                        </button>;
+                    })}
+                </nav>
+                <div className="mx-4 border-t border-black/[0.07] dark:border-white/[0.07] py-4 space-y-2">
+                    <button type="button" onClick={handleBackClick} className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-muted-foreground hover:text-foreground"><Inbox className="size-4" />Back to Inbox</button>
+                    <button type="button" onClick={() => requestNavigation(() => { if (user) void logout(user.id); })} className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/10"><LogOut className="size-4" />Sign out</button>
+                    <p className="px-2 pt-2 text-[10px] text-muted-foreground/70">OrionMail · {packageInfo.version}</p>
                 </div>
             </aside>
 
             {/* Main Content Area */}
-            <main className="flex-1 overflow-y-auto custom-scrollbar bg-white dark:bg-[#111111] relative z-10">
-                <div className="max-w-4xl mx-auto p-12">
-                    <AnimatePresence mode="wait">
+            <main ref={contentRef} className="min-w-0 flex-1 overflow-y-auto custom-scrollbar bg-white dark:bg-[#101114] relative z-10 pb-24">
+                {isSearching && <SettingsSearchResults query={searchQuery} results={searchResults} selectedIndex={selectedSearchIndex} onSelect={focusSetting} onHighlight={setSelectedSearchIndex} />}
+                <div hidden={isSearching} className="max-w-4xl mx-auto px-6 py-8 md:p-12">
+                    <div>
                         {activeTab === 'account' && (
                             <motion.div key="account" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                                 <SectionHeader
@@ -289,7 +194,7 @@ function SettingsPageInner() {
                             <motion.div key="notifications" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                                 <SectionHeader
                                     title="Notifications"
-                                    description="Manage how and when OrbitMail alerts you."
+                                    description="Manage how and when OrionMail alerts you."
                                 />
                                 <NotificationsSection />
                             </motion.div>
@@ -341,7 +246,7 @@ function SettingsPageInner() {
                                 <div className="relative overflow-hidden rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/10 via-white to-violet-500/10 dark:from-primary/20 dark:via-[#16151b] dark:to-violet-900/20 p-8 md:p-10">
                                     <div className="absolute -right-10 -top-16 size-56 rounded-full bg-primary/10 blur-3xl" />
                                     <div className="relative flex flex-col md:flex-row md:items-center gap-6">
-                                        <div className="size-16 rounded-2xl bg-primary text-white shadow-lg shadow-primary/25 flex items-center justify-center"><Mail className="size-8" /></div>
+                                        <Image src="/logo.svg" alt="OrionMail logo" width={80} height={80} unoptimized className="size-20 shrink-0 object-contain drop-shadow-lg" />
                                         <div className="flex-1"><p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">Your email, in focus</p><h2 className="mt-2 text-3xl font-bold tracking-tight">OrionMail</h2><p className="mt-2 max-w-xl text-muted-foreground">A native-feeling mail workspace that brings your inbox, smart actions, and desktop workflow together.</p></div>
                                         <div data-setting-id="about.version" className="rounded-2xl border border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/20 px-5 py-4 min-w-36"><p className="text-xs uppercase tracking-wider text-muted-foreground">Version</p><p className="mt-1 text-xl font-semibold">{packageInfo.version}</p><p className="text-xs text-muted-foreground">Desktop release</p></div>
                                     </div>
@@ -357,7 +262,7 @@ function SettingsPageInner() {
                                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-black/5 dark:border-white/10 px-6 py-5"><div className="flex items-center gap-3"><div className="size-10 rounded-full bg-primary/10 text-primary flex items-center justify-center"><Code2 className="size-5" /></div><div><p className="text-xs uppercase tracking-wider text-muted-foreground">Designed and developed by</p><p className="font-semibold">Arunabhajana</p></div></div><p className="flex items-center gap-2 text-sm text-muted-foreground"><Heart className="size-4 text-rose-500" /> Made with care</p></div>
                             </motion.div>
                         )}
-                    </AnimatePresence>
+                    </div>
                 </div>
                 
                 <UnsavedChangesBar />

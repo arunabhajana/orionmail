@@ -25,17 +25,17 @@ pub fn load_settings(app: &AppHandle) -> (bool, bool, bool) {
     (true, true, false) // Defaults
 }
 
-pub fn save_settings(app: &AppHandle, min_to_tray: bool, start_hidden: bool, app_lock: bool) {
+pub fn save_settings(app: &AppHandle, min_to_tray: bool, start_hidden: bool, app_lock: bool) -> Result<(), String> {
     let path = get_config_path(app);
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::json!({
         "minimize_to_tray": min_to_tray,
         "start_hidden": start_hidden,
         "app_lock_enabled": app_lock
     });
-    let _ = fs::write(&path, json.to_string());
+    fs::write(&path, json.to_string()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -52,12 +52,17 @@ pub fn get_app_settings(app_handle: AppHandle) -> serde_json::Value {
 }
 
 #[tauri::command]
-pub fn set_app_settings(app_handle: AppHandle, minimize_to_tray: bool, start_hidden: bool, app_lock_enabled: bool) {
+pub fn set_app_settings(app_handle: AppHandle, minimize_to_tray: bool, start_hidden: bool, app_lock_enabled: bool) -> Result<(), String> {
+    let lock_state = app_handle.state::<crate::auth::app_lock::AppLockState>();
+    let mut lock_session = lock_state.0.lock().map_err(|_| "App-lock state is unavailable")?;
+    lock_session.check_settings_change(app_lock_enabled)?;
+    save_settings(&app_handle, minimize_to_tray, start_hidden, app_lock_enabled)?;
     let state = app_handle.state::<AppSettings>();
     *state.minimize_to_tray.lock().unwrap() = minimize_to_tray;
     *state.start_hidden.lock().unwrap() = start_hidden;
     *state.app_lock_enabled.lock().unwrap() = app_lock_enabled;
-    save_settings(&app_handle, minimize_to_tray, start_hidden, app_lock_enabled);
+    lock_session.set_enabled(app_lock_enabled);
+    Ok(())
 }
 
 #[tauri::command]

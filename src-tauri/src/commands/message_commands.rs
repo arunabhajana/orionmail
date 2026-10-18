@@ -173,7 +173,8 @@ pub async fn send_message(
 }
 
 #[tauri::command]
-pub async fn show_in_folder(path: String) -> Result<(), String> {
+pub async fn show_in_folder(app_handle: AppHandle, path: String) -> Result<(), String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer")
@@ -246,10 +247,13 @@ pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<Diagno
     tokio::task::spawn_blocking(move || {
         let global_state = crate::mail::database::get_global_sync_state(&app_handle, &account.id).unwrap_or_default();
         let unread = crate::mail::database::get_global_unread_count(&app_handle, &account.id).unwrap_or(0);
+        let sync_in_progress = crate::mail::database::open_connection(&app_handle)?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM folder_sync_state WHERE account_id = ?1 AND sync_in_progress = 1)",
+            [&account.id], |row| row.get(0)).map_err(|e| e.to_string())?;
 
         Ok(DiagnosticsSyncStatus {
             unread_count: unread,
-            sync_in_progress: false,
+            sync_in_progress,
             last_sync_at: global_state.last_sync_at,
             last_successful_idle_at: global_state.last_successful_idle_at,
             last_notification_at: global_state.last_notification_at,
@@ -259,7 +263,8 @@ pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<Diagno
 }
 
 #[tauri::command]
-pub async fn open_url(url: String) -> Result<(), String> {
+pub async fn open_url(app_handle: AppHandle, url: String) -> Result<(), String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     let validated_url = validate_external_url(&url)?;
     open::that(validated_url.as_str()).map_err(|e| format!("Failed to open URL: {}", e))?;
     Ok(())
@@ -347,11 +352,13 @@ pub async fn search_messages(app_handle: tauri::AppHandle, folder: String, query
 
 #[tauri::command]
 pub async fn load_more_results(app_handle: tauri::AppHandle, search_id: String) -> Result<crate::mail::search::RemoteSearchState, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     crate::mail::search::load_more_results(app_handle, search_id).await
 }
 
 #[tauri::command]
 pub async fn clear_search(app_handle: tauri::AppHandle, search_id: String) -> Result<(), String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     crate::mail::search::clear_search(app_handle, search_id).await
 }
 

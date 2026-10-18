@@ -63,6 +63,7 @@ pub async fn authenticate_hello(app: tauri::AppHandle, message: String) -> Resul
             }
         }).await.map_err(|e| format!("Tokio blocking error: {}", e))??;
 
+        if result { crate::auth::app_lock::record_native_verification(&app)?; }
         Ok(result)
     }
 

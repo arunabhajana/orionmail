@@ -1,5 +1,4 @@
 use crate::auth::account::Account;
-use crate::mail::sync::sync_inbox;
 use tauri::AppHandle;
 
 use std::sync::Mutex;
@@ -40,28 +39,12 @@ pub fn start_idle_listener(app_handle: AppHandle, account: Account) {
             // Collapse rapid-fire EXISTS signals
             while rx.try_recv().is_ok() {}
 
-            let guard = crate::mail::sync::SYNC_LOCK.try_lock();
-            if guard.is_err() {
-                log::info!("IMAP IDLE: Sync already running. Skipping auto-sync.");
-                continue;
-            }
-            
             if crate::mail::shutdown::IDLE_TOKEN.is_cancelled() {
                 break;
             }
-            let _sync_guard = guard.unwrap();
-
-            log::info!("IMAP IDLE: Triggering auto-sync...");
-
-            match sync_inbox(&app_clone, account_clone.clone()).await {
-                Ok(_) => {
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
-                    let _ = crate::mail::database::update_global_idle_time(&app_clone, &account_clone.id, now);
-                }
-                Err(e) => {
-                    log::error!("IMAP IDLE: Auto-sync failed: {}", e);
-                }
-            }
+            log::info!("IMAP IDLE: Queuing auto-sync...");
+            crate::mail::sync_manager::enqueue_sync(app_clone.clone(), account_clone.clone(), crate::mail::folder::MailFolder::Inbox).await;
+            let _ = crate::mail::database::update_global_idle_time(&app_clone, &account_clone.id, chrono::Utc::now().timestamp());
         }
 
         log::info!("IMAP IDLE: Coordinator exiting.");

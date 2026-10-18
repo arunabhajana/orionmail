@@ -27,6 +27,7 @@ pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
       let (min_to_tray, start_hidden, app_lock) = config::load_settings(app.handle());
+      app.manage(auth::app_lock::AppLockState(Mutex::new(auth::app_lock::LockSession::new(app_lock))));
       app.manage(AppSettings { 
           minimize_to_tray: Mutex::new(min_to_tray),
           start_hidden: Mutex::new(start_hidden),

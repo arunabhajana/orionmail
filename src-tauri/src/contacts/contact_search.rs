@@ -10,6 +10,7 @@ pub struct ContactSuggestion {
 
 #[tauri::command]
 pub async fn search_contacts(app_handle: AppHandle, query: String) -> Result<Vec<ContactSuggestion>, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     let app = app_handle.clone();
     let q = query.trim().to_lowercase();
     

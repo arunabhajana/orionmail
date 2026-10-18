@@ -24,11 +24,6 @@ export const SecuritySection = () => {
                 invoke<boolean>('check_hello_availability')
                     .then(available => {
                         setHelloAvailable(available);
-                        if (!available && stored) {
-                            // If disabled by unavailability, we force update it immediately in backend just to be safe
-                            // But let's just mark it in local state
-                            setAppLockEnabled(false);
-                        }
                     })
                     .catch(console.error);
             })
@@ -43,6 +38,10 @@ export const SecuritySection = () => {
             id: 'security',
             isDirty,
             save: async () => {
+                if (appLockEnabled && !originalAppLockEnabled) {
+                    const verified = await invoke<boolean>('authenticate_hello', { message: 'Enable OrionMail app lock' });
+                    if (!verified) throw new Error('Windows Hello verification is required to enable app lock.');
+                }
                 const settings = await invoke<any>('get_app_settings');
                 await invoke('set_app_settings', {
                     minimizeToTray: settings.minimize_to_tray,

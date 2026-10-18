@@ -1,85 +1,137 @@
-use std::collections::HashSet;
-use tokio::sync::Mutex as AsyncMutex;
+use crate::{auth::account::Account, mail::folder::MailFolder};
+use futures::FutureExt;
 use once_cell::sync::Lazy;
-use tauri::AppHandle;
-use crate::auth::account::Account;
-use crate::mail::folder::MailFolder;
+use std::collections::HashMap;
+use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
 
-fn should_skip_for_interval(elapsed: i64, min_interval: i64, has_previous_error: bool) -> bool {
-    !has_previous_error && elapsed < min_interval
+#[derive(Default)]
+struct Request {
+    force: bool,
+    dirty: bool,
+}
+static SYNC_QUEUE: Lazy<Mutex<HashMap<(String, MailFolder), Request>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+pub static SYNC_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+fn should_skip_for_interval(elapsed: i64, minimum: i64, previous_error: bool, force: bool) -> bool {
+    !force && !previous_error && elapsed < minimum
 }
 
-// Tracks which folders are currently waiting in the queue
-pub static SYNC_QUEUE: Lazy<AsyncMutex<HashSet<(String, MailFolder)>>> = Lazy::new(|| AsyncMutex::new(HashSet::new()));
+pub async fn enqueue_sync(app: AppHandle, account: Account, folder: MailFolder) {
+    enqueue_sync_with_force(app, account, folder, false).await;
+}
 
-// Ensures only one folder syncs at a time across the entire application
-pub static SYNC_LOCK: Lazy<AsyncMutex<()>> = Lazy::new(|| AsyncMutex::new(()));
-
-pub async fn enqueue_sync(app_handle: AppHandle, account: Account, folder: MailFolder) {
-    let queue_key = (account.id.clone(), folder.clone());
-    // 1. Deduplication Check
-    let mut queue = SYNC_QUEUE.lock().await;
-    if queue.contains(&queue_key) {
-        log::info!("Sync for folder {} is already pending. Ignoring duplicate.", folder);
-        return;
-    }
-    queue.insert(queue_key.clone());
-    drop(queue);
-
-    // 2. Spawn worker that waits for the global sync lock
-    tokio::spawn(async move {
-        let _guard = SYNC_LOCK.lock().await;
-
-        // Check folder-specific minimum sync intervals
-        let folder_state = crate::mail::database::get_folder_sync_state(&app_handle, &account.id, &folder.to_string())
-            .unwrap_or(None)
-            .unwrap_or_default();
-        let last_synced_at = folder_state.last_synced_at;
-        let has_previous_error = folder_state.last_error.is_some();
-        
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
-        let elapsed = now - last_synced_at;
-
-        let min_interval = match folder {
-            MailFolder::Inbox => 30, // Aggressive refresh (30 seconds)
-            MailFolder::Sent => 300, // Lazy opportunistic refresh (5 minutes)
-            MailFolder::Starred => 0, // Not synced from IMAP
-            MailFolder::Tag(_) => 60, // 1 minute refresh for tags
-        };
-
-        if should_skip_for_interval(elapsed, min_interval, has_previous_error) {
-            log::info!("Skipping sync for {}: only {} seconds elapsed (min: {}).", folder, elapsed, min_interval);
-            SYNC_QUEUE.lock().await.remove(&queue_key);
+pub async fn enqueue_sync_with_force(
+    app: AppHandle,
+    account: Account,
+    folder: MailFolder,
+    force: bool,
+) {
+    let key = (account.id.clone(), folder.clone());
+    {
+        let mut queue = SYNC_QUEUE.lock().await;
+        if let Some(request) = queue.get_mut(&key) {
+            request.dirty = true;
+            request.force |= force;
             return;
         }
-
-        // 3. Execute the actual sync logic
-        use tauri::Emitter;
-        let _ = app_handle.emit("mail:sync_started", folder.to_string());
-        
-        let account_id = account.id.clone();
-        if let Err(e) = crate::mail::sync::sync_folder(&app_handle, account, folder.clone()).await {
-            log::error!("Sync failed for folder {}: {}", folder, e);
-            let _ = crate::mail::database::set_folder_sync_error(&app_handle, &account_id, &folder.to_string(), &e);
-            let _ = app_handle.emit("mail:sync_error", serde_json::json!({
-                "folder": folder.to_string(),
-                "error": e.to_string()
-            }));
+        queue.insert(
+            key.clone(),
+            Request {
+                force,
+                dirty: false,
+            },
+        );
+    }
+    tokio::spawn(async move {
+        let mut follow_up = false;
+        loop {
+            let guard = SYNC_LOCK.lock().await;
+            let force = {
+                let mut queue = SYNC_QUEUE.lock().await;
+                let Some(request) = queue.get_mut(&key) else {
+                    return;
+                };
+                request.dirty = false;
+                std::mem::take(&mut request.force)
+            };
+            if crate::auth::app_lock::require_unlocked(&app).is_err() {
+                SYNC_QUEUE.lock().await.remove(&key);
+                return;
+            }
+            let state = crate::mail::database::get_folder_sync_state(
+                &app,
+                &account.id,
+                &folder.to_string(),
+            )
+            .unwrap_or(None)
+            .unwrap_or_default();
+            let minimum = match folder {
+                MailFolder::Inbox => 30,
+                MailFolder::Sent => 300,
+                MailFolder::Starred => 0,
+                MailFolder::Tag(_) => 60,
+            };
+            let now = chrono::Utc::now().timestamp();
+            if !should_skip_for_interval(
+                now - state.last_synced_at,
+                minimum,
+                state.last_error.is_some(),
+                force || follow_up,
+            ) {
+                let _ = app.emit("mail:sync_started", folder.to_string());
+                let result =
+                    std::panic::AssertUnwindSafe(crate::mail::sync::sync_folder_with_options(
+                        &app,
+                        account.clone(),
+                        folder.clone(),
+                        force,
+                    ))
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|_| Err("Unexpected sync failure; please retry".into()));
+                if let Err(error) = result {
+                    log::error!("Sync failed for folder {}: {}", folder, error);
+                    let _ = crate::mail::database::set_folder_sync_error(
+                        &app,
+                        &account.id,
+                        &folder.to_string(),
+                        &error,
+                    );
+                    let _ = app.emit(
+                        "mail:sync_error",
+                        serde_json::json!({"folder":folder.to_string(),"error":error}),
+                    );
+                }
+                let _ = app.emit("mail:sync_finished", folder.to_string());
+            }
+            let rerun = {
+                let mut queue = SYNC_QUEUE.lock().await;
+                if queue.get(&key).is_some_and(|request| request.dirty) {
+                    true
+                } else {
+                    queue.remove(&key);
+                    false
+                }
+            };
+            drop(guard);
+            follow_up = rerun;
+            if !rerun {
+                break;
+            }
         }
-        
-        let _ = app_handle.emit("mail:sync_finished", folder.to_string());
-        SYNC_QUEUE.lock().await.remove(&queue_key);
     });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::should_skip_for_interval;
-
+    use super::*;
     #[test]
-    fn failed_sync_bypasses_the_success_interval_throttle() {
-        assert!(!should_skip_for_interval(5, 30, true));
-        assert!(should_skip_for_interval(5, 30, false));
-        assert!(!should_skip_for_interval(30, 30, false));
+    fn failed_sync_and_manual_refresh_bypass_throttle() {
+        assert!(!should_skip_for_interval(5, 30, true, false));
+        assert!(!should_skip_for_interval(5, 30, false, true));
+        assert!(should_skip_for_interval(5, 30, false, false));
+        assert!(!should_skip_for_interval(30, 30, false, false));
     }
 }

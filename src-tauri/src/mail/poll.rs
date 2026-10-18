@@ -1,12 +1,9 @@
 use crate::auth::account::Account;
-use crate::mail::sync::sync_inbox;
-use crate::mail::sync::SYNC_LOCK;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::AppHandle;
 use tokio::task::JoinHandle;
-use futures::FutureExt;
 
 static POLL_HANDLE: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
 
@@ -40,27 +37,7 @@ pub fn start_polling(app_handle: AppHandle, account: Account) {
             let app_clone = app_handle.clone();
             let account_clone = account.clone();
 
-            // Check if a sync is already running via IDLE or manual refresh
-            if let Ok(_guard) = SYNC_LOCK.try_lock() {
-                // Ensure a panic inside sync block does not silently kill the poll loop
-                let result = std::panic::AssertUnwindSafe(sync_inbox(&app_clone, account_clone))
-                    .catch_unwind()
-                    .await;
-
-                match result {
-                    Ok(Ok(_)) => {
-                        log::info!("[POLL] Sync completed successfully");
-                    }
-                    Ok(Err(e)) => {
-                        log::error!("[POLL] Sync failed: {}", e);
-                    }
-                    Err(_) => {
-                        log::error!("[POLL] Panic recovered in polling loop during sync_inbox");
-                    }
-                }
-            } else {
-                log::info!("[POLL] Sync already running. Skipping tick.");
-            }
+            crate::mail::sync_manager::enqueue_sync(app_clone, account_clone, crate::mail::folder::MailFolder::Inbox).await;
         }
     });
 

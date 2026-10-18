@@ -12,6 +12,7 @@ pub struct BootstrapResult {
 }
 
 pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth::account::Account, String> {
+    crate::auth::app_lock::require_unlocked(app_handle)?;
     let mut account = session::get_active_account(app_handle)
         .ok_or_else(|| "No active account".to_string())?;
 

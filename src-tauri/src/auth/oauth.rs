@@ -6,9 +6,8 @@ use oauth2::{
 };
 use reqwest::Client as HttpClient;
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use url::Url;
+use std::time::{Duration, Instant};
 
 /// Orchestrates the Google OAuth 2.0 Authorization Code flow for desktop applications.
 /// 
@@ -49,7 +48,7 @@ pub async fn start_google_login() -> Result<Account, String> {
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
-    let (authorize_url, _csrf_state) = client
+    let (authorize_url, csrf_state) = client
         .authorize_url(CsrfToken::new_random)
         .add_scope(Scope::new("openid".to_string()))
         .add_scope(Scope::new("https://www.googleapis.com/auth/userinfo.email".to_string()))
@@ -65,25 +64,18 @@ pub async fn start_google_login() -> Result<Account, String> {
 
     open::that(authorize_url.as_str()).map_err(|e| e.to_string())?;
 
-    let mut stream = listener.incoming().next().ok_or("Listener died")?.map_err(|e| e.to_string())?;
-    let mut reader = BufReader::new(&stream);
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line).map_err(|e| e.to_string())?;
+    let expected_state = csrf_state.secret().to_owned();
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let code = tokio::task::spawn_blocking(move ||
+        super::oauth_callback::receive_code(listener, expected_state, deadline)
+    ).await.map_err(|_| "OAuth callback task failed")??;
 
-    let redirect_url_path = request_line.split_whitespace().nth(1).ok_or("Malformed request")?;
-    let url = Url::parse(&format!("http://localhost{}", redirect_url_path)).map_err(|e| e.to_string())?;
-    
-    let code = url
-        .query_pairs()
-        .find(|(key, _)| key == "code")
-        .map(|(_, value)| AuthorizationCode::new(value.into_owned()))
-        .ok_or("No code received from Google")?;
-
-    let token_result = client
-        .exchange_code(code)
+    let token_result = tokio::time::timeout(Duration::from_secs(30), client
+        .exchange_code(AuthorizationCode::new(code))
         .set_pkce_verifier(pkce_verifier)
-        .request_async(oauth2::reqwest::async_http_client)
+        .request_async(oauth2::reqwest::async_http_client))
         .await
+        .map_err(|_| "Google token exchange timed out")?
         .map_err(|e| format!("Token exchange failed: {}", e))?;
 
     let access_token = token_result.access_token().secret();
@@ -114,8 +106,6 @@ pub async fn start_google_login() -> Result<Account, String> {
 
     crate::auth::token_store::persist_tokens(&id, &access_token, &refresh_token)?;
 
-    let success_response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><script>window.close()</script><h1>Authentication Successful</h1><p>You can close this window now.</p></body></html>";
-    stream.write_all(success_response.as_bytes()).ok();
 
     Ok(Account {
         id,

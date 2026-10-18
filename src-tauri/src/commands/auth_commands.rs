@@ -5,6 +5,7 @@ use tauri::{AppHandle, command};
 
 #[command]
 pub async fn login_google(app_handle: AppHandle) -> Result<UserProfile, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     let account = oauth::start_google_login().await?;
     session::save_account(&app_handle, account.clone(), true)?;
     
@@ -23,12 +24,14 @@ pub async fn login_google(app_handle: AppHandle) -> Result<UserProfile, String> 
 }
 
 #[command]
-pub fn get_current_user(app_handle: AppHandle) -> Option<UserProfile> {
-    session::get_active_account(&app_handle).map(UserProfile::from)
+pub fn get_current_user(app_handle: AppHandle) -> Result<Option<UserProfile>, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    Ok(session::get_active_account(&app_handle).map(UserProfile::from))
 }
 
 #[command]
 pub fn update_display_name(app_handle: AppHandle, display_name: String) -> Result<UserProfile, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     let display_name = display_name.trim();
     if display_name.is_empty() {
         return Err("Display name cannot be empty".to_string());
@@ -45,20 +48,23 @@ pub fn update_display_name(app_handle: AppHandle, display_name: String) -> Resul
 }
 
 #[command]
-pub fn list_accounts(app_handle: AppHandle) -> Vec<UserProfile> {
-    session::load_accounts(&app_handle)
+pub fn list_accounts(app_handle: AppHandle) -> Result<Vec<UserProfile>, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    Ok(session::load_accounts(&app_handle)
         .into_iter()
         .map(UserProfile::from)
-        .collect()
+        .collect())
 }
 
 #[command]
 pub fn logout_user(app_handle: AppHandle, account_id: String) -> Result<(), String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     session::remove_account(&app_handle, account_id)
 }
 
 #[command]
 pub async fn bootstrap_accounts(app_handle: AppHandle) -> Result<crate::auth::bootstrap::BootstrapResult, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
     let res = crate::auth::bootstrap::bootstrap_accounts(&app_handle).await;
     if res.user.is_some() {
         if let Some(account) = session::get_active_account(&app_handle) {
@@ -93,7 +99,7 @@ pub async fn sync_inbox(app_handle: AppHandle) -> Result<u32, String> {
         let _ = crate::mail::tags::sync_tags(&app_clone, &account_clone).await;
     });
 
-    crate::mail::sync_manager::enqueue_sync(app_handle, account, crate::mail::folder::MailFolder::Inbox).await;
+    crate::mail::sync_manager::enqueue_sync_with_force(app_handle, account, crate::mail::folder::MailFolder::Inbox, true).await;
     Ok(0)
 }
 
@@ -109,7 +115,7 @@ pub async fn sync_mail_folder(app_handle: AppHandle, folder: String) -> Result<u
 
     let mail_folder = folder.parse::<crate::mail::folder::MailFolder>().map_err(|e| e.to_string())?;
 
-    crate::mail::sync_manager::enqueue_sync(app_handle, account, mail_folder).await;
+    crate::mail::sync_manager::enqueue_sync_with_force(app_handle, account, mail_folder, true).await;
     Ok(0)
 }
 

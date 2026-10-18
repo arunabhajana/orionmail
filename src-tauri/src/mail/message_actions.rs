@@ -1,4 +1,6 @@
 use crate::auth::account::{Account, MailProvider};
+// Serializes reconciliation snapshots with provider/local message mutations.
+pub static MUTATION_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
 use crate::mail::{database, folder::MailFolder, imap_session::{execute_with_session, SessionKind}};
 use std::str::FromStr;
 use tauri::AppHandle;
@@ -58,8 +60,13 @@ async fn execute_remote_action(account: &Account, item: &database::PendingMessag
     let provider = account.provider.clone();
     let action = item.action.clone();
     let desired = item.desired;
+    let uid_validity = item.uid_validity;
     execute_with_session(account, SessionKind::Primary, move |session| {
-        session.select(&mailbox).map_err(|e| format!("Could not select mailbox '{}': {}", mailbox, e))?;
+        let selected = session.select(&mailbox).map_err(|e| format!("Could not select mailbox '{}': {}", mailbox, e))?;
+        validate_uid_validity(uid_validity, selected.uid_validity)?;
+        if !session.uid_search(format!("UID {uid}")).map_err(|e| e.to_string())?.contains(&uid) {
+            return if action == "delete" { Ok(()) } else { Err("CONFLICT: Message was removed at the provider".into()) };
+        }
         match action.as_str() {
             "seen" | "flagged" => {
                 let command = flag_store_command(&action, desired)?;
@@ -89,9 +96,23 @@ async fn execute_remote_action(account: &Account, item: &database::PendingMessag
     }).await
 }
 
+fn validate_uid_validity(expected: Option<u32>, actual: Option<u32>) -> Result<(), String> {
+    if expected.is_none() || expected == Some(0) || expected != actual {
+        Err("CONFLICT: Mailbox UIDVALIDITY changed; this action cannot safely be retried".into())
+    } else { Ok(()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_action_cannot_target_a_reused_uid_after_epoch_change() {
+        assert!(validate_uid_validity(Some(9), Some(9)).is_ok());
+        assert!(validate_uid_validity(Some(9), Some(10)).is_err());
+        assert!(validate_uid_validity(None, Some(9)).is_err());
+        assert!(validate_uid_validity(Some(0), Some(0)).is_err());
+    }
 
     #[test]
     fn read_and_star_actions_set_or_clear_the_provider_flag_idempotently() {
@@ -125,16 +146,36 @@ fn apply_local_action(app: &AppHandle, item: &database::PendingMessageAction) ->
     }
 }
 
+fn notify_action_applied(app: &AppHandle, item: &database::PendingMessageAction) {
+    use tauri::Emitter;
+    let (flags, removed) = if item.action == "delete" {
+        (Vec::<crate::mail::reconciliation::Flags>::new(), vec![item.uid])
+    } else {
+        let messages = database::get_messages_by_uids(app, &item.account_id, &item.folder, &[item.uid]).unwrap_or_default();
+        (messages.into_iter().map(|message| crate::mail::reconciliation::Flags {
+            uid: message.uid, seen: message.seen, flagged: message.flagged,
+        }).collect(), Vec::<u32>::new())
+    };
+    // Also notify for queued replays: a merge-only list refresh cannot remove a
+    // previously rolled-back delete or update an older loaded search result.
+    let _ = app.emit("mail:reconciled", serde_json::json!({"account_id":item.account_id,"folder":item.folder,"updated_flags":flags,"removed_uids":removed}));
+    let _ = app.emit("mail:updated", &item.folder);
+    crate::tray_state::refresh_unread_count_from_db(app);
+}
+
 pub async fn perform(app: &AppHandle, account: &Account, folder: &str, uid: u32, action: &str, desired: Option<bool>) -> Result<(), String> {
+    let _mutation = MUTATION_LOCK.lock().await;
+    let uid_validity = database::message_uid_validity(app, &account.id, folder, uid)?;
     let mailbox = resolve_mailbox(app, account, folder)?;
     let id = database::enqueue_message_action(app, &account.id, folder, &mailbox, uid, action, desired)?;
     let item = database::PendingMessageAction {
         id, account_id: account.id.clone(), folder: folder.to_string(), mailbox, uid,
-        action: action.to_string(), desired,
+        action: action.to_string(), desired, uid_validity: Some(uid_validity),
     };
 
     if let Err(remote_error) = execute_remote_action(account, &item).await {
         let _ = database::record_message_action_error(app, id, &remote_error);
+        if remote_error.starts_with("CONFLICT:") { return Err(remote_error); }
         log::warn!("Queued {} action {} for account {} (UID {}): {}", action, id, account.id, uid, remote_error);
         return Err(format!("Provider did not confirm the {} operation; it is queued for retry: {}", action, remote_error));
     }
@@ -143,12 +184,14 @@ pub async fn perform(app: &AppHandle, account: &Account, folder: &str, uid: u32,
         return Err(format!("Provider accepted the operation, but the local cache update failed; it is queued for repair: {}", local_error));
     }
     database::complete_message_action(app, id)?;
+    notify_action_applied(app, &item);
     Ok(())
 }
 
 /// Retry a bounded batch during normal folder synchronization. The operation is idempotent,
 /// and each row is retained until both provider and local-cache updates have completed.
 pub async fn retry_pending(app: &AppHandle, account: &Account) {
+    let _mutation = MUTATION_LOCK.lock().await;
     let items = match database::list_pending_message_actions(app, &account.id, 50) {
         Ok(items) => items,
         Err(error) => {
@@ -165,11 +208,13 @@ pub async fn retry_pending(app: &AppHandle, account: &Account) {
         if let Err(error) = result {
             let _ = database::record_message_action_error(app, item.id, &error);
             log::warn!("Pending message action {} for account {} remains queued: {}", item.id, account.id, error);
+            if error.starts_with("CONFLICT:") {
+                use tauri::Emitter;
+                let _ = app.emit("mail:action_conflict", serde_json::json!({"account_id":account.id,"folder":item.folder,"uid":item.uid,"error":error}));
+            }
         } else {
             log::info!("Reconciled pending message action {} for account {}", item.id, account.id);
-            use tauri::Emitter;
-            let _ = app.emit("mail:updated", &item.folder);
-            crate::tray_state::refresh_unread_count_from_db(app);
+            notify_action_applied(app, &item);
         }
     }
 }
