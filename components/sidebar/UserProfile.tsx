@@ -1,113 +1,37 @@
 "use client";
-
-import React, { memo, useState } from "react";
-import { Settings, LogOut, UserPlus } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
-import Link from "next/link";
-import { useAuth } from "@/components/AuthContext";
-
-const ProfileDropdown = ({ onClose }: { onClose: () => void }) => {
-    const { user, logout } = useAuth();
-
-    return (
-        <motion.div
-            initial={{ opacity: 0, y: -10, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -10, scale: 0.95 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="absolute top-full left-0 w-full mt-2 p-1.5 rounded-xl border border-white/20 dark:border-white/10 bg-white/70 dark:bg-[#1C1C1E]/90 backdrop-blur-xl shadow-2xl z-50 origin-top"
-        >
-            <div className="flex flex-col gap-1">
-                <Link href="/settings" onClick={onClose} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-black/5 transition-colors cursor-pointer">
-                    <Settings className="w-4 h-4 text-muted-foreground" />
-                    <span>Settings</span>
-                </Link>
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-black/5 transition-colors cursor-pointer">
-                    <UserPlus className="w-4 h-4 text-muted-foreground" />
-                    <span>Add Account</span>
-                </div>
-                <div className="h-px bg-black/5 my-1" />
-                <div
-                    onClick={() => {
-                        if (user) logout(user.id);
-                        onClose();
-                    }}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-600 hover:bg-red-500/10 transition-colors cursor-pointer"
-                >
-                    <LogOut className="w-4 h-4" />
-                    <span>Sign Out</span>
-                </div>
-            </div>
-        </motion.div>
-    );
-};
-
+import React, { memo, useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
+import { ChevronUp, LogOut, Settings } from 'lucide-react';
+import Link from 'next/link';
+import { useAuth } from '@/components/AuthContext';
+import { mailInitials } from '@/lib/mail-display';
+import { toast } from 'sonner';
 export const UserProfile = memo(() => {
-    const [isOpen, setIsOpen] = useState(false);
-    const { user, loading } = useAuth();
-
-    if (loading) {
-        return (
-            <div className="p-6">
-                <div className="w-full h-[60px] animate-pulse bg-white/20 rounded-xl" />
-            </div>
-        );
-    }
-
-    if (!user) {
-        return (
-            <div className="p-6">
-                <Link
-                    href="/"
-                    className="w-full p-3 flex items-center justify-center gap-2 rounded-xl bg-primary/10 border border-primary/20 text-sm font-medium text-primary hover:bg-primary/20 transition-all focus:outline-none focus:ring-2 focus:ring-primary/50"
-                >
-                    Sign In
-                </Link>
-            </div>
-        );
-    }
-
-    const initials = user.name
-        ? user.name.trim().split(/\s+/).map(n => n[0]).join("").toUpperCase().slice(0, 2)
-        : user.email[0].toUpperCase();
-
-    return (
-        <div className="relative">
-            <AnimatePresence>
-                {isOpen && <ProfileDropdown onClose={() => setIsOpen(false)} />}
-            </AnimatePresence>
-
-            <button
-                onClick={() => setIsOpen(!isOpen)}
-                className={cn(
-                    "w-full p-6 flex items-center gap-3 transition-all duration-200 outline-none group text-left",
-                    "hover:bg-white/30 dark:hover:bg-white/5 border-b border-white/10",
-                    isOpen && "bg-white/30 dark:bg-white/5"
-                )}
-            >
-                {user.picture ? (
-                    <img
-                        src={user.picture}
-                        referrerPolicy="no-referrer"
-                        className="size-10 rounded-full object-cover border border-white/40 shadow-sm shrink-0"
-                        alt="User Avatar"
-                    />
-                ) : (
-                    <div className="size-10 rounded-full bg-primary/10 border border-white/40 flex items-center justify-center text-primary font-bold text-sm shrink-0">
-                        {initials}
-                    </div>
-                )}
-                <div className="flex flex-col overflow-hidden">
-                    <span className="text-slate-900 font-semibold dark:text-white/90 text-sm truncate tracking-tight">
-                        {user.name || "Elena Ross"}
-                    </span>
-                    <span className="text-slate-500 dark:text-white/50 text-xs truncate">
-                        {user.email}
-                    </span>
-                </div>
-            </button>
-        </div>
-    );
+    const { user, loading, logout } = useAuth();
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    const trigger = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        ref.current?.querySelector<HTMLAnchorElement>("[data-profile-popover] a")?.focus();
+        const outside = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+        const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); } };
+        document.addEventListener('pointerdown', outside);
+        document.addEventListener('keydown', escape);
+        return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+    }, [open]);
+    if (loading) return <div className="mx-3 my-2 h-12 animate-pulse rounded-xl bg-white/10" aria-label="Loading account" />;
+    if (!user) return <Link href="/" className="mail-nav-item justify-center">Sign in</Link>;
+    return <div ref={ref} className="relative" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
+        {open && <div data-profile-popover className="mail-profile-popover">
+            <p className="truncate px-3 pb-2 pt-1 text-[10px] text-muted-foreground" title={user.email}>{user.email}</p>
+            <Link href="/settings" onClick={() => setOpen(false)} className="mail-profile-action"><Settings className="size-4" />Settings</Link>
+            <button type="button" className="mail-profile-action !text-red-500" onClick={() => { setOpen(false); void logout(user.id).catch(() => toast.error('Could not sign out.')); }}><LogOut className="size-4" />Sign out</button>
+        </div>}
+        <button ref={trigger} type="button" aria-expanded={open} aria-label={`Account: ${user.name || user.email}`} onClick={() => setOpen(value => !value)} className="mail-profile-trigger" title={user.email}>
+            {user.picture ? <Image src={user.picture} alt="" width={32} height={32} unoptimized referrerPolicy="no-referrer" className="size-8 shrink-0 rounded-full object-cover" /> : <span className="mail-sender-avatar !size-8 !text-[10px]">{mailInitials(user.name || user.email)}</span>}
+            <span className="mail-profile-copy min-w-0 flex-1 text-left"><span className="block truncate text-xs font-medium">{user.name || 'Your account'}</span><span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{user.email}</span></span><ChevronUp className="mail-profile-copy size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+    </div>;
 });
-UserProfile.displayName = "UserProfile";
+UserProfile.displayName = 'UserProfile';

@@ -42,6 +42,7 @@ export interface LinkInsertContext {
 }
 
 export interface RichTextEditorProps {
+  editable?: boolean;
   /** Initial HTML content (for future draft restore) */
   value?: string;
   /** Autofocus the editor on mount */
@@ -93,6 +94,7 @@ function buildValue(editor: Editor): RichTextEditorValue {
 // --------------------------------------------------------------------------
 
 export default function RichTextEditor({
+  editable = true,
   value,
   autoFocus = false,
   onChange,
@@ -115,6 +117,7 @@ export default function RichTextEditor({
      * Without this, React throws a hydration error on first render.
      */
     immediatelyRender: false,
+    editable,
 
     extensions: [
       /**
@@ -199,12 +202,14 @@ export default function RichTextEditor({
     },
   });
 
+  useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
+
   // --------------------------------------------------------------------------
   // Ctrl+K: Trigger link insert UI (no window.prompt — parent shows its dialog)
   // --------------------------------------------------------------------------
   const handleCtrlK = useCallback(
     (event: KeyboardEvent) => {
-      if (!editor) return;
+      if (!editor || !editor.isEditable) return;
       if (!((event.ctrlKey || event.metaKey) && event.key === "k")) return;
 
       event.preventDefault();

@@ -1,13 +1,12 @@
 "use client";
 
-import React, { useState, useLayoutEffect, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Email } from '@/lib/types';
 import { formatEmailTime } from '@/lib/utils';
 import { AlertCircle } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import ComposeModal from '@/components/ComposeModal';
-import gsap from 'gsap';
+import ComposeModal, { type ComposeHandle } from '@/components/ComposeModal';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission, onAction, registerActionTypes, sendNotification } from '@tauri-apps/plugin-notification';
@@ -43,6 +42,7 @@ export default function MainLayout() {
     useEffect(() => { activeAccountRef.current = user?.id; }, [user?.id]);
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
     const [isComposeOpen, setIsComposeOpen] = useState(false);
+    const composeWindowRef = useRef<ComposeHandle>(null);
     const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
     const [editingTag, setEditingTag] = useState<Tag | null>(null);
     const [deletingTag, setDeletingTag] = useState<Tag | null>(null);
@@ -89,7 +89,6 @@ export default function MainLayout() {
         currentFolderRef.current = currentFolder;
     }, [currentFolder]);
 
-    const layoutRef = useRef<HTMLDivElement>(null);
     const hasSyncedRef = useRef(false);
 
     const {
@@ -316,7 +315,6 @@ export default function MainLayout() {
             to: msg.to || undefined,
             subject: msg.subject || '(No Subject)',
             preview: msg.snippet?.trim() || msg.subject?.substring(0, 100) || 'No preview available',
-            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`,
             time: formatEmailTime(msg.date * 1000),
             date: new Date(msg.date * 1000).toLocaleString(),
             timestamp: msg.date * 1000,
@@ -990,42 +988,13 @@ export default function MainLayout() {
         };
     }, []);
 
-    useLayoutEffect(() => {
-        if (isBootstrapping) return;
-
-        const ctx = gsap.context(() => {
-            const tl = gsap.timeline();
-
-            tl.from('.sidebar-anim', {
-                x: -30,
-                opacity: 0,
-                duration: 0.6,
-                ease: "power2.out"
-            });
-
-            tl.from('.list-anim', {
-                opacity: 0,
-                duration: 0.8,
-                ease: "power1.inOut"
-            }, "-=0.4");
-
-            tl.from('.detail-anim', {
-                x: 30,
-                opacity: 0,
-                duration: 0.6,
-                ease: "power2.out"
-            }, "-=0.6");
-        }, layoutRef);
-
-        return () => ctx.revert();
-    }, [isBootstrapping]);
-
     useEffect(() => {
         const handler = (event: KeyboardEvent) => {
-            if (!preferences.shortcutsEnabled || isComposeOpen || event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+            if (!preferences.shortcutsEnabled || event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
             const target = event.target as HTMLElement;
             if (target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return;
-            if (event.key.toLowerCase() === 'n' && !event.shiftKey) { event.preventDefault(); setIsComposeOpen(true); }
+            if (event.key.toLowerCase() === 'n' && !event.shiftKey) { event.preventDefault(); if (isComposeOpen) composeWindowRef.current?.restore(); else setIsComposeOpen(true); }
+            if (isComposeOpen) return;
             if (event.key.toLowerCase() === 'k' && !event.shiftKey) { event.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder*="Search"]')?.focus(); }
             if (event.key.toLowerCase() === 'u' && event.shiftKey && selectedEmailId) { event.preventDefault(); void toggleRead(selectedEmailId); }
         };
@@ -1044,7 +1013,7 @@ export default function MainLayout() {
 
     return (
         /* Main Dashboard Container - Full Window Fill */
-        <div ref={layoutRef} className="flex h-full w-full overflow-hidden bg-white/40 relative">
+        <div className="mail-workspace relative flex h-full w-full overflow-hidden" data-pane={preferences.readingPane} data-has-selection={Boolean(selectedEmailId)}>
             {/* Sync Error Toast */}
             <AnimatePresence>
                 {syncError && (
@@ -1061,19 +1030,21 @@ export default function MainLayout() {
 
             {/* Column 1: Sidebar */}
             <Sidebar
-                className="sidebar-anim w-64 flex flex-col shrink-0"
-                onCompose={() => setIsComposeOpen(true)}
+                className="mail-sidebar-column"
+                onCompose={() => { if (isComposeOpen) composeWindowRef.current?.restore(); else setIsComposeOpen(true); }}
                 onCreateTagClick={() => setIsCreateTagOpen(true)}
                 onEditTagClick={(tag) => setEditingTag(tag)}
                 onDeleteTagClick={(tag) => setDeletingTag(tag)}
                 currentFolder={currentFolder}
-                onFolderSelect={setCurrentFolder}
+                onFolderSelect={folder => { setSelectedEmailId(null); setCurrentFolder(folder); }}
                 unreadCounts={unreadCounts}
             />
 
-            <div className={`min-w-0 flex flex-1 overflow-hidden ${preferences.readingPane === "bottom" ? "flex-col" : "flex-row"}`}>
+            <div className="mail-panes">
             {/* Column 2: Message List */}
-            <div className={`list-anim flex flex-col shrink-0 border-r border-black/5 dark:border-white/5 ${preferences.readingPane === "bottom" ? "w-full h-[42%] min-h-48 border-b" : "w-[380px]"}`}>
+            <div className="mail-list-column flex min-h-0 flex-col">
+                <EmailList key={currentFolder}
+                    statusBanner={<>
                 {preferences.syncPaused && <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 px-4 py-2 text-xs text-muted-foreground bg-white/20 dark:bg-white/5"><span>Background sync paused</span><button className="text-primary font-medium" onClick={() => { void updatePreferences({ syncPaused: false }).then(() => invoke("sync_mail_folder", { folder: "inbox", automatic: true })).catch(() => toast.error("Could not resume sync.")); }}>Resume</button></div>}
                 {/* Sync Error Banner */}
                 <AnimatePresence>
@@ -1100,7 +1071,7 @@ export default function MainLayout() {
                     )}
                 </AnimatePresence>
 
-                <EmailList
+                    </>}
                     className="flex-1 overflow-hidden"
                     emails={filteredEmails}
                     pendingMessages={currentFolder === 'sent' ? pendingMessages : []}
@@ -1126,18 +1097,21 @@ export default function MainLayout() {
 
             {/* Column 3: Reading Pane */}
             <EmailDetail
-                className="detail-anim min-h-0 min-w-0 flex-1 flex flex-col"
+                className="mail-detail-pane min-h-0 min-w-0 flex-1 flex flex-col"
                 email={selectedEmail}
                 onToggleStar={toggleStar}
                 onDeleteMessage={deleteMessage}
                 onMarkAsRead={markAsRead}
+                onToggleRead={toggleRead}
+                onBack={() => setSelectedEmailId(null)}
             />
 
             </div>
             {/* Compose Modal Overlay */}
             <AnimatePresence>
                 {isComposeOpen && (
-                    <ComposeModal 
+                    <ComposeModal
+                        windowRef={composeWindowRef}
                         onClose={() => setIsComposeOpen(false)} 
                         onSendStart={addPendingMessage}
                         onSendSuccess={(id, messageId) => {

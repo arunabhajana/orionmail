@@ -52,7 +52,7 @@ export default function InboxPage() {
   }
 
   return (
-    <div className="relative h-screen w-screen flex flex-col">
+    <div className="relative flex h-full min-h-0 w-full flex-col">
       <MainLayout />
     </div>
   );

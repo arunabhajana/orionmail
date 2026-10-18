@@ -1,65 +1,18 @@
 "use client";
-
 import React, { memo } from 'react';
-import { Archive, Trash2, Reply, MoreVertical, AlertOctagon, Star } from 'lucide-react';
+import { ArrowLeft, Mail, MailOpen, Star, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-export const ToolbarButton = memo(({
-    icon: Icon,
-    onClick,
-    className,
-    title
-}: {
-    icon: React.ElementType;
-    onClick?: () => void;
-    className?: string;
-    title?: string;
-}) => (
-    <button
-        onClick={onClick}
-        title={title}
-        className={cn(
-            "p-2 rounded-lg transition-colors",
-            "text-muted-foreground dark:text-white/60 hover:bg-muted dark:hover:bg-white/10 hover:text-foreground dark:hover:text-white/90",
-            className
-        )}
-    >
-        <Icon className="w-5 h-5" />
-    </button>
-));
-ToolbarButton.displayName = "ToolbarButton";
-
-export const DetailToolbar = memo(({ isStarred, onToggleStar, onDelete }: { isStarred?: boolean; onToggleStar?: () => void; onDelete?: () => void }) => (
-    <div className="h-16 px-6 flex items-center justify-between border-b border-border/60 shrink-0 bg-background/50 backdrop-blur-sm">
-        <div className="flex items-center gap-2">
-            <ToolbarButton icon={Archive} title="Archive" />
-            <ToolbarButton icon={AlertOctagon} title="Report Spam" />
-            <ToolbarButton icon={Trash2} onClick={onDelete} title="Delete" />
-            <div className="w-px h-6 bg-border mx-2" />
-            <button
-                onClick={onToggleStar}
-                title={isStarred ? "Unstar" : "Star"}
-                className="p-2 rounded-lg transition-colors text-muted-foreground dark:text-white/60 hover:bg-muted dark:hover:bg-white/10 hover:text-foreground dark:hover:text-white/90 group"
-            >
-                <Star className={cn(
-                    "w-5 h-5 transition-all",
-                    isStarred ? "fill-yellow-400 text-yellow-400" : "group-hover:text-yellow-400"
-                )} />
-            </button>
-        </div>
-        <div className="flex items-center gap-2">
-            <button
-                title="Reply"
-                className={cn(
-                    "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                    "border border-border dark:border-white/10 text-foreground dark:text-white/90 hover:bg-muted dark:hover:bg-white/10"
-                )}
-            >
-                <Reply className="w-[18px] h-[18px]" />
-                Reply
-            </button>
-            <ToolbarButton icon={MoreVertical} title="More Options" />
-        </div>
+export const ToolbarButton = memo(({ icon: Icon, onClick, className, title }: { icon: React.ElementType; onClick?: () => void; className?: string; title: string }) => <button type="button" onClick={onClick} disabled={!onClick} title={title} aria-label={title} className={cn('mail-icon-button', className)}><Icon className="size-[17px]" /></button>);
+ToolbarButton.displayName = 'ToolbarButton';
+export const DetailToolbar = memo(({ isStarred, isUnread, onToggleStar, onToggleRead, onDelete, onBack }: {
+    isStarred?: boolean; isUnread?: boolean; onToggleStar?: () => void; onToggleRead?: () => void; onDelete?: () => void; onBack?: () => void;
+}) => <div className="mail-pane-topbar mail-reading-toolbar">
+    <div className="flex min-w-0 items-center gap-2"><button type="button" onClick={onBack} aria-label="Back to messages" title="Back to messages" className="mail-icon-button mail-back-button"><ArrowLeft className="size-[18px]" /></button><span className="truncate text-xs font-medium text-muted-foreground">Message</span></div>
+    <div className="flex shrink-0 items-center gap-1">
+        <button type="button" onClick={onToggleStar} disabled={!onToggleStar} aria-label={isStarred ? 'Unstar message' : 'Star message'} aria-pressed={Boolean(isStarred)} title={isStarred ? 'Unstar message' : 'Star message'} className={cn('mail-icon-button', isStarred && '!text-amber-500')}><Star className={cn('size-[17px]', isStarred && 'fill-current')} /></button>
+        <ToolbarButton icon={isUnread ? MailOpen : Mail} onClick={onToggleRead} title={isUnread ? 'Mark as read' : 'Mark as unread'} />
+        <span aria-hidden="true" className="mx-2 h-4 w-px bg-black/10 dark:bg-white/10" />
+        <ToolbarButton icon={Trash2} onClick={onDelete} title="Delete message" className="hover:!bg-red-500/10 hover:!text-red-500" />
     </div>
-));
-DetailToolbar.displayName = "DetailToolbar";
+</div>);
+DetailToolbar.displayName = 'DetailToolbar';

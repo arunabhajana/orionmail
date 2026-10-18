@@ -1,131 +1,51 @@
 "use client";
 
 import React, { memo } from 'react';
-import { Star } from 'lucide-react';
+import { Paperclip, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Email } from '@/lib/types';
+import { Email, Tag } from '@/lib/types';
+import { mailInitials, contactFromHeader, splitHeaderAddresses } from '@/lib/mail-display';
 import { useAppPreferences } from '../AppPreferencesContext';
 
-const formatRecipient = (toHeader: string | undefined): string => {
-    if (!toHeader) return "";
-    const recipients = toHeader.split(',').map(r => r.trim());
-    const parsed = recipients.map(r => {
-        let name = r.split('<')[0].trim();
-        name = name.replace(/^["']|["']$/g, '');
-        if (name) return name;
-        
-        const emailMatch = r.match(/<([^>]+)>/);
-        if (emailMatch) return emailMatch[1].split('@')[0];
-        
-        return r.split('@')[0];
-    });
-    return parsed.filter(p => p).join(', ');
-};
-
-export const EmailListItem = memo(({
-    email,
-    isSelected,
-    onSelect,
-    onToggleStar,
-    onContextMenu,
-    allTags = {}
-}: {
+export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, onContextMenu, allTags = {} }: {
     email: Email;
     isSelected: boolean;
     onSelect?: (id: string) => void;
     onToggleStar?: (id: string) => void;
     onToggleRead?: (id: string) => void;
     onDelete?: (id: string) => void;
-    onContextMenu?: (e: React.MouseEvent, id: string) => void;
-    allTags?: Record<string, import('@/lib/types').Tag>;
+    onContextMenu?: (event: React.MouseEvent, id: string) => void;
+    allTags?: Record<string, Tag>;
 }) => {
     const { preferences } = useAppPreferences();
-    const previewText = email.preview || "No preview available";
+    const sent = email.folder === 'sent';
+    const sender = sent && email.to ? splitHeaderAddresses(email.to).map(value => contactFromHeader(value).name).join(", ") : contactFromHeader(email.sender).name;
+    const tags = email.tags.map(id => allTags[id]).filter(tag => tag && tag.tag_type !== 'system');
+    const validDate = Number.isFinite(new Date(email.timestamp).getTime());
+    const timestamp = preferences.dateFormat === 'absolute'
+        ? new Date(email.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+        : email.time;
 
-    const isSent = email.folder === 'sent';
-    const displaySender = isSent && email.to ? formatRecipient(email.to) : email.sender;
-
-    return (
-        <div
-            onContextMenu={(e) => onContextMenu?.(e, email.id)}
-            className="relative border-b border-black/5 dark:border-white/5 overflow-hidden group"
-        >
-            <div
-                onClick={() => onSelect?.(email.id)}
-                className={cn(
-                    "px-4 cursor-pointer transition-all duration-200 relative z-10 bg-background/50 backdrop-blur-md flex flex-col",
-                    preferences.density === "compact" ? "py-2" : preferences.density === "relaxed" ? "py-6" : "py-4",
-                    isSelected
-                        ? "bg-primary/10 border-l-4 border-l-primary" // Selected
-                        : "border-l-4 border-transparent hover:bg-white/40 dark:hover:bg-white/5" // Regular
-                )}
-            >
-                <div className="flex justify-between items-start mb-1 h-6">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onToggleStar?.(email.id);
-                            }}
-                            className="group/star p-1 -ml-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
-                        >
-                            <Star
-                                className={cn(
-                                    "w-4 h-4 transition-all duration-200",
-                                    email.starred
-                                        ? "fill-yellow-400 text-yellow-400 scale-110"
-                                        : "text-muted-foreground/40 group-hover/star:text-muted-foreground group-hover/star:scale-110"
-                                )}
-                            />
-                        </button>
-                        {email.unread && !isSelected && (
-                            <div className="w-2 h-2 rounded-full bg-primary shrink-0 animate-pulse" />
-                        )}
-                        {preferences.showAvatars && <span aria-hidden="true" className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[9px] font-semibold text-primary">{displaySender.slice(0, 2).toUpperCase()}</span>}
-                        <span className={cn(
-                            "text-sm truncate tracking-tight flex-1 min-w-0",
-                            isSelected || email.unread
-                                ? "font-semibold text-foreground dark:text-white/90"
-                                : "font-medium text-foreground/80 dark:text-white/70"
-                        )}>
-                            {isSent && <span className="text-muted-foreground/60 mr-1 font-normal">To:</span>}
-                            {displaySender}
-                        </span>
-                    </div>
-                    <span className={cn(
-                        "text-[11px] font-medium whitespace-nowrap ml-2 shrink-0",
-                        isSelected ? "text-primary dark:text-white/90" : "text-muted-foreground dark:text-white/50"
-                    )}>
-                        {preferences.dateFormat === "absolute" ? new Date(email.timestamp).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : email.time}
-                    </span>
+    return <article onContextMenu={event => onContextMenu?.(event, email.id)} className={cn('mail-message-card group', isSelected && 'is-selected', email.unread && 'is-unread')} data-density={preferences.density}>
+        <button type="button" onClick={() => onSelect?.(email.id)} className="mail-message-hit" aria-label={`${email.unread ? 'Unread: ' : ''}${sender}, ${email.subject}`} aria-current={isSelected ? 'true' : undefined} />
+        <div className="pointer-events-none relative flex min-w-0 gap-3">
+            {preferences.showAvatars && <span aria-hidden="true" className="mail-sender-avatar">{mailInitials(sender)}</span>}
+            <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-2">
+                    <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', email.unread ? 'bg-primary' : 'bg-transparent')} />
+                    <span className={cn('min-w-0 flex-1 truncate text-[13px] leading-5', email.unread ? 'font-semibold text-foreground' : 'font-medium text-foreground/75')} title={sender}>{sent && <span className="mr-1 font-normal text-muted-foreground">To</span>}{sender || 'Unknown sender'}</span>
+                    <time title={email.date} dateTime={validDate ? new Date(email.timestamp).toISOString() : undefined} className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{timestamp}</time>
+                    <button type="button" aria-label={email.starred ? 'Unstar message' : 'Star message'} aria-pressed={email.starred} disabled={!onToggleStar} onClick={() => onToggleStar?.(email.id)} className={cn('mail-star-button pointer-events-auto relative z-10 -mr-1', email.starred && 'is-starred')}><Star className={cn('size-3.5', email.starred && 'fill-current')} /></button>
                 </div>
-                
-                {email.tags && email.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-1.5 overflow-hidden">
-                        {email.tags.map(tid => {
-                            const tag = allTags[tid];
-                            if (!tag) return null;
-                            if (tag.tag_type === 'system') return null; // Hide system tags from the preview
-                            return (
-                                <span key={tid} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium" style={{ backgroundColor: tag.bg_color || '#e5e7eb', color: tag.text_color || '#374151' }}>
-                                    {tag.name}
-                                </span>
-                            );
-                        })}
-                    </div>
-                )}
-                
-                <h4 className={cn(
-                    "text-sm mb-1 truncate pr-2 tracking-tight flex-none",
-                    isSelected ? "font-semibold text-foreground/90 dark:text-white/90" : "font-medium text-foreground/70 dark:text-white/70"
-                )}>
-                    {email.subject}
-                </h4>
-                {preferences.previewLines !== "0" && <p className={cn("text-xs text-muted-foreground dark:text-white/50 leading-relaxed flex-none", preferences.previewLines === "1" ? "line-clamp-1" : "line-clamp-2")}>
-                    {previewText}
-                </p>}
+                <h3 className={cn('mt-1 truncate text-[13px] leading-5', email.unread ? 'font-semibold text-foreground/90' : 'font-medium text-foreground/80')} title={email.subject}>{email.subject || '(No subject)'}</h3>
+                {preferences.previewLines !== '0' && <p className={cn('mt-1 text-xs leading-[1.65] text-muted-foreground', preferences.previewLines === '1' ? 'line-clamp-1' : 'line-clamp-2')}>{email.preview || 'No preview available'}</p>}
+                {(tags.length > 0 || email.attachments.length > 0) && <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-hidden">
+                    {tags.slice(0, 2).map(tag => <span key={tag.id} className="inline-flex max-w-28 items-center gap-1.5 truncate rounded-md bg-black/[0.035] px-1.5 py-0.5 text-[10px] text-muted-foreground dark:bg-white/[0.05]" title={tag.name}><span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: tag.bg_color || '#94a3b8' }} /><span className="truncate">{tag.name}</span></span>)}
+                    {tags.length > 2 && <span className="text-[10px] text-muted-foreground">+{tags.length - 2}</span>}
+                    {email.attachments.length > 0 && <Paperclip aria-label="Has attachments" className="ml-auto size-3 text-muted-foreground" />}
+                </div>}
             </div>
         </div>
-    );
+    </article>;
 });
-EmailListItem.displayName = "EmailListItem";
+EmailListItem.displayName = 'EmailListItem';

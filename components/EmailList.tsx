@@ -1,10 +1,10 @@
 "use client";
 
-import React, { memo } from 'react';
-import { Search, Star, RefreshCw, Mailbox, CheckCircle2, Flag } from 'lucide-react';
+import React from 'react';
+import { Search, RefreshCw, Mailbox, CheckCircle2, Flag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { SearchBar, FilterTabs, FilterType, SearchProgressData } from './inbox/EmailListHeader';
 import { EmailListItem } from './inbox/EmailListItem';
 import { useVirtualEmailList } from '@/hooks/useVirtualEmailList';
@@ -15,13 +15,14 @@ import { PendingEmailListItem } from './inbox/PendingEmailListItem';
 import { EmailContextMenu, EmailContextMenuState } from './inbox/EmailContextMenu';
 import { Tag } from '@/lib/types';
 import { useAppPreferences } from './AppPreferencesContext';
-import { useState, useEffect } from 'react';
+import { listen } from '@tauri-apps/api/event';
 
 // Global cache states removed as predictive prefetch happens in Rust backend now
 
 // --- Types ---
 
 interface EmailListProps {
+    statusBanner?: React.ReactNode;
     className?: string;
     emails: Email[];
     selectedEmailId: string | null;
@@ -49,6 +50,7 @@ interface EmailListProps {
 // --- Main Component ---
 
 const EmailList: React.FC<EmailListProps> = ({
+    statusBanner,
     className,
     emails,
     selectedEmailId,
@@ -76,17 +78,13 @@ const EmailList: React.FC<EmailListProps> = ({
     const [contextMenuState, setContextMenuState] = React.useState<EmailContextMenuState | null>(null);
 
     React.useEffect(() => {
-        invoke<import('@/lib/types').Tag[]>('get_all_tags').then(tags => {
-            const map: Record<string, import('@/lib/types').Tag> = {};
-            tags.forEach(t => map[t.id] = t);
-            setAllTags(map);
-        }).catch(console.error);
+        let active = true;
+        let stop: (() => void) | undefined;
+        const refresh = () => { void invoke<Tag[]>('get_all_tags').then(tags => { if (active) setAllTags(Object.fromEntries(tags.map(tag => [tag.id, tag]))); }).catch(console.error); };
+        refresh();
+        void listen('mail:tags_updated', refresh).then(unlisten => { if (active) stop = unlisten; else unlisten(); }).catch(console.error);
+        return () => { active = false; stop?.(); };
     }, []);
-
-    React.useEffect(() => {
-        setCurrentFilter('all');
-        setContextMenuState(null);
-    }, [currentFolder]);
 
     const displayedEmails = React.useMemo(() => {
         switch (currentFilter) {
@@ -107,28 +105,9 @@ const EmailList: React.FC<EmailListProps> = ({
 
     React.useEffect(() => { rowVirtualizer.measure(); }, [preferences.density, preferences.previewLines, preferences.showAvatars, rowVirtualizer]);
 
-    const [folderDisplayName, setFolderDisplayName] = useState<string>(currentFolder || '');
-
-    useEffect(() => {
-        if (!currentFolder) {
-            setFolderDisplayName('');
-            return;
-        }
-        if (currentFolder.startsWith('tag:')) {
-            const tagId = currentFolder.substring(4);
-            invoke<Tag[]>('get_all_tags')
-                .then(tags => {
-                    const tag = tags.find(t => t.id === tagId);
-                    setFolderDisplayName(tag ? tag.name : currentFolder);
-                })
-                .catch(err => {
-                    console.error("Failed to fetch tags", err);
-                    setFolderDisplayName(currentFolder);
-                });
-        } else {
-            setFolderDisplayName(currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1));
-        }
-    }, [currentFolder]);
+    const folderDisplayName = currentFolder?.startsWith('tag:')
+        ? allTags[currentFolder.slice(4)]?.name || 'Tag'
+        : currentFolder ? currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1) : 'Mailbox';
 
     React.useEffect(() => {
         if (!preferences.prefetchBodies || preferences.syncPaused || !virtualItems || virtualItems.length === 0) return;
@@ -139,7 +118,7 @@ const EmailList: React.FC<EmailListProps> = ({
             
             // +/- 5 rows for prefetch window
             const startIdx = Math.max(0, firstVisible - 5);
-            const endIdx = Math.min(emails.length - 1, lastVisible + 5);
+            const endIdx = Math.min(displayedEmails.length - 1, lastVisible + 5);
             
             const requests = [];
             for (let i = startIdx; i <= endIdx; i++) {
@@ -197,36 +176,16 @@ const EmailList: React.FC<EmailListProps> = ({
     return (
         <main
             className={cn(
-                "glass-list flex flex-col h-full border-r transition-colors",
-                "bg-white/60 dark:bg-black/80 backdrop-blur-2xl border-black/5 dark:border-white/5",
+                "mail-list-surface flex min-h-0 flex-col h-full",
                 className
             )}
         >
-            {/* 1. Header Area with Search & Filter */}
-            <div className="p-4 space-y-4 shrink-0 z-10">
-                <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                        <SearchBar
-                            value={searchQuery}
-                            onChange={onSearchQueryChange}
-                            onClear={onSearchClear}
-                            searchProgress={searchProgress}
-                        />
-                    </div>
-                    <button
-                        onClick={onSync}
-                        disabled={isSyncing}
-                        className={cn(
-                            "p-2 rounded-lg bg-white/50 dark:bg-black/20 border border-white/20 dark:border-white/10 hover:bg-white/80 dark:hover:bg-white/10 transition-colors flex items-center justify-center",
-                            isSyncing && "opacity-70 cursor-not-allowed"
-                        )}
-                        title="Sync Emails"
-                    >
-                        <RefreshCw className={cn("w-4 h-4 text-muted-foreground", isSyncing && "animate-spin text-primary")} />
-                    </button>
-                </div>
-                <FilterTabs currentFilter={currentFilter} onFilterChange={setCurrentFilter} />
+            <div className="shrink-0">
+                <div className="mail-pane-topbar"><div className="min-w-0"><h1 className="truncate text-sm font-semibold" title={folderDisplayName}>{folderDisplayName || 'Mailbox'}</h1></div><div className="flex shrink-0 items-center gap-2"><span aria-live="polite" className="text-[10px] tabular-nums text-muted-foreground">{searchQuery ? `${emails.length} found` : `${emails.length} loaded`}</span><button type="button" onClick={() => onSync?.()} disabled={isSyncing || !onSync} aria-label={isSyncing ? 'Syncing mail' : 'Sync mailbox'} title={isSyncing ? 'Syncing mail' : 'Sync mailbox'} className="mail-icon-button"><RefreshCw className={cn('size-4', isSyncing && 'animate-spin text-primary')} /></button></div></div>
+                <div className="space-y-3 px-3 pb-3 pt-3"><SearchBar value={searchQuery} onChange={onSearchQueryChange} onClear={onSearchClear} searchProgress={searchProgress} /><FilterTabs currentFilter={currentFilter} onFilterChange={setCurrentFilter} /></div>
             </div>
+            {statusBanner}
+            {pendingMessages.length > 0 && currentFilter === 'all' && !searchQuery && <div role="status" aria-label="Outgoing messages" className="max-h-40 shrink-0 overflow-y-auto border-y border-black/[0.04] px-2 py-1 custom-scrollbar dark:border-white/[0.05]">{pendingMessages.map(message => <PendingEmailListItem key={message.id} pending={message} />)}</div>}
 
             {/* 2. Scrollable List or Placeholder */}
             {(currentFolder === "drafts" || currentFolder === "trash") ? (
@@ -279,7 +238,7 @@ const EmailList: React.FC<EmailListProps> = ({
                     </div>
                     <h3 className="text-xl font-semibold text-foreground mb-2">No matching messages</h3>
                     <p className="text-sm text-muted-foreground max-w-[250px] mb-6">
-                        We couldn't find anything matching &ldquo;{searchQuery}&rdquo; in {folderDisplayName}.
+                        We couldn&apos;t find anything matching &ldquo;{searchQuery}&rdquo; in {folderDisplayName}.
                     </p>
                     <button
                         onClick={onSearchClear}
@@ -319,9 +278,9 @@ const EmailList: React.FC<EmailListProps> = ({
                     <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
                         <Mailbox className="w-10 h-10 text-primary opacity-80" />
                     </div>
-                    <h3 className="text-xl font-semibold text-foreground mb-2">No messages here</h3>
+                    <h3 className="text-xl font-semibold text-foreground mb-2">{pendingMessages.length ? "Waiting for mailbox sync" : "No messages here"}</h3>
                     <p className="text-sm text-muted-foreground max-w-[250px]">
-                        Your {folderDisplayName} folder is completely empty.
+                        {pendingMessages.length ? "Your outgoing mail is shown above and will appear here after sync." : `Your ${folderDisplayName} folder is empty.`}
                     </p>
                 </motion.div>
             ) : displayedEmails.length === 0 && !isSyncing ? (
@@ -337,7 +296,7 @@ const EmailList: React.FC<EmailListProps> = ({
                         )}
                     </div>
                     <h3 className="text-xl font-semibold text-foreground mb-2">
-                        {currentFilter === 'unread' ? "All caught up!" : "No flagged messages"}
+                        {currentFilter === 'unread' ? "All caught up!" : "No starred messages"}
                     </h3>
                     <p className="text-sm text-muted-foreground max-w-[250px]">
                         {currentFilter === 'unread' 
@@ -348,21 +307,14 @@ const EmailList: React.FC<EmailListProps> = ({
             ) : (
                 <div 
                     ref={parentRef} 
-                    className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar relative"
+                    className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar relative"
+                    aria-label="Messages"
                     onWheel={handleWheel}
                     onTouchStart={handleTouchStart}
                     onTouchMove={handleTouchMove}
                     onTouchEnd={handleTouchEnd}
                 >
                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
-                        {/* Render pending messages at the top if any */}
-                        {pendingMessages.length > 0 && currentFilter === 'all' && (
-                            <div className="w-full flex flex-col mb-1 z-20 sticky top-0 bg-background/95 backdrop-blur-md shadow-sm">
-                                {pendingMessages.map(pm => (
-                                    <PendingEmailListItem key={`pending-${pm.id}`} pending={pm} />
-                                ))}
-                            </div>
-                        )}
                         {virtualItems.map((virtualRow) => {
                             const email = displayedEmails[virtualRow.index];
                             return (

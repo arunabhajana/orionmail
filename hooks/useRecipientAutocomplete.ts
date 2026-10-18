@@ -28,6 +28,7 @@ export function useRecipientAutocomplete() {
                 const lowerRecipients = currentRecipients.map(r => r.toLowerCase());
                 const finalResults = results.filter(c => !lowerRecipients.includes(c.email.toLowerCase()));
                 setFilteredContacts(finalResults);
+                setSelectedIndex(0);
             }
         } catch (error) {
             console.error("Failed to search contacts:", error);
@@ -48,17 +49,10 @@ export function useRecipientAutocomplete() {
         }
     }, [inputValue, isOpen, recipients, fetchContacts]);
 
-    // Safe index bounds
-    useEffect(() => {
-        if (selectedIndex >= filteredContacts.length) {
-            setSelectedIndex(0);
-        }
-    }, [filteredContacts.length, selectedIndex]);
-
     const addRecipient = useCallback((email: string) => {
         const trimmed = email.trim();
         if (!trimmed) return;
-        setRecipients(prev => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+        setRecipients(prev => prev.some(value => value.toLowerCase() === trimmed.toLowerCase()) ? prev : [...prev, trimmed]);
     }, []);
 
     const removeLastRecipient = useCallback(() => {
@@ -127,7 +121,7 @@ export function useRecipientAutocomplete() {
                 setIsOpen(true);
                 setSelectedIndex(0);
             } else {
-                setSelectedIndex(prev => Math.min(prev + 1, filteredContacts.length - 1));
+                setSelectedIndex(prev => Math.max(0, Math.min(prev + 1, filteredContacts.length - 1)));
             }
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
@@ -149,6 +143,7 @@ export function useRecipientAutocomplete() {
         } else if (e.key === 'Escape') {
             if (isOpen) {
                 e.preventDefault();
+                e.stopPropagation();
                 setIsOpen(false);
             }
         } else if (e.key === 'Backspace' && !inputValue) {

@@ -1,20 +1,9 @@
 "use client";
 
-import React, { memo } from 'react';
-import {
-    Archive,
-    Trash2,
-    Reply,
-    MoreVertical,
-    AlertOctagon,
-    File,
-    Download,
-    Star,
-    Clock
-} from 'lucide-react';
+import React from 'react';
+import { AlertOctagon, File, Clock, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
-import { motion, AnimatePresence } from 'framer-motion';
 import DOMPurify from 'isomorphic-dompurify';
 import sanitizeHtml from 'sanitize-html';
 import { useTheme } from 'next-themes';
@@ -35,11 +24,14 @@ interface EmailDetailProps {
     onToggleStar?: (emailId: string) => void;
     onDeleteMessage?: (emailId: string) => void;
     onMarkAsRead?: (emailId: string) => void;
+    onToggleRead?: (emailId: string) => void;
+    onBack?: () => void;
 }
 
 // --- Main Component ---
 
-const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onMarkAsRead }) => {
+const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onMarkAsRead, onToggleRead, onBack }) => {
+    const scrollRef = React.useRef<HTMLDivElement>(null);
     const emailIframeRef = React.useRef<HTMLIFrameElement>(null);
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === 'dark';
@@ -58,13 +50,15 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         onMarkAsRead
     );
 
+    React.useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [email?.id, user?.id]);
+
     const smartActions = React.useMemo(() => {
         if (!preferences.smartActionsGlobal) return [];
         if (!extractedData || isLoadingBody) return [];
         
         const actions = SmartActionsEngine.detect({
             extractedData,
-            receivedAt: email?.timestamp || Date.now(),
+            receivedAt: email?.timestamp || 0,
             subject: email?.subject || '',
             sender: email?.sender || ''
         });
@@ -89,16 +83,15 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     if (!email) {
         return (
             <section className={cn(
-                "flex flex-col h-full items-center justify-center text-muted-foreground gap-4 transition-colors",
-                "bg-white/40 dark:bg-black/20 backdrop-blur-3xl", // Glass effect
+                "mail-reader-surface flex flex-col h-full items-center justify-center text-muted-foreground gap-4 p-8",
                 className
             )}>
                 <div className="w-16 h-16 rounded-2xl bg-black/5 dark:bg-white/10 flex items-center justify-center">
                     <File className="w-8 h-8 opacity-50" />
                 </div>
                 <div className="text-center">
-                    <h3 className="font-semibold text-foreground text-lg">No Message Selected</h3>
-                    <p className="text-sm opacity-70">Select an email to view its details</p>
+                    <h3 className="font-semibold text-foreground text-lg">A little space to focus</h3>
+                    <p className="text-sm opacity-70">Choose a message to start reading.</p>
                 </div>
             </section>
         );
@@ -108,34 +101,29 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         <section
             data-context-menu="message"
             className={cn(
-                "flex flex-col h-full bg-white dark:bg-[#111111] transition-colors",
+                "mail-reader-surface flex flex-col h-full",
                 className
             )}
         >
             <DetailToolbar
                 isStarred={email?.starred}
+                isUnread={email?.unread}
+                onBack={onBack}
+                onToggleRead={onToggleRead ? () => onToggleRead(email.id) : undefined}
                 onToggleStar={() => email && onToggleStar?.(email.id)}
                 onDelete={() => email && onDeleteMessage?.(email.id)}
             />
 
             {/* Content Scroll Area */}
-            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-                <AnimatePresence mode="wait">
-                    <motion.div
-                        key={email.id}
-                        initial={{ opacity: 0, x: 10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: -10 }}
-                        transition={{ duration: 0.2 }}
-                        className="w-full max-w-5xl mx-auto"
-                    >
+            <div ref={scrollRef} className="mail-reader-scroll min-h-0 flex-1 overflow-y-auto custom-scrollbar">
+                    <div key={remoteMessageKey} className="mail-reading-sheet">
                         <MessageHeader email={email} />
 
                         {smartActions.map((action) => (
                             <SmartActionCard key={action.id} action={action} />
                         ))}
 
-                        {!isLoadingBody && !error && preferences.blockRemoteImages && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/5 px-4 py-3 text-xs"><span className="text-muted-foreground">{remoteAllowed ? 'Remote content is allowed for this message.' : 'Remote images and stylesheets are blocked for your privacy.'}</span><button type="button" className="font-medium text-primary" onClick={() => setAllowedRemoteMessage(remoteAllowed ? null : remoteMessageKey)}>{remoteAllowed ? 'Block again' : 'Load for this message'}</button></div>}
+                        {!isLoadingBody && !error && preferences.blockRemoteImages && <div className="mail-privacy-bar"><span className="flex min-w-0 items-center gap-2 text-muted-foreground"><ShieldCheck aria-hidden="true" className="size-3.5 shrink-0" />{remoteAllowed ? 'Remote content allowed' : 'Remote content blocked'}</span><button type="button" className="shrink-0 rounded px-1 py-0.5 font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => setAllowedRemoteMessage(remoteAllowed ? null : remoteMessageKey)}>{remoteAllowed ? 'Block again' : 'Load images'}</button></div>}
                         {error ? (() => {
                             const isTimeout = error.includes("Timeout");
                             const Icon = isTimeout ? Clock : AlertOctagon;
@@ -154,9 +142,9 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                 </div>
                             );
                         })() : isLoadingBody ? (
-                            <div className="flex flex-col h-[60vh] items-center justify-center">
+                            <div className="flex min-h-60 flex-col items-center justify-center py-10">
                                 <OrbitLoader
-                                    message="Receiving transmission..."
+                                    message="Loading message…"
                                     size="md"
                                 />
                             </div>
@@ -180,7 +168,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                         html { opacity: 0; }
                                         html.ready { opacity: 1; }
                                         html, body { font-family: system-ui, -apple-system, sans-serif; font-size: ${preferences.readingFontSize}px; margin: 0; padding: 0; overflow: hidden; width: 100%; }
-                                        img { max-width: 100%; height: auto; }
+                                        img { max-width: 100% !important; height: auto; }
+                                        table { max-width: 100% !important; }
+                                        body { overflow-wrap: anywhere; }
+                                        pre { white-space: pre-wrap; overflow-wrap: anywhere; }
                                         a { color: #2563eb; }
                                         #email-content-wrapper { display: block; overflow: hidden; }
                                         
@@ -307,14 +298,9 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                         )}
 
                         {attachments.length > 0 && (
-                            <div className="mt-12 pt-8 border-t border-black/5 dark:border-white/5 mb-[10px]">
-                                <div className="flex items-center gap-3 mb-8">
-                                    <div className="w-1.5 h-6 rounded-full bg-primary/40 shadow-[0_0_10px_rgba(var(--color-primary-rgb),0.3)]" />
-                                    <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-muted-foreground/50 dark:text-white/30">
-                                        Attachments ({attachments.length})
-                                    </h3>
-                                </div>
-                                <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+                            <div className="mt-8 border-t border-black/[0.06] pt-5 dark:border-white/[0.07]">
+                                <h2 className="mb-3 text-xs font-medium text-muted-foreground">Attachments <span className="ml-1 tabular-nums">{attachments.length}</span></h2>
+                                <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))] gap-3">
                                     {attachments.map((att, i) => (
                                         <AttachmentCard
                                             key={att.partId || i}
@@ -326,8 +312,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                 </div>
                             </div>
                         )}
-                    </motion.div>
-                </AnimatePresence>
+                    </div>
             </div>
         </section>
     );
