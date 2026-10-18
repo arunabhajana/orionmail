@@ -856,15 +856,12 @@ pub fn load_messages_page(app_handle: &AppHandle, account_id: &str, folder: &str
 
     let mut messages = Vec::new();
     let fields = "uid, uid_validity, subject, sender, date, seen, flagged, snippet, folder, has_attachments, thread_id, recipient, message_id";
+    // A provider label is synced into its own tag:<id> mailbox. Its UIDs belong
+    // to that mailbox, so do not mix relationship matches from Inbox/Sent here.
     if folder.eq_ignore_ascii_case("starred") {
         let sql = format!("SELECT {fields} FROM messages WHERE account_id = ?1 AND flagged = 1 AND (?2 IS NULL OR date < (SELECT date FROM messages WHERE account_id = ?1 AND uid = ?2 AND flagged = 1 LIMIT 1)) ORDER BY date DESC, uid DESC LIMIT ?3");
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(rusqlite::params![account_id, before_uid, limit], parse_row).map_err(|e| e.to_string())?;
-        for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
-    } else if let Some(tag_id) = folder.strip_prefix("tag:") {
-        let sql = format!("SELECT m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{}, m.{} FROM messages m WHERE m.account_id = ?1 AND EXISTS (SELECT 1 FROM message_tags mt WHERE mt.account_id = m.account_id AND mt.folder = m.folder AND mt.message_uid = m.uid AND mt.tag_id = ?2) AND (?3 IS NULL OR m.date < (SELECT date FROM messages c WHERE c.account_id = ?1 AND c.uid = ?3 AND EXISTS (SELECT 1 FROM message_tags mt2 WHERE mt2.account_id = c.account_id AND mt2.folder = c.folder AND mt2.message_uid = c.uid AND mt2.tag_id = ?2) LIMIT 1)) ORDER BY m.date DESC, m.uid DESC LIMIT ?4", "uid", "uid_validity", "subject", "sender", "date", "seen", "flagged", "snippet", "folder", "has_attachments", "thread_id", "recipient", "message_id");
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(rusqlite::params![account_id, tag_id, before_uid, limit], parse_row).map_err(|e| e.to_string())?;
         for row in rows { messages.push(row.map_err(|e| e.to_string())?); }
     } else if let Some(uid) = before_uid {
         let sql = format!("SELECT {fields} FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid < ?3 ORDER BY uid DESC LIMIT ?4");
@@ -1249,13 +1246,12 @@ pub fn get_global_unread_count(app_handle: &AppHandle, account_id: &str) -> Resu
 pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
     let conn = open_connection(app_handle)?;
 
-    // Clean query for FTS MATCH
-    let cleaned: Vec<String> = query.to_lowercase().split_whitespace()
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            let s_clean = s.replace(|c: char| !c.is_ascii_alphanumeric(), "");
-            format!("\"{}\"*", s_clean)
-        })
+    // Match tokenizer boundaries without losing Unicode or joining email-address tokens.
+    // Quote each token so renderer input cannot become FTS syntax.
+    let cleaned: Vec<String> = query.split(|c: char| !c.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .take(32)
+        .map(|token| format!("\"{}\"*", token))
         .collect();
     let match_query = cleaned.join(" ");
 
@@ -1271,14 +1267,14 @@ pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &
          FROM messages m
          JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
          WHERE m.account_id = ?1 AND messages_fts MATCH ?2
-         ORDER BY (bm25(messages_fts) - (m.flagged * 5.0) - (CASE WHEN m.seen = 0 THEN 2.0 ELSE 0.0 END) - (m.date / 100000.0)) ASC
+         ORDER BY bm25(messages_fts, 0.0, 8.0, 5.0, 3.0, 1.0, 1.0) ASC, m.date DESC
          LIMIT ?3"
     } else {
         "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
          FROM messages m
          JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
-         WHERE m.account_id = ?1 AND m.folder = ?2 AND messages_fts MATCH ?3
-         ORDER BY (bm25(messages_fts) - (m.flagged * 5.0) - (CASE WHEN m.seen = 0 THEN 2.0 ELSE 0.0 END) - (m.date / 100000.0)) ASC
+         WHERE m.account_id = ?1 AND ((?2 = 'starred' AND m.flagged = 1) OR m.folder = ?2) AND messages_fts MATCH ?3
+         ORDER BY bm25(messages_fts, 0.0, 8.0, 5.0, 3.0, 1.0, 1.0) ASC, m.date DESC
          LIMIT ?4"
     };
 

@@ -10,7 +10,7 @@ interface SearchBarProps {
     value?: string; onChange?: (value: string) => void; onClear?: () => void; searchProgress?: SearchProgressData | null;
 }
 export const SearchBar = memo(({ value = '', onChange, onClear, searchProgress }: SearchBarProps) => {
-    const searching = Boolean(value && searchProgress && !['Completed', 'Cancelled', 'OfflineLocalOnly'].includes(searchProgress.state) && !/Complete|Offline/.test(searchProgress.progress_text));
+    const searching = Boolean(value && searchProgress && !['Completed', 'Cancelled', 'OfflineLocalOnly', 'Failed'].includes(searchProgress.state) && !/Complete|Offline/.test(searchProgress.progress_text));
     return <div className="mail-search relative w-full">
         <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <input aria-label="Search messages" placeholder="Search messages…" type="search" value={value} onChange={event => onChange?.(event.target.value)} onKeyDown={event => { if (event.key === 'Escape' && value) { event.preventDefault(); onClear?.(); } }} className="mail-search-input" />

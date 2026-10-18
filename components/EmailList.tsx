@@ -198,7 +198,7 @@ const EmailList: React.FC<EmailListProps> = ({
                         This folder will be implemented soon!
                     </p>
                 </motion.div>
-            ) : searchQuery.trim().length > 0 && emails.length === 0 && (!searchProgress || (searchProgress.state !== 'Completed' && searchProgress.state !== 'Cancelled' && searchProgress.state !== 'OfflineLocalOnly')) ? (
+            ) : searchQuery.trim().length > 0 && emails.length === 0 && (!searchProgress || (searchProgress.state !== 'Completed' && searchProgress.state !== 'Cancelled' && searchProgress.state !== 'OfflineLocalOnly' && searchProgress.state !== 'Failed')) ? (
                 // Option 1: Shimmering Search Skeleton shown while searching local/remote or during debounce
                 <motion.div
                     initial={{ opacity: 0 }}
@@ -236,9 +236,9 @@ const EmailList: React.FC<EmailListProps> = ({
                     <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
                         <Search className="w-10 h-10 text-primary opacity-80" />
                     </div>
-                    <h3 className="text-xl font-semibold text-foreground mb-2">No matching messages</h3>
+                    <h3 className="text-xl font-semibold text-foreground mb-2">{searchProgress?.state === 'Failed' ? 'Search unavailable' : 'No matching messages'}</h3>
                     <p className="text-sm text-muted-foreground max-w-[250px] mb-6">
-                        We couldn&apos;t find anything matching &ldquo;{searchQuery}&rdquo; in {folderDisplayName}.
+                        {searchProgress?.state === 'Failed' ? 'Search could not finish. Clear the search and try again.' : <>We couldn&apos;t find anything matching &ldquo;{searchQuery}&rdquo; in {folderDisplayName}.</>}
                     </p>
                     <button
                         onClick={onSearchClear}

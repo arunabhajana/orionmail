@@ -340,9 +340,9 @@ pub struct SearchResponse {
 }
 
 #[tauri::command]
-pub async fn search_messages(app_handle: tauri::AppHandle, folder: String, query: String) -> Result<SearchResponse, String> {
+pub async fn search_messages(app_handle: tauri::AppHandle, folder: String, query: String, search_id: Option<String>) -> Result<SearchResponse, String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    let (search_id, local_results, remote_search_state) = crate::mail::search::start_search(app_handle, account, folder, query).await?;
+    let (search_id, local_results, remote_search_state) = crate::mail::search::start_search(app_handle, account, folder, query, search_id).await?;
     Ok(SearchResponse {
         search_id,
         local_results,

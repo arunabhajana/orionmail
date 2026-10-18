@@ -104,9 +104,6 @@ export default function MainLayout() {
         if (currentFolder === 'starred') {
             return email.starred;
         }
-        if (currentFolder.startsWith('tag:')) {
-            return true;
-        }
         return email.folder === currentFolder;
     });
 
@@ -443,7 +440,7 @@ export default function MainLayout() {
         if (isBackground && preferencesRef.current.syncPaused) return Promise.resolve();
         // Read currentFolder from ref to avoid stale closure issues
         const folderAtSyncTime = currentFolderRef.current;
-        if (isSyncing || (!requestedFolder && (folderAtSyncTime === "drafts" || folderAtSyncTime === "trash"))) return Promise.resolve();
+        if ((!requestedFolder && isSyncing) || (!requestedFolder && (folderAtSyncTime === "drafts" || folderAtSyncTime === "trash"))) return Promise.resolve();
         setIsSyncing(true);
         setSyncError(null);
 
@@ -619,24 +616,30 @@ export default function MainLayout() {
     }, []);
 
     useEffect(() => {
-        if (!isBootstrapping) {
-            setSelectedEmailId(null);
-            setIsLoadingFolder(true);
-            setEmails([]); // Clear stale emails immediately to prevent wrong-folder flash
-            fetchCache(currentFolder).then((hasCache) => {
-                setIsLoadingFolder(false);
-                if (hasCache) {
-                    // Debounced background sync on folder entry
-                    setTimeout(() => {
-                        handleSync(true);
-                    }, 500);
-                } else if (!preferencesRef.current.syncPaused) {
-                    handleSync(true);
-                }
-            }).catch(() => {
-                setIsLoadingFolder(false);
-            });
-        }
+        if (isBootstrapping) return;
+        let cancelled = false;
+        let syncTimer: ReturnType<typeof setTimeout> | undefined;
+        const folder = currentFolder;
+        setSelectedEmailId(null);
+        setIsLoadingFolder(true);
+        setEmails([]);
+        setHasMore(false);
+        setIsLoadingMore(false);
+        void fetchCache(folder).then(hasCache => {
+            if (cancelled) return;
+            setIsLoadingFolder(false);
+            if (!preferencesRef.current.syncPaused) {
+                syncTimer = setTimeout(() => {
+                    if (!cancelled) void handleSync(true, folder);
+                }, hasCache ? 300 : 0);
+            }
+        }).catch(() => {
+            if (!cancelled) setIsLoadingFolder(false);
+        });
+        return () => {
+            cancelled = true;
+            if (syncTimer) clearTimeout(syncTimer);
+        };
     }, [currentFolder, isBootstrapping]);
 
     const [syncingFolders, setSyncingFolders] = useState<Set<string>>(new Set());
@@ -705,7 +708,7 @@ export default function MainLayout() {
                     return next;
                 });
                 
-                if (event.payload === currentFolderRef.current && emailsRef.current.length === 0) {
+                if (event.payload === currentFolderRef.current) {
                     await fetchCache(event.payload);
                 }
             });
@@ -824,29 +827,38 @@ export default function MainLayout() {
     }, []);
 
     const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const searchRevision = useRef(0);
+    useEffect(() => () => {
+        searchRevision.current += 1;
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    }, []);
 
     const handleSearchQueryChange = (query: string) => {
         const folder = currentFolder;
+        const revision = ++searchRevision.current;
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        if (activeSearchState.activeSearchId) {
+            void invoke('clear_search', { searchId: activeSearchState.activeSearchId }).catch(console.error);
+        }
         setFolderSearchContexts(prev => ({
             ...prev,
             [folder]: {
                 ...(prev[folder] || { activeSearchId: null, searchProgress: null, searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false }),
                 searchQuery: query,
-                ...(query ? {} : { activeSearchId: null, searchProgress: null, searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false })
+                activeSearchId: null, searchProgress: null, searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false
             }
         }));
 
-        if (!query) {
-            if (activeSearchState.activeSearchId) {
-                invoke('clear_search', { searchId: activeSearchState.activeSearchId }).catch(console.error);
-            }
-            return;
-        }
-
-        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        if (!query.trim()) return;
         searchTimeoutRef.current = setTimeout(async () => {
             try {
-                const res: any = await invoke('search_messages', { folder, query });
+                const searchId = crypto.randomUUID();
+                setFolderSearchContexts(prev => ({ ...prev, [folder]: { ...prev[folder], activeSearchId: searchId } }));
+                const res: any = await invoke('search_messages', { folder, query: query.trim(), searchId });
+                if (revision !== searchRevision.current) {
+                    void invoke('clear_search', { searchId: res.search_id }).catch(console.error);
+                    return;
+                }
                 const localFormatted = res.local_results.map(formatEmailFromMessage);
                 const deduped = dedupeEmails(localFormatted);
                 
@@ -855,9 +867,9 @@ export default function MainLayout() {
                     [folder]: {
                         ...(prev[folder] || { searchQuery: query, isLoadingMoreSearch: false }),
                         activeSearchId: res.search_id,
-                        searchResults: deduped,
+                        searchResults: dedupeEmails([...deduped, ...(prev[folder]?.searchResults || [])]),
                         hasMoreSearch: res.remote_search_state !== 'Offline' && res.remote_search_state !== 'Unsupported',
-                        searchProgress: {
+                        searchProgress: prev[folder]?.searchProgress || {
                             search_id: res.search_id,
                             state: 'SearchingRemote',
                             matched: deduped.length,
@@ -871,11 +883,16 @@ export default function MainLayout() {
                 }));
             } catch (err) {
                 console.error("Search failed", err);
+                if (revision !== searchRevision.current) return;
+                setFolderSearchContexts(prev => ({ ...prev, [folder]: { ...prev[folder], hasMoreSearch: false,
+                    searchProgress: { search_id: '', state: 'Failed', matched: 0, downloaded: 0, indexed: 0, streamed: 0, total: 0, progress_text: 'Search failed. Try again.' } } }));
             }
-        }, 300);
+        }, 150);
     };
 
     const handleSearchClear = () => {
+        ++searchRevision.current;
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
         const folder = currentFolder;
         if (activeSearchState.activeSearchId) {
             invoke('clear_search', { searchId: activeSearchState.activeSearchId }).catch(console.error);
@@ -936,7 +953,7 @@ export default function MainLayout() {
                             next[folder] = {
                                 ...context,
                                 searchProgress: progress,
-                                hasMoreSearch: progress.state !== 'Cancelled' && progress.state !== 'OfflineLocalOnly' && !progress.progress_text.includes('Offline')
+                                hasMoreSearch: progress.state !== 'Cancelled' && progress.state !== 'OfflineLocalOnly' && progress.state !== 'Failed' && !progress.progress_text.includes('Local results only') && !progress.progress_text.includes('Offline')
                             };
                             break;
                         }

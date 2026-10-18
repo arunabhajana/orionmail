@@ -113,7 +113,7 @@ impl SearchBackend for GmailSearchBackend {
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
                 let imap_mailbox = imap_mailbox_clone.clone();
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("X-GM-RAW \"{}\"", query_clone.replace('"', "\\\""));
+                let search_query = format!("X-GM-RAW \"{}\"", query_clone.replace('\\', "\\\\").replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a)); // Newest first
@@ -130,7 +130,7 @@ impl SearchBackend for GmailSearchBackend {
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
                 let imap_mailbox = imap_mailbox_clone.clone();
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("UID 1:{} X-GM-RAW \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('"', "\\\""));
+                let search_query = format!("UID 1:{} X-GM-RAW \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('\\', "\\\\").replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a));
@@ -160,7 +160,7 @@ impl SearchBackend for OutlookSearchBackend {
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
                 let imap_mailbox = imap_mailbox_clone.clone();
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("TEXT \"{}\"", query_clone.replace('"', "\\\""));
+                let search_query = format!("TEXT \"{}\"", query_clone.replace('\\', "\\\\").replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a));
@@ -177,7 +177,7 @@ impl SearchBackend for OutlookSearchBackend {
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
                 let imap_mailbox = imap_mailbox_clone.clone();
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("UID 1:{} TEXT \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('"', "\\\""));
+                let search_query = format!("UID 1:{} TEXT \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('\\', "\\\\").replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a));
@@ -207,7 +207,7 @@ impl SearchBackend for GenericImapSearchBackend {
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
                 let imap_mailbox = imap_mailbox_clone.clone();
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("TEXT \"{}\"", query_clone.replace('"', "\\\""));
+                let search_query = format!("TEXT \"{}\"", query_clone.replace('\\', "\\\\").replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a));
@@ -224,7 +224,7 @@ impl SearchBackend for GenericImapSearchBackend {
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
                 let imap_mailbox = imap_mailbox_clone.clone();
                 session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("UID 1:{} TEXT \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('"', "\\\""));
+                let search_query = format!("UID 1:{} TEXT \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('\\', "\\\\").replace('"', "\\\""));
                 let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
                 let mut uid_vec: Vec<u32> = uids.into_iter().collect();
                 uid_vec.sort_unstable_by(|a, b| b.cmp(a));
@@ -310,7 +310,7 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
     };
     
     let fetch_res = execute_with_session(account, SessionKind::Search, move |session| {
-        session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
+        let mailbox = session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
         
         let fetch_query = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO)])";
         let results = session.uid_fetch(uid.to_string(), fetch_query).map_err(|e| format!("IMAP fetch header error: {}", e))?;
@@ -359,7 +359,7 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
 
             let header = MessageHeader {
                 uid,
-                uid_validity: 1,
+                uid_validity: mailbox.uid_validity.unwrap_or(1),
                 subject: if subject.is_empty() { "(No Subject)".to_string() } else { subject },
                 from: if sender.is_empty() { "Unknown".to_string() } else { sender },
                 date,
@@ -379,7 +379,7 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
         Err("Could not retrieve message header.".to_string())
     }).await?;
 
-    let _ = database::insert_or_update_messages(app_handle, &account.id, &[fetch_res]);
+    database::insert_or_update_messages(app_handle, &account.id, &[fetch_res])?;
 
     Ok(MessageDetail {
         body: "Search match found in mailbox history.".to_string(),
@@ -388,9 +388,15 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
     })
 }
 
-pub async fn start_search(app_handle: AppHandle, account: Account, folder: String, query: String) -> Result<(String, Vec<MessageHeader>, RemoteSearchState), String> {
+pub async fn start_search(app_handle: AppHandle, account: Account, folder: String, query: String, requested_id: Option<String>) -> Result<(String, Vec<MessageHeader>, RemoteSearchState), String> {
     let start_time = Instant::now();
-    let search_id = uuid::Uuid::new_v4().to_string();
+    if query.trim().is_empty() || query.len() > 2048 || query.chars().any(char::is_control) {
+        return Err("Enter a search query of up to 2048 bytes without control characters".to_string());
+    }
+    let search_id = match requested_id {
+        Some(id) => uuid::Uuid::parse_str(&id).map_err(|_| "Invalid search ID".to_string())?.to_string(),
+        None => uuid::Uuid::new_v4().to_string(),
+    };
 
     // 1. Cancel previous searches for this account+folder
     let mut to_remove = Vec::new();
@@ -405,8 +411,13 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
     }
 
     // 2. Perform Local FTS5 Search instantly
-    let local_engine = FTS5SearchEngine;
-    let local_results = local_engine.search(&app_handle, &account.id, &folder, &query, 100)?;
+    let local_app = app_handle.clone();
+    let local_account = account.id.clone();
+    let local_folder = folder.clone();
+    let local_query = query.clone();
+    let local_results = tokio::task::spawn_blocking(move || {
+        FTS5SearchEngine.search(&local_app, &local_account, &local_folder, &local_query, 100)
+    }).await.map_err(|e| format!("Local search failed: {e}"))??;
     let local_ms = start_time.elapsed().as_millis();
 
     // 3. Create SearchContext
@@ -754,9 +765,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
                     {
                         let mut state = context.state.lock().await;
                         state.cursor = uids.last().copied();
-                        for &p in &pending_uids {
-                            state.pending.push_back(p);
-                        }
+                        state.pending = uids.iter().filter(|uid| !existing.contains(uid)).copied().collect();
                     }
                 }
             }

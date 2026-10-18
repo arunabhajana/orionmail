@@ -255,7 +255,12 @@ impl BodyPrefetchManager {
 
                 // Reply to oneshot waiters inline
                 // Try to read from cache regardless of fetch_res (it may already have been cached)
-                if fetch_res.is_ok() || !should_fetch {
+                if priority == PrefetchPriority::Search && should_fetch {
+                    // Search downloads headers only; a body-cache entry is not expected.
+                    for tx in responders {
+                        let _ = tx.send(fetch_res.clone());
+                    }
+                } else if fetch_res.is_ok() || !should_fetch {
                     if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle, &job.key.account_id, &job.key.folder, job.key.uid) {
                         let attachments = if let Some(json) = attachments_json {
                             serde_json::from_str(&json).unwrap_or_default()
