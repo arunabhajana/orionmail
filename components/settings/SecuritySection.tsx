@@ -1,20 +1,23 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { useSettings } from './SettingsContext';
+import { SettingGroup, SettingRow, SettingToggle } from './SettingsControls';
+import { PreferencesSection } from './PreferencesSection';
 
 export const SecuritySection = () => {
     const { registerSection, unregisterSection, markDirty } = useSettings();
     const [helloAvailable, setHelloAvailable] = useState(false);
+    const [loaded, setLoaded] = useState(false);
+    const [loadError, setLoadError] = useState(false);
     
     const [originalAppLockEnabled, setOriginalAppLockEnabled] = useState(false);
     const [appLockEnabled, setAppLockEnabled] = useState(false);
 
     useEffect(() => {
         // Hydrate from Tauri settings
-        invoke<any>('get_app_settings')
+        invoke<{ minimize_to_tray: boolean; start_hidden: boolean; app_lock_enabled: boolean }>('get_app_settings')
             .then(settings => {
                 const stored = settings.app_lock_enabled === true;
                 setOriginalAppLockEnabled(stored);
@@ -27,22 +30,23 @@ export const SecuritySection = () => {
                     })
                     .catch(console.error);
             })
-            .catch(console.error);
+            .catch(() => setLoadError(true)).finally(() => setLoaded(true));
     }, []);
 
     // Register section
     useEffect(() => {
-        const isDirty = originalAppLockEnabled !== appLockEnabled;
+        const isDirty = loaded && !loadError && originalAppLockEnabled !== appLockEnabled;
 
         registerSection({
             id: 'security',
             isDirty,
             save: async () => {
+                if (!loaded || loadError) throw new Error("Security settings could not be loaded.");
                 if (appLockEnabled && !originalAppLockEnabled) {
                     const verified = await invoke<boolean>('authenticate_hello', { message: 'Enable OrionMail app lock' });
                     if (!verified) throw new Error('Windows Hello verification is required to enable app lock.');
                 }
-                const settings = await invoke<any>('get_app_settings');
+                const settings = await invoke<{ minimize_to_tray: boolean; start_hidden: boolean; app_lock_enabled: boolean }>('get_app_settings');
                 await invoke('set_app_settings', {
                     minimizeToTray: settings.minimize_to_tray,
                     startHidden: settings.start_hidden,
@@ -56,98 +60,21 @@ export const SecuritySection = () => {
         });
 
         return () => unregisterSection('security');
-    }, [originalAppLockEnabled, appLockEnabled, registerSection, unregisterSection]);
+    }, [originalAppLockEnabled, appLockEnabled, loaded, loadError, registerSection, unregisterSection]);
 
     useEffect(() => {
         markDirty('security', originalAppLockEnabled !== appLockEnabled);
     }, [originalAppLockEnabled, appLockEnabled, markDirty]);
 
-    const handleAppLockChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setAppLockEnabled(e.target.checked);
-    };
-
-    return (
-    <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-8"
-    >
-        {/* Security Summary & Toggles */}
-        <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
-            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Login Security</h3>
-
-            <div className="space-y-6">
-                <div data-setting-id="security.2fa" className="flex items-center justify-between rounded-xl">
-                    <div>
-                        <h4 className="font-semibold text-foreground">Two-Factor Authentication</h4>
-                        <p className="text-sm text-muted-foreground mt-1">Add an extra layer of security to your account.</p>
-                    </div>
-                    {/* CSS Toggle Switch */}
-                    <label className="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" className="sr-only peer" />
-                        <div className="w-11 h-6 bg-black/10 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
-                </div>
-
-                <div className="h-px bg-white/10 dark:bg-white/5 w-full" />
-
-                {helloAvailable && (
-                    <div data-setting-id="security.app-lock" className="flex items-center justify-between rounded-xl">
-                        <div>
-                            <h4 className="font-semibold text-foreground">Require Password on App Launch</h4>
-                            <p className="text-sm text-muted-foreground mt-1">Prompt for Windows Hello when opening OrionMail.</p>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                            <input 
-                                type="checkbox" 
-                                className="sr-only peer" 
-                                checked={appLockEnabled}
-                                onChange={handleAppLockChange}
-                            />
-                            <div className="w-11 h-6 bg-black/10 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                        </label>
-                    </div>
-                )}
-            </div>
-        </div>
-
-        {/* Data & Privacy */}
-        <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-black/20 border border-white/20 dark:border-white/10 backdrop-blur-md">
-            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Privacy Controls</h3>
-
-            <div className="space-y-6">
-                <div data-setting-id="security.images" className="flex items-center justify-between rounded-xl">
-                    <div>
-                        <h4 className="font-semibold text-foreground">Block External Images</h4>
-                        <p className="text-sm text-muted-foreground mt-1">Prevent senders from tracking you via spy pixels.</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" className="sr-only peer" defaultChecked />
-                        <div className="w-11 h-6 bg-black/10 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 dark:after:border-gray-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
-                </div>
-
-                <div className="h-px bg-white/10 dark:bg-white/5 w-full" />
-
-                <div data-setting-id="security.blocklist" className="flex items-center justify-between rounded-xl">
-                    <div className="flex-1 pr-6">
-                        <h4 className="font-semibold text-foreground">Blocked Senders</h4>
-                        <p className="text-sm text-muted-foreground mt-1">Manage addresses you have blocked from messaging you.</p>
-                    </div>
-                    <button className="px-5 py-2 whitespace-nowrap bg-white text-black font-medium rounded-xl shadow-sm hover:bg-white/90 transition-colors text-sm dark:bg-black/40 dark:text-white dark:border dark:border-white/10 dark:hover:bg-black/60">
-                        Manage Blocklist
-                    </button>
-                </div>
-            </div>
-
-            <div data-setting-id="security.cache" className="mt-10 rounded-xl">
-                <button className="px-5 py-2.5 bg-red-500/10 text-red-600 font-semibold rounded-xl hover:bg-red-500/20 transition-colors text-sm flex items-center gap-2">
-                    Clear Local Cache Data
-                </button>
-                <p className="text-xs text-muted-foreground mt-2 px-1">This will remove downloaded emails from your device, requiring a re-sync.</p>
-            </div>
-        </div>
-    </motion.div>
-    );
+    return <div className="space-y-5">
+        <SettingGroup title="Protect this app" description="Windows Hello protects access to OrionMail. Your Google account security is managed by Google.">
+            <SettingRow id="security.app-lock" title="Windows Hello on launch" description={!loaded ? "Checking device security…" : loadError ? "Could not load native security settings. Reopen Settings to try again." : helloAvailable ? "Require your PIN, fingerprint, or face when opening OrionMail." : "Set up Windows Hello in Windows Settings to enable app lock."}>
+                <SettingToggle label="Windows Hello on launch" checked={appLockEnabled} onChange={setAppLockEnabled} disabled={!loaded || loadError || (!helloAvailable && !appLockEnabled)} />
+            </SettingRow>
+            <SettingRow id="security.idle" title="Automatic idle lock" description="App lock currently applies on launch. Timed re-locking is not available yet." unavailable />
+            <SettingRow id="security.windows" title="Lock with Windows" description="Windows session lock integration is not available yet." unavailable />
+        </SettingGroup>
+        <PreferencesSection section="privacy" />
+    </div>;
 };
 SecuritySection.displayName = "SecuritySection";

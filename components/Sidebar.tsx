@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAppPreferences } from "./AppPreferencesContext";
 import Link from "next/link"; // Import Link for navigation
 
 import { UserProfile } from "./sidebar/UserProfile";
@@ -174,6 +175,7 @@ const NAV_ITEMS: NavItemConfig[] = [
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, onCreateTagClick, onEditTagClick, onDeleteTagClick, currentFolder, onFolderSelect, unreadCounts }) => {
+    const { preferences } = useAppPreferences();
     const [tags, setTags] = useState<Tag[]>([]);
 
     React.useEffect(() => {
@@ -190,7 +192,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, onCreateTagClic
             className={cn(
                 // Glassmorphism Base
                 "flex flex-col h-full border-r",
-                "bg-white/40 dark:bg-[#1C1C21]/70 backdrop-blur-2xl border-white/20 dark:border-white/5 transition-colors relative overflow-hidden",     // Light & Dark Mode
+                "bg-white/40 dark:bg-[#1C1C21]/45 backdrop-blur-3xl border-white/20 dark:border-white/5 transition-colors relative overflow-hidden",     // Light & Dark Mode
                 className
             )}
         >
@@ -211,7 +213,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, onCreateTagClic
                             <NavItem
                                 key={item.id}
                                 {...item}
-                                badge={unreadCounts?.[item.id] && unreadCounts[item.id] > 0 ? unreadCounts[item.id] : item.badge}
+                                badge={preferences.showUnreadCount ? (unreadCounts?.[item.id] && unreadCounts[item.id] > 0 ? unreadCounts[item.id] : item.badge) : undefined}
                                 highlight={currentFolder === item.id}
                                 onClick={() => onFolderSelect?.(item.id)}
                             />

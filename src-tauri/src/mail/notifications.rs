@@ -31,7 +31,10 @@ fn clean_sender(from: &str) -> String {
 }
 
 pub fn show_new_emails(app: &AppHandle, account_id: &str, new_emails: &[(String, String, u32)]) {
-    let mut state = STATE.lock().unwrap();
+    let prefs = crate::mail_preferences::load(app);
+    // Do not expose message content while the native app lock is closed.
+    if !prefs.notifications_allowed() || crate::auth::app_lock::require_unlocked(app).is_err() { return; }
+    let mut state = match STATE.lock() { Ok(state) => state, Err(_) => return };
     let now = Instant::now();
     
     // Clean up expired UIDs (older than 5 minutes)
@@ -71,10 +74,12 @@ pub fn show_new_emails(app: &AppHandle, account_id: &str, new_emails: &[(String,
             body.push_str(&format!("{} - {}\n", clean_sender(from), subject));
         }
         
+        let body = if prefs.hide_notification_content { format!("{} new messages in your Inbox", count) } else { body.trim().to_string() };
         app.notification()
             .builder()
+            .sound(if prefs.notification_sound { "Default" } else { "" })
             .title(format!("{} new emails", count))
-            .body(body.trim())
+            .body(body)
             .icon("icons/128x128.png")
             .action_type_id("summary_email")
             .show()
@@ -84,8 +89,9 @@ pub fn show_new_emails(app: &AppHandle, account_id: &str, new_emails: &[(String,
         for (from, subject, uid) in deduped_emails {
             app.notification()
                 .builder()
-                .title(clean_sender(&from))
-                .body(&subject)
+                .title(if prefs.hide_notification_content { "New email".to_string() } else { clean_sender(&from) })
+                .body(if prefs.hide_notification_content { "You have a new message in your Inbox." } else { &subject })
+                .sound(if prefs.notification_sound { "Default" } else { "" })
                 .icon("icons/128x128.png")
                 .action_type_id("new_email")
                 .extra("uid", uid.to_string())

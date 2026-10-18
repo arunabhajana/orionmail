@@ -77,10 +77,10 @@ export function SettingsProvider({ children, onInterceptNavigation }: { children
             });
         } catch (e) {
             console.error("Save all failed", e);
-            toast.error("Failed to save settings.", {
+            toast.error(e instanceof Error ? e.message : typeof e === "string" ? e : "Failed to save settings.", {
                 action: {
                     label: "Retry",
-                    onClick: () => saveAll()
+                    onClick: () => { void saveAll().catch(() => {}); }
                 }
             });
             throw e; // throw to stop navigation
@@ -96,12 +96,13 @@ export function SettingsProvider({ children, onInterceptNavigation }: { children
     }, [dirtySections]);
 
     const requestNavigation = useCallback((callback: () => void) => {
+        if (isSaving) return;
         if (hasUnsavedChanges) {
             onInterceptNavigation(callback);
         } else {
             callback();
         }
-    }, [hasUnsavedChanges, onInterceptNavigation]);
+    }, [hasUnsavedChanges, isSaving, onInterceptNavigation]);
 
     // Ctrl+S listener
     useEffect(() => {
@@ -109,7 +110,7 @@ export function SettingsProvider({ children, onInterceptNavigation }: { children
             if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 if (hasUnsavedChanges && !isSaving) {
                     e.preventDefault();
-                    saveAll();
+                    void saveAll().catch(() => {});
                 }
             }
         };

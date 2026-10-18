@@ -36,6 +36,9 @@ import RichTextEditor, {
 import { emailSafeCleanup, wrapEmailHtml } from "@/lib/email-safe-cleanup";
 import type { Editor } from "@tiptap/core";
 import DOMPurify from "isomorphic-dompurify";
+import { useAppPreferences } from "./AppPreferencesContext";
+import { parseAddressList, plainTextHtml } from "@/lib/app-preferences";
+import { confirm } from "@tauri-apps/plugin-dialog";
 
 // --------------------------------------------------------------------------
 // Types
@@ -348,6 +351,11 @@ export type ComposeWindowState = "normal" | "maximized" | "minimized" | "hidden"
 export type ComposeStatus = "draft" | "sending" | "sent" | "failed";
 
 export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: ComposeModalProps) {
+  const { preferences } = useAppPreferences();
+  const [cc, setCc] = useState(preferences.defaultCc);
+  const [bcc, setBcc] = useState(preferences.defaultBcc);
+  const [showCopies, setShowCopies] = useState(Boolean(preferences.defaultCc || preferences.defaultBcc));
+  const sendGuard = useRef(false);
   const [subject, setSubject] = useState("");
   const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
   const attachmentsRef = useRef(attachments);
@@ -456,6 +464,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
   // Send handler
   // --------------------------------------------------------------------------
   const handleSend = async () => {
+    if (sendGuard.current || composeStatus === 'sending' || composeStatus === 'sent') return;
     if (recipients.length === 0) {
       showToast("Please add at least one recipient.");
       return;
@@ -465,6 +474,14 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
       return;
     }
 
+    let ccAddresses: string[], bccAddresses: string[];
+    sendGuard.current = true;
+    try {
+      ccAddresses = parseAddressList(cc);
+      bccAddresses = parseAddressList(bcc);
+      if (preferences.confirmEmptySubject && !subject.trim() && !await confirm("Send this message without a subject?", { title: "No subject", okLabel: "Send anyway", cancelLabel: "Keep editing" })) { sendGuard.current = false; return; }
+      if (preferences.attachmentReminder && attachments.length === 0 && /\b(attach(?:ed|ment|ments)?|enclosed)\b/i.test(editorValue.plainText) && !await confirm("You mentioned an attachment, but no files are attached. Send anyway?", { title: "Missing attachment?", okLabel: "Send anyway", cancelLabel: "Keep editing" })) { sendGuard.current = false; return; }
+    } catch (error) { showToast(error instanceof Error ? error.message : "Could not confirm sending."); sendGuard.current = false; return; }
     setComposeStatus("sending");
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
@@ -480,13 +497,14 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
       // Cleanup pipeline: strip TipTap attrs → DOMPurify → wrap
       const cleaned = emailSafeCleanup(editorValue.html);
       const sanitized = DOMPurify.sanitize(cleaned);
-      const htmlBody = wrapEmailHtml(sanitized);
+      const font = preferences.composeFont === 'serif' ? 'Georgia, serif' : preferences.composeFont === 'monospace' ? 'Courier New, monospace' : 'Arial, sans-serif';
+      const htmlBody = wrapEmailHtml(`<div style="font-family:${font}">${sanitized}</div>`);
       const plainBody = editorValue.plainText;
 
       const messageId: string = await invoke("send_message", {
         to: recipients,
-        cc: [],
-        bcc: [],
+        cc: ccAddresses,
+        bcc: bccAddresses,
         replyTo: null,
         subject,
         plainBody,
@@ -504,6 +522,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
       }, 2000);
     } catch (error) {
       console.error("Failed to send message:", error);
+      sendGuard.current = false;
       setComposeStatus("failed");
       setComposeWindowState(prev => prev === "hidden" ? "minimized" : prev);
     }
@@ -604,12 +623,13 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
 
   const handleEditorReady = useCallback((e: Editor) => {
     editorRef.current = e;
+    if (preferences.signature.trim() && e.isEmpty) e.commands.setContent(`<p></p><p>—<br>${plainTextHtml(preferences.signature)}</p>`);
     setTick((t) => t + 1);
 
     // Subscribe to selection updates so toolbar stays live
     e.on("selectionUpdate", () => setTick((t) => t + 1));
     e.on("transaction", () => setTick((t) => t + 1));
-  }, []);
+  }, [preferences.signature]);
 
   const isActive = useCallback(
     (name: string, attrs?: Record<string, unknown>) => {
@@ -1012,6 +1032,10 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
               </div>
             </div>
 
+            <div className="px-6 py-2 border-b border-black/5 dark:border-white/5">
+              <button type="button" onClick={() => setShowCopies(value => !value)} className="text-xs text-primary">{showCopies ? 'Hide Cc / Bcc' : 'Add Cc / Bcc'}{!showCopies && (cc || bcc) ? ' · recipients included' : ''}</button>
+              {showCopies && <div className="mt-2 space-y-2">{[['Cc', cc, setCc], ['Bcc', bcc, setBcc]].map(([label, value, setter]) => <label key={String(label)} className="flex items-center gap-2 text-xs text-muted-foreground"><span className="w-12">{String(label)}</span><input aria-label={String(label)} value={String(value)} onChange={event => (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value)} placeholder="Email addresses, separated by commas" className="min-w-0 flex-1 bg-transparent outline-none text-foreground" /></label>)}</div>}
+            </div>
             {/* Subject Field */}
             <div className="flex items-center gap-2 px-6 py-3 border-b border-black/5 dark:border-white/5">
               <span className="text-muted-foreground dark:text-white/50 text-sm font-medium w-12 flex-shrink-0">
@@ -1101,7 +1125,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess }: Co
           {/* ---------------------------------------------------------------- */}
           {/* Rich Text Editor Area */}
           {/* ---------------------------------------------------------------- */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col min-h-0 relative">
+          <div className="compose-writing-area flex-1 overflow-y-auto px-6 py-4 flex flex-col min-h-0 relative" style={{ "--compose-font": preferences.composeFont === "serif" ? "Georgia, serif" : preferences.composeFont === "monospace" ? "Courier New, monospace" : "Arial, sans-serif" } as React.CSSProperties}>
             <RichTextEditor
               autoFocus={false}
               onChange={setEditorValue}

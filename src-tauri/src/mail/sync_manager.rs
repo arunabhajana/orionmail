@@ -28,6 +28,7 @@ pub async fn enqueue_sync_with_force(
     folder: MailFolder,
     force: bool,
 ) {
+    if !force && crate::mail_preferences::load(&app).sync_paused { return; }
     let key = (account.id.clone(), folder.clone());
     {
         let mut queue = SYNC_QUEUE.lock().await;
@@ -56,7 +57,7 @@ pub async fn enqueue_sync_with_force(
                 request.dirty = false;
                 std::mem::take(&mut request.force)
             };
-            if crate::auth::app_lock::require_unlocked(&app).is_err() {
+            if (!force && crate::mail_preferences::load(&app).sync_paused) || crate::auth::app_lock::require_unlocked(&app).is_err() {
                 SYNC_QUEUE.lock().await.remove(&key);
                 return;
             }

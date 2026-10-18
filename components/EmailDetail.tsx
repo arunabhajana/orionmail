@@ -24,6 +24,7 @@ import { useEmailBody } from '@/hooks/useEmailBody';
 import OrbitLoader from './inbox/OrbitLoader';
 import { SmartActionsEngine, SmartActionKind } from '@/lib/smart-actions';
 import { SmartActionCard } from './inbox/SmartActionCard';
+import { useAuth } from './AuthContext';
 import { useAppPreferences } from '@/components/AppPreferencesContext';
 
 // --- Types ---
@@ -43,6 +44,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === 'dark';
     const { preferences } = useAppPreferences();
+    const { user } = useAuth();
+    const remoteMessageKey = `${user?.id}:${email?.id}`;
+    const [allowedRemoteMessage, setAllowedRemoteMessage] = React.useState<string | null>(null);
+    const remoteAllowed = !preferences.blockRemoteImages || allowedRemoteMessage === remoteMessageKey;
 
     const { bodyContent, attachments, extractedData, isLoadingBody, iframeHeight, error, retry } = useEmailBody(
         email?.id,
@@ -130,6 +135,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                             <SmartActionCard key={action.id} action={action} />
                         ))}
 
+                        {!isLoadingBody && !error && preferences.blockRemoteImages && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/5 px-4 py-3 text-xs"><span className="text-muted-foreground">{remoteAllowed ? 'Remote content is allowed for this message.' : 'Remote images and stylesheets are blocked for your privacy.'}</span><button type="button" className="font-medium text-primary" onClick={() => setAllowedRemoteMessage(remoteAllowed ? null : remoteMessageKey)}>{remoteAllowed ? 'Block again' : 'Load for this message'}</button></div>}
                         {error ? (() => {
                             const isTimeout = error.includes("Timeout");
                             const Icon = isTimeout ? Clock : AlertOctagon;
@@ -167,11 +173,13 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                 <html>
                                 <head>
                                     <meta charset="utf-8">
+                                    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' ${remoteAllowed ? 'https: http:' : ''}; img-src data: ${remoteAllowed ? 'https: http:' : ''}; font-src data: ${remoteAllowed ? 'https: http:' : ''}; base-uri 'none'; form-action 'none';">
+                                    <meta name="referrer" content="no-referrer">
                                     <meta name="viewport" content="width=device-width, initial-scale=1">
                                     <style>
                                         html { opacity: 0; }
                                         html.ready { opacity: 1; }
-                                        html, body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; overflow: hidden; width: 100%; }
+                                        html, body { font-family: system-ui, -apple-system, sans-serif; font-size: ${preferences.readingFontSize}px; margin: 0; padding: 0; overflow: hidden; width: 100%; }
                                         img { max-width: 100%; height: auto; }
                                         a { color: #2563eb; }
                                         #email-content-wrapper { display: block; overflow: hidden; }

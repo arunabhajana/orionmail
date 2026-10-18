@@ -104,7 +104,9 @@ pub async fn sync_inbox(app_handle: AppHandle) -> Result<u32, String> {
 }
 
 #[command]
-pub async fn sync_mail_folder(app_handle: AppHandle, folder: String) -> Result<u32, String> {
+pub async fn sync_mail_folder(app_handle: AppHandle, folder: String, automatic: Option<bool>) -> Result<u32, String> {
+    let automatic = automatic.unwrap_or(false);
+    if automatic && crate::mail_preferences::load(&app_handle).sync_paused { return Ok(0); }
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
 
     let app_clone = app_handle.clone();
@@ -115,7 +117,7 @@ pub async fn sync_mail_folder(app_handle: AppHandle, folder: String) -> Result<u
 
     let mail_folder = folder.parse::<crate::mail::folder::MailFolder>().map_err(|e| e.to_string())?;
 
-    crate::mail::sync_manager::enqueue_sync_with_force(app_handle, account, mail_folder, true).await;
+    crate::mail::sync_manager::enqueue_sync_with_force(app_handle, account, mail_folder, !automatic).await;
     Ok(0)
 }
 
@@ -183,6 +185,12 @@ pub async fn get_cached_messages(app_handle: AppHandle) -> Result<Vec<crate::mai
 #[tauri::command]
 pub async fn clear_local_cache(app_handle: AppHandle) -> Result<(), String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    // Serialize cache clearing with sync and actions, and keep queued intent intact.
+    let _sync = crate::mail::sync_manager::SYNC_LOCK.lock().await;
+    let _mutation = crate::mail::message_actions::MUTATION_LOCK.lock().await;
+    let conn = crate::mail::database::open_connection(&app_handle)?;
+    let pending: i64 = conn.query_row("SELECT COUNT(*) FROM pending_message_actions WHERE account_id = ?1", [&account.id], |row| row.get(0)).map_err(|e| e.to_string())?;
+    if pending > 0 { return Err("Sync or resolve pending message actions before clearing cached mail.".into()); }
     crate::mail::database::clear_account_cache(&app_handle, &account.id)
 }
 

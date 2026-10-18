@@ -3,6 +3,7 @@ mod commands;
 mod mail;
 mod contacts;
 mod config;
+mod mail_preferences;
 pub mod tray_state;
 
 use crate::commands::auth_commands::*;
@@ -169,6 +170,9 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       get_boot_error,
+        get_cache_summary,
+        mail_preferences::get_mail_preferences,
+        mail_preferences::set_mail_preferences,
       login_google,
       get_current_user,
       update_display_name,

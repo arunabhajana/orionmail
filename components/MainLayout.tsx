@@ -24,6 +24,7 @@ import { EditTagModal } from '@/components/tags/EditTagModal';
 import { DeleteTagModal } from '@/components/tags/DeleteTagModal';
 import { Tag } from '@/lib/types';
 import { toast } from 'sonner';
+import { useAppPreferences } from './AppPreferencesContext';
 interface FolderSearchState {
     searchQuery: string;
     activeSearchId: string | null;
@@ -35,6 +36,9 @@ interface FolderSearchState {
 
 export default function MainLayout() {
     const { user } = useAuth();
+    const { preferences, updatePreferences } = useAppPreferences();
+    const preferencesRef = useRef(preferences);
+    preferencesRef.current = preferences;
     const activeAccountRef = useRef(user?.id);
     useEffect(() => { activeAccountRef.current = user?.id; }, [user?.id]);
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
@@ -44,8 +48,8 @@ export default function MainLayout() {
     const [deletingTag, setDeletingTag] = useState<Tag | null>(null);
 
     // --- New State for Folders & Stars ---
-    const [currentFolder, setCurrentFolder] = useState<string>("inbox");
-    const currentFolderRef = useRef<string>("inbox"); // Live reference to avoid stale closures in event listeners
+    const [currentFolder, setCurrentFolder] = useState<string>(preferences.defaultFolder);
+    const currentFolderRef = useRef<string>(preferences.defaultFolder); // Live reference to avoid stale closures in event listeners
     const [emails, setEmails] = useState<Email[]>([]);
     const { isSyncing, setIsSyncing, setSyncMessage, unreadCounts, setUnreadCounts, syncTriggerCount, triggerSync } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -239,9 +243,11 @@ export default function MainLayout() {
     };
 
     const deleteMessage = async (emailId: string) => {
-        const target = emails.find(e => e.id === emailId);
+        const target = filteredEmails.find(e => e.id === emailId);
         if (!target) return;
-        
+        const deletedSelected = selectedEmailId === emailId;
+        const targetIndex = filteredEmails.findIndex(e => e.id === emailId);
+        const nextId = filteredEmails[targetIndex + 1]?.id || filteredEmails[targetIndex - 1]?.id || null;
         // Optimistic Update
         setEmails(prev => prev.filter(email => email.id !== emailId));
         if (selectedEmailId === emailId) {
@@ -255,6 +261,7 @@ export default function MainLayout() {
         try {
             const folderName = target.folder || "inbox";
             await invoke('delete_message', { uid: target.uid, folder: folderName });
+            if (deletedSelected && preferences.autoSelectNext && currentFolderRef.current === currentFolder && activeAccountRef.current === user?.id) setSelectedEmailId(current => current === null ? nextId : current);
             fetchUnreadCounts();
         } catch (err) {
             console.error("Failed to delete message", err);
@@ -435,6 +442,7 @@ export default function MainLayout() {
     };
 
     const handleSync = (isBackground = false, requestedFolder?: string) => {
+        if (isBackground && preferencesRef.current.syncPaused) return Promise.resolve();
         // Read currentFolder from ref to avoid stale closure issues
         const folderAtSyncTime = currentFolderRef.current;
         if (isSyncing || (!requestedFolder && (folderAtSyncTime === "drafts" || folderAtSyncTime === "trash"))) return Promise.resolve();
@@ -449,7 +457,7 @@ export default function MainLayout() {
         // returns 0 immediately). The real results arrive via the 'mail:updated' event.
         // We still call fetchCache after a brief delay as a safety net for cases where
         // the sync completes very quickly or the event is missed.
-        return invoke('sync_mail_folder', { folder: syncTarget })
+        return invoke('sync_mail_folder', { folder: syncTarget, automatic: isBackground })
             .then(async () => {
                 console.log(`Sync enqueued for: ${syncTarget}`);
 
@@ -583,7 +591,7 @@ export default function MainLayout() {
                 setTimeout(() => setSyncMessage(null), 2500);
             }
 
-            if (!hasCache) {
+            if (!hasCache && !preferencesRef.current.syncPaused) {
                 // DB is empty, sync is likely already running in the background. Block and poll.
                 // If this is a fresh launch (not after login), we trigger sync ourselves.
                 handleSync(false);
@@ -624,8 +632,8 @@ export default function MainLayout() {
                     setTimeout(() => {
                         handleSync(true);
                     }, 500);
-                } else {
-                    handleSync(false);
+                } else if (!preferencesRef.current.syncPaused) {
+                    handleSync(true);
                 }
             }).catch(() => {
                 setIsLoadingFolder(false);
@@ -1012,6 +1020,19 @@ export default function MainLayout() {
         return () => ctx.revert();
     }, [isBootstrapping]);
 
+    useEffect(() => {
+        const handler = (event: KeyboardEvent) => {
+            if (!preferences.shortcutsEnabled || isComposeOpen || event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+            const target = event.target as HTMLElement;
+            if (target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return;
+            if (event.key.toLowerCase() === 'n' && !event.shiftKey) { event.preventDefault(); setIsComposeOpen(true); }
+            if (event.key.toLowerCase() === 'k' && !event.shiftKey) { event.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder*="Search"]')?.focus(); }
+            if (event.key.toLowerCase() === 'u' && event.shiftKey && selectedEmailId) { event.preventDefault(); void toggleRead(selectedEmailId); }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [preferences.shortcutsEnabled, isComposeOpen, selectedEmailId, toggleRead]);
+
     if (isBootstrapping) {
         return (
             <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
@@ -1050,8 +1071,10 @@ export default function MainLayout() {
                 unreadCounts={unreadCounts}
             />
 
+            <div className={`min-w-0 flex flex-1 overflow-hidden ${preferences.readingPane === "bottom" ? "flex-col" : "flex-row"}`}>
             {/* Column 2: Message List */}
-            <div className="list-anim w-[380px] flex flex-col shrink-0 border-r border-black/5 dark:border-white/5">
+            <div className={`list-anim flex flex-col shrink-0 border-r border-black/5 dark:border-white/5 ${preferences.readingPane === "bottom" ? "w-full h-[42%] min-h-48 border-b" : "w-[380px]"}`}>
+                {preferences.syncPaused && <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 px-4 py-2 text-xs text-muted-foreground bg-white/20 dark:bg-white/5"><span>Background sync paused</span><button className="text-primary font-medium" onClick={() => { void updatePreferences({ syncPaused: false }).then(() => invoke("sync_mail_folder", { folder: "inbox", automatic: true })).catch(() => toast.error("Could not resume sync.")); }}>Resume</button></div>}
                 {/* Sync Error Banner */}
                 <AnimatePresence>
                     {syncFailure && (
@@ -1103,13 +1126,14 @@ export default function MainLayout() {
 
             {/* Column 3: Reading Pane */}
             <EmailDetail
-                className="detail-anim flex-1 flex flex-col"
+                className="detail-anim min-h-0 min-w-0 flex-1 flex flex-col"
                 email={selectedEmail}
                 onToggleStar={toggleStar}
                 onDeleteMessage={deleteMessage}
                 onMarkAsRead={markAsRead}
             />
 
+            </div>
             {/* Compose Modal Overlay */}
             <AnimatePresence>
                 {isComposeOpen && (

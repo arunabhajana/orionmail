@@ -1,3 +1,5 @@
+import { useAppPreferences } from "@/components/AppPreferencesContext";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { useState, useEffect, useRef, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -30,6 +32,7 @@ interface MessageDetail {
 }
 
 export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, iframeRef: RefObject<HTMLIFrameElement | null>, onMarkAsRead?: (id: string) => void) {
+    const { preferences } = useAppPreferences();
     const [bodyContent, setBodyContent] = useState<string>("");
     const [attachments, setAttachments] = useState<Attachment[]>([]);
     const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
@@ -150,16 +153,17 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         };
     }, [emailId, emailUid, folder]);
 
-    const lastOpenedMessage = useRef<string | null>(null);
-    // Mark read on opening a message, allowing an explicit unread action while it stays open.
+    const readCallback = useRef(onMarkAsRead);
+    const unreadRef = useRef(emailUnread);
+    readCallback.current = onMarkAsRead;
+    unreadRef.current = emailUnread;
+    // A timer belongs to one opening; rerenders and an explicit unread action do not reopen it.
     useEffect(() => {
-        const key = emailId ? `${folder || 'inbox'}:${emailId}` : null;
-        if (lastOpenedMessage.current === key) return;
-        lastOpenedMessage.current = key;
-        if (emailId && emailUnread && onMarkAsRead) {
-            onMarkAsRead(emailId);
-        }
-    }, [emailId, folder, emailUnread, onMarkAsRead]);
+        if (!emailId || !unreadRef.current || preferences.markRead === 'manual') return;
+        const delay = preferences.markRead === 'immediate' ? 0 : Number(preferences.markRead) * 1000;
+        const timer = setTimeout(() => { if (unreadRef.current) readCallback.current?.(emailId); }, delay);
+        return () => clearTimeout(timer);
+    }, [emailId, folder, preferences.markRead]);
 
     // Handle iframe messages sent from the injected srcDoc script
     useEffect(() => {
@@ -173,13 +177,17 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
                     setIframeHeight(height + 30);
                 }
             } else if (event.data.type === "open_url" && typeof event.data.url === "string" && isAllowedExternalUrl(event.data.url)) {
-                invoke("open_url", { url: event.data.url }).catch(console.error);
+                const url = event.data.url;
+                void (async () => {
+                    if (preferences.confirmExternalLinks && !await confirm(`Open this link in your browser?\n\n${url.slice(0, 1000)}`, { title: 'Open external link', kind: 'info', okLabel: 'Open link', cancelLabel: 'Cancel' })) return;
+                    await invoke("open_url", { url });
+                })().catch(console.error);
             }
         };
 
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, [emailId, iframeRef]);
+    }, [emailId, iframeRef, preferences.confirmExternalLinks]);
 
     return { bodyContent, attachments, extractedData, isLoadingBody, iframeHeight, error, retry: fetchBody };
 }

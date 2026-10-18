@@ -1,10 +1,10 @@
 "use client";
 
-import React, { memo, useState, useEffect } from 'react';
+import React, { memo } from 'react';
 import { Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
-import { motion } from 'framer-motion';
+import { useAppPreferences } from '../AppPreferencesContext';
 
 const formatRecipient = (toHeader: string | undefined): string => {
     if (!toHeader) return "";
@@ -27,8 +27,6 @@ export const EmailListItem = memo(({
     isSelected,
     onSelect,
     onToggleStar,
-    onToggleRead,
-    onDelete,
     onContextMenu,
     allTags = {}
 }: {
@@ -41,11 +39,8 @@ export const EmailListItem = memo(({
     onContextMenu?: (e: React.MouseEvent, id: string) => void;
     allTags?: Record<string, import('@/lib/types').Tag>;
 }) => {
-    const [previewText, setPreviewText] = useState(email.preview || "");
-
-    useEffect(() => {
-        setPreviewText(email.preview || "No preview available");
-    }, [email.preview]);
+    const { preferences } = useAppPreferences();
+    const previewText = email.preview || "No preview available";
 
     const isSent = email.folder === 'sent';
     const displaySender = isSent && email.to ? formatRecipient(email.to) : email.sender;
@@ -58,7 +53,8 @@ export const EmailListItem = memo(({
             <div
                 onClick={() => onSelect?.(email.id)}
                 className={cn(
-                    "px-4 py-4 cursor-pointer transition-all duration-200 relative z-10 bg-background/50 backdrop-blur-md flex flex-col",
+                    "px-4 cursor-pointer transition-all duration-200 relative z-10 bg-background/50 backdrop-blur-md flex flex-col",
+                    preferences.density === "compact" ? "py-2" : preferences.density === "relaxed" ? "py-6" : "py-4",
                     isSelected
                         ? "bg-primary/10 border-l-4 border-l-primary" // Selected
                         : "border-l-4 border-transparent hover:bg-white/40 dark:hover:bg-white/5" // Regular
@@ -85,6 +81,7 @@ export const EmailListItem = memo(({
                         {email.unread && !isSelected && (
                             <div className="w-2 h-2 rounded-full bg-primary shrink-0 animate-pulse" />
                         )}
+                        {preferences.showAvatars && <span aria-hidden="true" className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[9px] font-semibold text-primary">{displaySender.slice(0, 2).toUpperCase()}</span>}
                         <span className={cn(
                             "text-sm truncate tracking-tight flex-1 min-w-0",
                             isSelected || email.unread
@@ -99,7 +96,7 @@ export const EmailListItem = memo(({
                         "text-[11px] font-medium whitespace-nowrap ml-2 shrink-0",
                         isSelected ? "text-primary dark:text-white/90" : "text-muted-foreground dark:text-white/50"
                     )}>
-                        {email.time}
+                        {preferences.dateFormat === "absolute" ? new Date(email.timestamp).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : email.time}
                     </span>
                 </div>
                 
@@ -124,9 +121,9 @@ export const EmailListItem = memo(({
                 )}>
                     {email.subject}
                 </h4>
-                <p className="text-xs text-muted-foreground dark:text-white/50 leading-relaxed line-clamp-2 flex-none">
+                {preferences.previewLines !== "0" && <p className={cn("text-xs text-muted-foreground dark:text-white/50 leading-relaxed flex-none", preferences.previewLines === "1" ? "line-clamp-1" : "line-clamp-2")}>
                     {previewText}
-                </p>
+                </p>}
             </div>
         </div>
     );

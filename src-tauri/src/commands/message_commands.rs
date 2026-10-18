@@ -379,3 +379,17 @@ pub async fn get_message_tags(app_handle: tauri::AppHandle, folder: String, mess
         crate::mail::database::get_message_tags(&app_clone, &account.id, &folder, message_uid)
     }).await.map_err(|e| e.to_string())?
 }
+
+/// Logical cached content sizes for the active account; excludes database indexes and free pages.
+#[tauri::command]
+pub async fn get_cache_summary(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    tokio::task::spawn_blocking(move || {
+        let conn = crate::mail::database::open_connection(&app_handle)?;
+        let (messages, bodies, headers): (i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(length(CAST(COALESCE(body, '') AS BLOB)) + length(CAST(COALESCE(processed_html, '') AS BLOB))), 0), COALESCE(SUM(length(CAST(COALESCE(subject, '') || COALESCE(sender, '') || COALESCE(recipient, '') || COALESCE(snippet, '') AS BLOB))), 0) FROM messages WHERE account_id = ?1",
+            [&account.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        ).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "messages": messages, "bodyBytes": bodies, "headerBytes": headers }))
+    }).await.map_err(|e| e.to_string())?
+}

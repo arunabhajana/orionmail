@@ -1,18 +1,16 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useSyncExternalStore } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useTheme } from 'next-themes';
 import { useAccentColor } from '@/components/AccentColorProvider';
 
+const subscribe = () => () => {};
 export const AppearanceSection = () => {
     const { theme, setTheme } = useTheme();
     const { accentColor, setAccentColor } = useAccentColor();
-    const [mounted, setMounted] = useState(false);
-
-    // Prevent hydration mismatch
-    useEffect(() => setMounted(true), []);
+    const mounted = useSyncExternalStore(subscribe, () => true, () => false);
 
     return (
         <motion.div
@@ -21,10 +19,10 @@ export const AppearanceSection = () => {
             className="space-y-8"
         >
             {/* Theme Selection */}
-            <div className="p-8 rounded-3xl bg-secondary/30 dark:bg-white/[0.02] border border-white/20 dark:border-white/5 backdrop-blur-md transition-colors">
+            <div className="settings-group p-6">
                 <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-6">Interface Theme</h3>
 
-                <div className="grid grid-cols-3 gap-6">
+                <div className="grid grid-cols-3 gap-4">
                     {/* Light Mode */}
                     <button data-setting-id="appearance.light" onClick={() => setTheme('light')} className="flex flex-col gap-3 group">
                         <div className={cn(
@@ -77,26 +75,6 @@ export const AppearanceSection = () => {
                     </button>
                 </div>
 
-                <div data-setting-id="appearance.density" className="mt-10 flex items-center justify-between rounded-xl">
-                    <div>
-                        <h4 className="font-semibold text-foreground">Message Density</h4>
-                        <p className="text-sm text-muted-foreground mt-1">Control how much information you see at once.</p>
-                    </div>
-                    <div className="flex bg-black/5 p-1 rounded-lg">
-                        {['Compact', 'Default', 'Relaxed'].map((d, i) => (
-                            <button
-                                key={d}
-                                className={cn(
-                                    "px-4 py-1.5 rounded-md text-sm font-medium transition-all",
-                                    i === 1 ? "bg-white text-black shadow-sm" : "text-muted-foreground hover:text-foreground"
-                                )}
-                            >
-                                {d}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
                 <div data-setting-id="appearance.accent" className="mt-10 flex items-center justify-between rounded-xl">
                     <h4 className="font-semibold text-foreground">Accent Color</h4>
                     <div className="flex gap-3">
@@ -109,6 +87,8 @@ export const AppearanceSection = () => {
                         ] as const).map((color) => (
                             <button
                                 key={color.name}
+                                aria-label={`${color.name} accent`}
+                                aria-pressed={mounted && accentColor === color.name}
                                 onClick={() => setAccentColor(color.name)}
                                 className={cn(
                                     "w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-white/0 dark:ring-offset-black/0 transition-all",

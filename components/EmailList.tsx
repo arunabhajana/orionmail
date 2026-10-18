@@ -14,6 +14,7 @@ import { PendingSentMessage } from '@/hooks/usePendingSentMessages';
 import { PendingEmailListItem } from './inbox/PendingEmailListItem';
 import { EmailContextMenu, EmailContextMenuState } from './inbox/EmailContextMenu';
 import { Tag } from '@/lib/types';
+import { useAppPreferences } from './AppPreferencesContext';
 import { useState, useEffect } from 'react';
 
 // Global cache states removed as predictive prefetch happens in Rust backend now
@@ -69,6 +70,7 @@ const EmailList: React.FC<EmailListProps> = ({
     searchProgress,
     onSearchLoadMore
 }) => {
+    const { preferences } = useAppPreferences();
     const [currentFilter, setCurrentFilter] = React.useState<FilterType>('all');
     const [allTags, setAllTags] = React.useState<Record<string, import('@/lib/types').Tag>>({});
     const [contextMenuState, setContextMenuState] = React.useState<EmailContextMenuState | null>(null);
@@ -103,6 +105,8 @@ const EmailList: React.FC<EmailListProps> = ({
         getItemKey: (index) => displayedEmails[index]?.id || index,
     });
 
+    React.useEffect(() => { rowVirtualizer.measure(); }, [preferences.density, preferences.previewLines, preferences.showAvatars, rowVirtualizer]);
+
     const [folderDisplayName, setFolderDisplayName] = useState<string>(currentFolder || '');
 
     useEffect(() => {
@@ -127,7 +131,7 @@ const EmailList: React.FC<EmailListProps> = ({
     }, [currentFolder]);
 
     React.useEffect(() => {
-        if (!virtualItems || virtualItems.length === 0) return;
+        if (!preferences.prefetchBodies || preferences.syncPaused || !virtualItems || virtualItems.length === 0) return;
 
         const timer = setTimeout(() => {
             const firstVisible = virtualItems[0].index;
@@ -151,7 +155,7 @@ const EmailList: React.FC<EmailListProps> = ({
         }, 300); // 300ms debounce
 
         return () => clearTimeout(timer);
-    }, [virtualItems, displayedEmails]);
+    }, [virtualItems, displayedEmails, preferences.prefetchBodies, preferences.syncPaused]);
 
     const pullDistance = React.useRef(0);
     const touchStart = React.useRef(0);

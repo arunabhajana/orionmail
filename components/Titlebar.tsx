@@ -94,7 +94,7 @@ function DndToggle() {
     const { preferences, updatePreferences } = useAppPreferences();
     return (
         <button
-            onClick={() => updatePreferences({ dndEnabled: !preferences.dndEnabled })}
+            onClick={() => { void updatePreferences({ dndEnabled: !preferences.dndEnabled }).catch(() => toast.error("Could not update Do not disturb.")); }}
             className={cn(
                 "p-1.5 rounded-md transition-colors relative mr-1",
                 "hover:bg-black/5 dark:hover:bg-white/10 text-foreground/70 dark:text-white/70",

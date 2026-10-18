@@ -1,48 +1,56 @@
-import { User, Palette, Bell, Shield, Info, MonitorSmartphone, Terminal, Sparkles } from 'lucide-react';
-
-export type SettingsTab = 'account' | 'appearance' | 'notifications' | 'smartactions' | 'security' | 'system' | 'developer' | 'about';
+import { User, Palette, Bell, Shield, Info, MonitorSmartphone, Sparkles, PenLine, BookOpen, RefreshCw, HardDrive, Keyboard } from 'lucide-react';
+import { preferenceGroups } from './preferenceDefinitions';
+export type SettingsTab = 'account' | 'appearance' | 'compose' | 'reading' | 'notifications' | 'smartactions' | 'security' | 'sync' | 'storage' | 'shortcuts' | 'system' | 'about';
 export const SETTINGS_TABS = [
-    { id: 'account', label: 'Account', icon: User, color: 'text-pink-600 dark:text-pink-400 bg-pink-500/10', active: 'bg-pink-500/10 dark:bg-pink-400/15' },
-    { id: 'appearance', label: 'Appearance', icon: Palette, color: 'text-violet-600 dark:text-violet-400 bg-violet-500/10', active: 'bg-violet-500/10 dark:bg-violet-400/15' },
-    { id: 'notifications', label: 'Notifications', icon: Bell, color: 'text-amber-600 dark:text-amber-400 bg-amber-500/10', active: 'bg-amber-500/10 dark:bg-amber-400/15' },
-    { id: 'smartactions', label: 'Smart Actions', icon: Sparkles, color: 'text-cyan-600 dark:text-cyan-400 bg-cyan-500/10', active: 'bg-cyan-500/10 dark:bg-cyan-400/15' },
-    { id: 'security', label: 'Privacy & Security', icon: Shield, color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10', active: 'bg-emerald-500/10 dark:bg-emerald-400/15' },
-    { id: 'system', label: 'System & Behavior', icon: MonitorSmartphone, color: 'text-blue-600 dark:text-blue-400 bg-blue-500/10', active: 'bg-blue-500/10 dark:bg-blue-400/15' },
-    { id: 'developer', label: 'Developer', icon: Terminal, color: 'text-orange-600 dark:text-orange-400 bg-orange-500/10', active: 'bg-orange-500/10 dark:bg-orange-400/15' },
-    { id: 'about', label: 'About', icon: Info, color: 'text-rose-600 dark:text-rose-400 bg-rose-500/10', active: 'bg-rose-500/10 dark:bg-rose-400/15' },
+    { id: 'account', label: 'Account', description: 'Your profile and Google connection.', icon: User, color: 'text-pink-600 dark:text-pink-400 bg-pink-500/10', active: 'bg-pink-500/10' },
+    { id: 'appearance', label: 'Appearance', description: 'Make yourself at home.', icon: Palette, color: 'text-violet-600 dark:text-violet-400 bg-violet-500/10', active: 'bg-violet-500/10' },
+    { id: 'compose', label: 'Compose', description: 'Write your way, with fewer interruptions.', icon: PenLine, color: 'text-blue-600 dark:text-blue-400 bg-blue-500/10', active: 'bg-blue-500/10' },
+    { id: 'reading', label: 'Reading & inbox', description: 'A comfortable place to read and organize.', icon: BookOpen, color: 'text-indigo-600 dark:text-indigo-400 bg-indigo-500/10', active: 'bg-indigo-500/10' },
+    { id: 'notifications', label: 'Notifications', description: 'Stay informed. Protect your focus.', icon: Bell, color: 'text-amber-600 dark:text-amber-400 bg-amber-500/10', active: 'bg-amber-500/10' },
+    { id: 'smartactions', label: 'Smart Actions', description: 'The useful parts, brought to the surface.', icon: Sparkles, color: 'text-cyan-600 dark:text-cyan-400 bg-cyan-500/10', active: 'bg-cyan-500/10' },
+    { id: 'security', label: 'Privacy & security', description: 'Choose what loads. Control who gets access.', icon: Shield, color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10', active: 'bg-emerald-500/10' },
+    { id: 'sync', label: 'Sync & offline', description: 'Keep your mail ready when you need it.', icon: RefreshCw, color: 'text-sky-600 dark:text-sky-400 bg-sky-500/10', active: 'bg-sky-500/10' },
+    { id: 'storage', label: 'Storage', description: 'Understand and manage mail on this device.', icon: HardDrive, color: 'text-orange-600 dark:text-orange-400 bg-orange-500/10', active: 'bg-orange-500/10' },
+    { id: 'shortcuts', label: 'Keyboard shortcuts', description: 'Less reaching. More doing.', icon: Keyboard, color: 'text-teal-600 dark:text-teal-400 bg-teal-500/10', active: 'bg-teal-500/10' },
+    { id: 'system', label: 'Desktop', description: 'Let OrionMail fit into your day.', icon: MonitorSmartphone, color: 'text-blue-600 dark:text-blue-400 bg-blue-500/10', active: 'bg-blue-500/10' },
+    { id: 'about', label: 'About OrionMail', description: 'A little about the app behind your inbox.', icon: Info, color: 'text-rose-600 dark:text-rose-400 bg-rose-500/10', active: 'bg-rose-500/10' },
 ] as const;
-
 export interface SettingsSearchResult { id: string; title: string; section: SettingsTab; description: string; keywords: string; }
-export const SETTINGS_SEARCH_INDEX: SettingsSearchResult[] = [
-    { id: 'account.alias', title: 'Alias', section: 'account', description: 'Change the display name shown in OrionMail.', keywords: 'display name profile nickname' },
-    { id: 'account.email', title: 'Email address', section: 'account', description: 'View the email address connected to your account.', keywords: 'connected account mailbox' },
-    { id: 'appearance.light', title: 'Light mode', section: 'appearance', description: 'Use a bright appearance for your mailbox.', keywords: 'theme brightness white' },
-    { id: 'appearance.dark', title: 'Dark mode', section: 'appearance', description: 'Use a darker appearance for your mailbox.', keywords: 'theme night black' },
-    { id: 'appearance.system', title: 'Use system theme', section: 'appearance', description: 'Follow your operating system’s light or dark theme.', keywords: 'theme automatic windows' },
-    { id: 'appearance.density', title: 'Message density', section: 'appearance', description: 'Choose compact, default, or relaxed message spacing.', keywords: 'spacing layout' },
-    { id: 'appearance.accent', title: 'Accent color', section: 'appearance', description: 'Choose the accent used throughout OrionMail.', keywords: 'blue purple rose emerald orange colour' },
-    { id: 'notifications.desktop', title: 'Desktop notifications', section: 'notifications', description: 'Manage desktop alerts for incoming email.', keywords: 'new email push notification' },
-    { id: 'notifications.sound-toggle', title: 'Play notification sound', section: 'notifications', description: 'Control whether email alerts play a sound.', keywords: 'audio ping alert mute' },
-    { id: 'notifications.sound', title: 'Notification sound', section: 'notifications', description: 'Choose a notification tone.', keywords: 'chime bell orbit audio' },
-    { id: 'notifications.unread', title: 'Show unread count', section: 'notifications', description: 'Manage the unread badge on your mailbox.', keywords: 'sidebar taskbar count' },
-    { id: 'smartactions.global', title: 'Smart Actions', section: 'smartactions', description: 'Control smart information cards in your emails.', keywords: 'automatically extract information' },
-    { id: 'smartactions.otp', title: 'Authentication codes (OTP)', section: 'smartactions', description: 'Show one-time codes as quick actions.', keywords: '2fa password login code' },
-    { id: 'smartactions.meetings', title: 'Meetings & events', section: 'smartactions', description: 'Surface meeting links and calendar information.', keywords: 'join links invites' },
-    { id: 'smartactions.commerce', title: 'Commerce & tracking', section: 'smartactions', description: 'Show order, receipt, and delivery information.', keywords: 'packages shipping shopping' },
-    { id: 'smartactions.travel', title: 'Travel & bookings', section: 'smartactions', description: 'Surface flight, hotel, and itinerary details.', keywords: 'trip reservations' },
-    { id: 'security.2fa', title: 'Two-factor authentication', section: 'security', description: 'Find the account authentication preferences.', keywords: '2fa login' },
-    { id: 'security.app-lock', title: 'Windows Hello app lock', section: 'security', description: 'Require Windows Hello when opening OrionMail.', keywords: 'password biometric launch unlock pin' },
-    { id: 'security.images', title: 'Block external images', section: 'security', description: 'Find the external image privacy preference.', keywords: 'tracking pixels remote images' },
-    { id: 'security.blocklist', title: 'Blocked senders', section: 'security', description: 'Find sender blocking preferences.', keywords: 'blocklist spam addresses' },
-    { id: 'security.cache', title: 'Clear local cache', section: 'security', description: 'Review the option to clear downloaded mail data.', keywords: 'delete storage' },
-    { id: 'system.autostart', title: 'Launch at startup', section: 'system', description: 'Start OrionMail when you sign in to Windows.', keywords: 'login boot automatically' },
-    { id: 'system.hidden', title: 'Start hidden', section: 'system', description: 'Start the app in the tray instead of opening a window.', keywords: 'startup minimized' },
-    { id: 'system.tray', title: 'Minimize to tray', section: 'system', description: 'Keep OrionMail running when you close its window.', keywords: 'background behavior' },
-    { id: 'system.cache', title: 'Clear local cache', section: 'system', description: 'Remove cached mail and let the app download it again.', keywords: 'delete emails storage resync' },
-    { id: 'developer.tools', title: 'Developer tools', section: 'developer', description: 'Open advanced diagnostics and testing controls.', keywords: 'debug experimental simulate errors' },
-    { id: 'about.version', title: 'App version', section: 'about', description: 'See the installed OrionMail version and developer information.', keywords: 'release build about' },
+const nativeEntries: [SettingsTab, string, string, string, string][] = [
+    ['account', 'alias', 'Alias', 'Your display name in OrionMail.', 'profile nickname display name'],
+    ['account', 'email', 'Email address', 'Your connected Google email address.', 'gmail account'],
+    ['account', 'connection', 'Mailbox connection', 'View the current connection status.', 'online status'],
+    ['account', 'reconnect', 'Reconnect Google', 'Renew access through Google sign in.', 'oauth login'],
+    ['account', 'signout', 'Sign out', 'Disconnect the account on this device.', 'logout remove'],
+    ['account', 'google', 'Google security', 'Manage your password and two-step verification at Google.', '2fa password'],
+    ['appearance', 'light', 'Light mode', 'Use a bright theme.', 'theme white'],
+    ['appearance', 'dark', 'Dark mode', 'Use a dark theme.', 'theme night'],
+    ['appearance', 'system', 'System theme', 'Follow the Windows theme.', 'automatic'],
+    ['appearance', 'accent', 'Accent color', 'Choose your accent color.', 'blue purple rose emerald orange colour'],
+    ['security', 'app-lock', 'Windows Hello on launch', 'Require Windows Hello when opening OrionMail.', 'password biometric pin unlock'],
+    ['security', 'idle', 'Automatic idle lock', 'Timed re-locking is not available yet.', 'timeout inactivity'],
+    ['security', 'windows', 'Lock with Windows', 'Session lock integration is not available yet.', 'session screen'],
+    ['sync', 'status', 'Last sync and Sync Now', 'View sync status and refresh your Inbox.', 'manual refresh last updated'],
+    ['storage', 'usage', 'Cached mail usage', 'View local message content sizes.', 'bytes space size database'],
+    ['storage', 'clear', 'Clear cached mail', 'Remove downloaded mail for the current account.', 'delete cache reset resync'],
+    ['system', 'autostart', 'Launch at startup', 'Start when you sign in to Windows.', 'boot login'],
+    ['system', 'hidden', 'Start in the tray', 'Start quietly in the background.', 'minimized hidden'],
+    ['system', 'tray', 'Keep running when closed', 'Hide to the system tray instead of quitting.', 'close background minimize'],
+    ['system', 'badge', 'Taskbar unread badge', 'Taskbar integration is not available yet.', 'windows count'],
+    ['shortcuts', 'save', 'Save settings', 'Press Ctrl+S to save pending changes.', 'keyboard'],
+    ['shortcuts', 'search', 'Search settings', 'Press Ctrl+K to find a setting.', 'keyboard'],
+    ['about', 'version', 'App version', 'Installed version of OrionMail.', 'release build'],
+    ['about', 'developer', 'Developed by Arunabhajana', 'About the developer.', 'credits'],
+    ['about', 'support', 'Contact and support', 'Email arunabhajana@gmail.com.', 'help feedback'],
+    ['about', 'changelog', 'Release notes', 'Published release notes are not available yet.', 'updates changelog'],
+    ['about', 'privacy', 'Privacy policy and licenses', 'Public policies and notices are not published yet.', 'legal terms third party'],
 ];
-
+export const SETTINGS_SEARCH_INDEX: SettingsSearchResult[] = [
+    ...nativeEntries.map(([section, key, title, description, keywords]) => ({ id: `${section}.${key}`, section, title, description, keywords })),
+    ...Object.entries(preferenceGroups).flatMap(([group, groups]) => groups.flatMap(section => section.items.map(item => ({
+        id: `${group}.${item.id}`, section: (group === 'privacy' ? 'security' : group) as SettingsTab, title: item.title, description: item.description, keywords: `${item.key || item.id} ${section.title}`,
+    })))),
+];
 export function searchSettings(query: string): SettingsSearchResult[] {
     const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return [];

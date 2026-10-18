@@ -224,3 +224,63 @@ html, body {
 .dark .custom-scrollbar:hover::-webkit-scrollbar-thumb {
   background-color: rgba(255, 255, 255, 0.22);
 }
+/* Settings share the desktop's glass surface, with quiet color behind the frost. */
+.settings-shell {
+  background: radial-gradient(ellipse at 5% 5%, rgb(172 198 255 / .24), transparent 50%), radial-gradient(ellipse at 95% 90%, rgb(212 188 248 / .19), transparent 55%), rgb(245 247 251 / .76);
+  isolation: isolate;
+}
+.dark .settings-shell {
+  background: radial-gradient(ellipse at 0% 0%, rgb(72 89 141 / .18), transparent 50%), radial-gradient(ellipse at 95% 100%, rgb(106 73 135 / .12), transparent 55%), rgb(16 19 26 / .88);
+}
+.settings-sidebar {
+  background: rgb(255 255 255 / .42);
+  backdrop-filter: blur(40px) saturate(145%);
+  -webkit-backdrop-filter: blur(40px) saturate(145%);
+  box-shadow: 1px 0 24px rgb(25 38 70 / .025);
+}
+.dark .settings-sidebar { background: rgb(28 31 40 / .48); }
+.settings-group {
+  border: 1px solid rgb(255 255 255 / .8);
+  border-radius: 20px;
+  background: rgb(255 255 255 / .48);
+  box-shadow: 0 3px 18px rgb(26 42 72 / .035), inset 0 1px 0 rgb(255 255 255 / .5);
+  backdrop-filter: blur(24px) saturate(125%);
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+}
+.dark .settings-group {
+  border-color: rgb(255 255 255 / .085);
+  background: rgb(255 255 255 / .035);
+  box-shadow: 0 3px 18px rgb(0 0 0 / .06), inset 0 1px 0 rgb(255 255 255 / .025);
+}
+.settings-input {
+  border: 1px solid rgb(34 48 73 / .12);
+  border-radius: 10px;
+  background: rgb(255 255 255 / .5);
+  padding: 9px 12px;
+  color: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.settings-input:focus-visible { border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 14%, transparent); }
+.dark .settings-input { border-color: rgb(255 255 255 / .12); background: rgb(10 14 22 / .28); }
+.settings-input option { background: #f5f7fb; color: #18202e; }
+.dark .settings-input option { background: #20242e; color: #edf0f6; }
+.settings-key { border: 1px solid rgb(128 128 128 / .2); border-radius: 7px; padding: 5px 9px; font-size: 11px; }
+.settings-section-enter { animation: settings-enter 150ms ease-out; }
+@keyframes settings-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .settings-section-enter { animation: none; } .settings-shell * { scroll-behavior: auto !important; } }
+@media (max-width: 680px) {
+  .settings-sidebar { width: 76px; }
+  .settings-sidebar .settings-nav-label, .settings-sidebar h1, .settings-sidebar footer, .settings-sidebar > div:last-child { display: none; }
+  .settings-sidebar > div:first-child { padding: 16px 8px; }
+  .settings-sidebar > div:first-child > div:first-child { justify-content: center; }
+  .settings-sidebar nav { padding: 0 10px; }
+  .settings-nav-item { justify-content: center; padding: 10px 0; }
+  .settings-sidebar input { padding-left: 28px; padding-right: 0; color: transparent; }
+  .settings-sidebar input:focus { position: fixed; left: 10px; top: 76px; width: calc(100vw - 20px); color: inherit; z-index: 60; background: var(--color-background); }
+}
+
+.compose-writing-area .orion-editor { font-family: var(--compose-font); }
+
+.settings-sidebar .settings-input { padding-left: 36px; padding-right: 32px; }

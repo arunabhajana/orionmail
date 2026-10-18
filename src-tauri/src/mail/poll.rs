@@ -16,21 +16,11 @@ pub fn start_polling(app_handle: AppHandle, account: Account) {
 
     let handle = tokio::spawn(async move {
         log::info!("[POLL] Starting fallback poll loop...");
-        let mut interval = tokio::time::interval(Duration::from_secs(180));
-        
-        // Ensure the first poll does NOT run immediately.
-        // The first tick fires immediately at t=0, so we consume it.
-        // We do this to wait 3 minutes before the true first fallback sync.
-        interval.tick().await; 
-
         loop {
-            // Wait 180 seconds before processing
+            let seconds = crate::mail_preferences::load(&app_handle).poll_interval.parse::<u64>().unwrap_or(180);
             tokio::select! {
-                _ = interval.tick() => {}
-                _ = crate::mail::shutdown::POLL_TOKEN.cancelled() => {
-                    log::info!("[POLL] Shutdown requested, exiting loop.");
-                    break;
-                }
+                _ = tokio::time::sleep(Duration::from_secs(seconds)) => {}
+                _ = crate::mail::shutdown::POLL_TOKEN.cancelled() => { break; }
             }
             log::info!("[POLL] Tick: Attempting fallback sync...");
 

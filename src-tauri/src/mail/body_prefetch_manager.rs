@@ -65,6 +65,10 @@ impl BodyPrefetchManager {
         priority: PrefetchPriority,
         responder: Option<oneshot::Sender<Result<MessageDetail, String>>>,
     ) {
+        if priority == PrefetchPriority::Background {
+            let prefs = crate::mail_preferences::load(&app_handle);
+            if !prefs.prefetch_bodies || prefs.sync_paused { return; }
+        }
         let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
         let key = BodyKey { account_id: account.id.clone(), folder, uid };
         
@@ -205,6 +209,13 @@ impl BodyPrefetchManager {
                     state.in_progress.insert(job.key.clone(), job.responders);
                 }
 
+                if priority == PrefetchPriority::Background {
+                    let prefs = crate::mail_preferences::load(&app_handle);
+                    if !prefs.prefetch_bodies || prefs.sync_paused {
+                        manager.state.lock().await.in_progress.remove(&job.key);
+                        continue;
+                    }
+                }
                 // If background fetch, strictly reserve 1 permit for UI fast-paths
                 if priority == PrefetchPriority::Background && message_body::CONCURRENT_FETCH_LIMIT.available_permits() <= 1 {
                     // Re-enqueue and yield to avoid starving user
