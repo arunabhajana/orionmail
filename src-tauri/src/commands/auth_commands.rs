@@ -141,26 +141,34 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
     log::info!("Frontend requested get_message_body for folder='{}', uid={}", folder, uid);
     
-    // Check cache first before enqueueing
-    if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = crate::mail::database::get_message_body_cache(&app_handle, &account.id, &folder, uid) {
-        let needs_reextraction = match &extracted_data_json {
-            Some(json) => match serde_json::from_str::<crate::mail::extraction::ExtractedData>(json) {
-                Ok(data) => data.version < crate::mail::extraction::CURRENT_EXTRACTOR_VERSION,
-                Err(_) => true,
-            },
-            None => true, // If we don't have extracted data, we need it!
-        };
-
-        if !needs_reextraction {
-            let attachments = if let Some(json) = attachments_json {
-                serde_json::from_str(&json).unwrap_or_default()
-            } else {
-                Vec::new()
+    // Keep the cached-open fast path independent of a network job, while
+    // moving SQLite I/O and attachment/extraction JSON parsing off Tokio.
+    let cache_app = app_handle.clone();
+    let cache_account = account.id.clone();
+    let cache_folder = folder.clone();
+    let cached = tokio::task::spawn_blocking(move || {
+        if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = crate::mail::database::get_message_body_cache(&cache_app, &cache_account, &cache_folder, uid) {
+            let needs_reextraction = match &extracted_data_json {
+                Some(json) => match serde_json::from_str::<crate::mail::extraction::ExtractedData>(json) {
+                    Ok(data) => data.version < crate::mail::extraction::CURRENT_EXTRACTOR_VERSION,
+                    Err(_) => true,
+                },
+                None => true, // If we don't have extracted data, we need it!
             };
-            let extracted_data = extracted_data_json.and_then(|json| serde_json::from_str(&json).ok());
-            return Ok(crate::mail::message_body::MessageDetail { body: cached_body, attachments, extracted_data });
+
+            if !needs_reextraction {
+                let attachments = if let Some(json) = attachments_json {
+                    serde_json::from_str(&json).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let extracted_data = extracted_data_json.and_then(|json| serde_json::from_str(&json).ok());
+                return Some(crate::mail::message_body::MessageDetail { body: cached_body, attachments, extracted_data });
+            }
         }
-    }
+        None
+    }).await.map_err(|error| format!("Message cache task failed: {error}"))?;
+    if let Some(detail) = cached { return Ok(detail); }
 
     let (tx, rx) = tokio::sync::oneshot::channel();
 

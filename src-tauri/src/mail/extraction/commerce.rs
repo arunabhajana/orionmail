@@ -1,6 +1,6 @@
 use super::provider_registry;
 use super::{EntityType, ExtractedEntity, ExtractionSource, Provenance};
-use regex::Regex;
+use crate::mail::patterns::regex as cached_regex;
 use serde_json::json;
 
 #[derive(Clone, Copy)]
@@ -38,8 +38,8 @@ impl CommerceKind {
     }
 }
 
-pub fn extract(html: &str, text: &str) -> Vec<ExtractedEntity> {
-    let searchable = format!("{}\n{}", strip_tags(html), text);
+pub fn extract_visible(visible: &str, text: &str) -> Vec<ExtractedEntity> {
+    let searchable = visible.to_string();
     let provider = provider_registry::detect_provider(text, &searchable);
     let kind = detect_kind(&searchable);
     let references = extract_references(&searchable);
@@ -51,7 +51,7 @@ pub fn extract(html: &str, text: &str) -> Vec<ExtractedEntity> {
     let has_reference = !references.is_empty();
     let has_items = !items.is_empty();
     let has_amount = amount.is_some();
-    let has_transaction_shape = has_amount && (has_reference || has_items || merchant.is_some()) && (kind.is_some() || has_reference);
+    let has_transaction_shape = (has_amount || has_reference) && (has_reference || has_items || merchant.is_some()) && (kind.is_some() || has_reference);
 
     if !has_transaction_shape || looks_like_marketing_price_list(&searchable) {
         return Vec::new();
@@ -71,7 +71,9 @@ pub fn extract(html: &str, text: &str) -> Vec<ExtractedEntity> {
     };
 
     for (i, (entity_type, value)) in entity_refs.into_iter().enumerate() {
-        let commerce_type = kind_for_entity(&entity_type).unwrap_or(inferred_kind).as_str();
+        let commerce_type = if matches!(inferred_kind, CommerceKind::Refund | CommerceKind::Subscription) {
+            inferred_kind
+        } else { kind_for_entity(&entity_type).unwrap_or(inferred_kind) }.as_str();
         let evidence = context_for(&searchable, &value)
             .or_else(|| context_for_kind(&searchable, inferred_kind))
             .unwrap_or_else(|| searchable.chars().take(180).collect::<String>());
@@ -115,7 +117,7 @@ fn detect_kind(text: &str) -> Option<CommerceKind> {
     ];
 
     patterns.iter().find_map(|(kind, pattern)| {
-        Regex::new(pattern)
+        cached_regex(pattern)
             .ok()
             .and_then(|re| re.is_match(text).then_some(*kind))
     })
@@ -132,7 +134,7 @@ fn extract_references(text: &str) -> Vec<(EntityType, String)> {
 
     let mut refs = Vec::new();
     for (entity_type, pattern) in patterns {
-        if let Ok(re) = Regex::new(pattern) {
+        if let Ok(re) = cached_regex(pattern) {
             for cap in re.captures_iter(text).take(3) {
                 if let Some(m) = cap.get(1) {
                     let value = clean_line(m.as_str());
@@ -186,7 +188,7 @@ fn is_valid_reference(value: &str) -> bool {
 }
 
 fn extract_amount(text: &str) -> Option<serde_json::Value> {
-    let amount_re = Regex::new(r"(?i)(₹|rs\.?|inr|\$|usd|€|eur|£|gbp)\s*(-?\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?)|(-?\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(inr|usd|eur|gbp)").ok()?;
+    let amount_re = cached_regex(r"(?i)(₹|rs\.?|inr|\$|usd|€|eur|£|gbp)\s*(-?\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?)|(-?\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(inr|usd|eur|gbp)").ok()?;
     let mut candidates = Vec::new();
     let lines: Vec<String> = text.lines().map(clean_line).filter(|line| !line.is_empty()).collect();
 
@@ -206,7 +208,7 @@ fn extract_amount(text: &str) -> Option<serde_json::Value> {
                 continue;
             };
             let score = amount_line_score(&clean);
-            if value < 0.0 || (value == 0.0 && score < 60) {
+            if !value.is_finite() || value < 0.0 || (value == 0.0 && score < 60) {
                 continue;
             }
             if score >= 60 {
@@ -218,7 +220,7 @@ fn extract_amount(text: &str) -> Option<serde_json::Value> {
     for window in lines.windows(2) {
         let label = &window[0];
         let amount_line = &window[1];
-        if amount_line_score(label) < 60 || is_non_total_amount_line(label) || is_non_total_amount_line(amount_line) {
+        if label.len() > 80 || amount_re.is_match(label) || amount_line_score(label) < 60 || is_non_total_amount_line(label) || is_non_total_amount_line(amount_line) {
             continue;
         }
 
@@ -232,7 +234,7 @@ fn extract_amount(text: &str) -> Option<serde_json::Value> {
             let Ok(value) = value_text.parse::<f64>() else {
                 continue;
             };
-            if value < 0.0 {
+            if !value.is_finite() || value < 0.0 {
                 continue;
             }
 
@@ -240,10 +242,11 @@ fn extract_amount(text: &str) -> Option<serde_json::Value> {
         }
     }
 
-    candidates
-        .into_iter()
-        .max_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)))
-        .map(|(_, value, currency, evidence)| {
+    let best_score = candidates.iter().map(|candidate| candidate.0).max()?;
+    let mut best = candidates.into_iter().filter(|candidate| candidate.0 == best_score);
+    let selected = best.next()?;
+    if best.any(|candidate| candidate.2 != selected.2 || (candidate.1 - selected.1).abs() > 0.001) { return None; }
+    Some(selected).map(|(_, value, currency, evidence)| {
             json!({
                 "value": value,
                 "currency": currency,
@@ -253,57 +256,15 @@ fn extract_amount(text: &str) -> Option<serde_json::Value> {
 }
 
 fn is_non_total_amount_line(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    let blocked = [
-        "discount",
-        "coupon",
-        "promo",
-        "promotion",
-        "savings",
-        "you saved",
-        "cashback",
-        "wallet",
-        "delivery fee",
-        "platform fee",
-        "packing charge",
-        "tip",
-        "subtotal",
-        "sub-total",
-        "item total",
-        "mrp",
-        "price",
-        "tax",
-        "gst",
-        "fee",
-    ];
-    lower.contains("-₹")
-        || lower.contains("-rs")
-        || lower.contains("- rs")
-        || blocked.iter().any(|word| lower.contains(word))
+    if cached_regex(r"(?i)\b(?:grand total|order total|total paid|amount paid|total amount|amount payable)\b").unwrap().is_match(line) { return false; }
+    cached_regex(r"(?i)\b(?:discount|coupon|promo|promotion|savings|you saved|cashback|wallet|delivery fee|platform fee|packing charge|tip|sub[ -]?total|item total|mrp|price|tax|gst|fee)\b").unwrap().is_match(line)
+        || line.contains("-\u{20b9}")
 }
 
 fn amount_line_score(line: &str) -> i32 {
-    let lower = line.to_ascii_lowercase();
-    let strong = [
-        "grand total",
-        "order total",
-        "total paid",
-        "amount paid",
-        "paid",
-        "total amount",
-        "amount charged",
-        "payment successful",
-        "charged",
-    ];
-    let medium = ["total", "amount", "payment", "paid via"];
-
-    if strong.iter().any(|word| lower.contains(word)) {
-        100
-    } else if medium.iter().any(|word| lower.contains(word)) {
-        60
-    } else {
-        10
-    }
+    if cached_regex(r"(?i)\b(?:grand total|order total|total paid|amount paid|total amount|amount charged|amount payable|net payable|payment successful|charged|paid)\b").unwrap().is_match(line) { 100 }
+    else if cached_regex(r"(?i)\b(?:total|amount|payment|paid via)\b").unwrap().is_match(line) { 60 }
+    else { 10 }
 }
 
 fn normalize_currency(raw: &str) -> &'static str {
@@ -324,7 +285,7 @@ fn extract_items(text: &str) -> Vec<serde_json::Value> {
     ];
 
     for pattern in quantity_patterns {
-        if let Ok(re) = Regex::new(pattern) {
+        if let Ok(re) = cached_regex(pattern) {
             for cap in re.captures_iter(text).take(5) {
                 let (qty, name) = if cap.get(1).map(|m| m.as_str().chars().all(|c| c.is_ascii_digit())).unwrap_or(false) {
                     (cap.get(1), cap.get(2))
@@ -364,21 +325,11 @@ fn extract_items(text: &str) -> Vec<serde_json::Value> {
         }
     }
 
-    if items.is_empty() {
-        if let Ok(re) = Regex::new(r"(?im)^\s*(ELDEN RING|Fortnite Crew|GitHub Copilot|ChatGPT Plus|Sony WH1000XM5)\s*$") {
-            for cap in re.captures_iter(text).take(3) {
-                if let Some(name) = cap.get(1) {
-                    items.push(json!({ "name": clean_line(name.as_str()) }));
-                }
-            }
-        }
-    }
-
     items
 }
 
 fn line_has_amount(line: &str) -> bool {
-    Regex::new(r"(?i)(₹|rs\.?|inr|\$|usd|€|eur|£|gbp)\s*-?\s*[0-9]|[0-9][0-9,]*(?:\.[0-9]{1,2})?\s*(inr|usd|eur|gbp)")
+    cached_regex(r"(?i)(₹|rs\.?|inr|\$|usd|€|eur|£|gbp)\s*-?\s*[0-9]|[0-9][0-9,]*(?:\.[0-9]{1,2})?\s*(inr|usd|eur|gbp)")
         .map(|re| re.is_match(line))
         .unwrap_or(false)
 }
@@ -399,7 +350,7 @@ fn extract_merchant(text: &str) -> Option<String> {
     ];
 
     for pattern in patterns {
-        let Ok(re) = Regex::new(pattern) else {
+        let Ok(re) = cached_regex(pattern) else {
             continue;
         };
         if let Some(value) = re
@@ -424,7 +375,7 @@ fn is_plausible_merchant(value: &str) -> bool {
 }
 
 fn extract_status(text: &str) -> Option<String> {
-    let re = Regex::new(r"(?i)\b(Delivered|Shipped|Processing|Completed|Cancelled|Canceled|Refunded)\b").ok()?;
+    let re = cached_regex(r"(?i)\b(Delivered|Shipped|Processing|Completed|Cancelled|Canceled|Refunded)\b").ok()?;
     re.captures(text)
         .and_then(|cap| cap.get(1))
         .map(|m| m.as_str().to_string())
@@ -502,19 +453,6 @@ fn context_for(text: &str, needle: &str) -> Option<String> {
 
 fn context_for_kind(text: &str, kind: CommerceKind) -> Option<String> {
     context_for(text, kind.as_str())
-}
-
-fn strip_tags(html: &str) -> String {
-    let without_scripts = Regex::new(r"(?is)<script[^>]*>.*?</script>")
-        .map(|re| re.replace_all(html, "\n").to_string())
-        .unwrap_or_else(|_| html.to_string());
-    let without_styles = Regex::new(r"(?is)<style[^>]*>.*?</style>")
-        .map(|re| re.replace_all(&without_scripts, "\n").to_string())
-        .unwrap_or(without_scripts);
-
-    Regex::new(r"(?is)<[^>]+>")
-        .map(|re| re.replace_all(&without_styles, "\n").to_string())
-        .unwrap_or(without_styles)
 }
 
 fn clean_line(value: &str) -> String {

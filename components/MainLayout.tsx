@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Email } from '@/lib/types';
-import { dedupeMail, sameMail,mailIdentity } from '@/lib/mail-identity';
+import { dedupeMail, sameMail,mailIdentity, reuseUnchangedMail } from '@/lib/mail-identity';
 import { formatEmailTime } from '@/lib/utils';
 import { AlertCircle } from 'lucide-react';
 
@@ -141,14 +141,35 @@ export default function MainLayout() {
     const selectedEmail = visibleEmails.find(e => e.id === selectedEmailId);
 
 
-    const fetchUnreadCounts = async () => {
-        try {
-            const counts = await invoke<Record<string, number>>('get_unread_counts');
-            setUnreadCounts(counts);
-        } catch (error) {
-            console.error("Failed to fetch unread counts", error);
+    const unreadRefresh = useRef<{ again: boolean; promise: Promise<void> } | null>(null);
+    const fetchUnreadCounts = useCallback((): Promise<void> => {
+        if (unreadRefresh.current) {
+            unreadRefresh.current.again = true;
+            return unreadRefresh.current.promise;
         }
-    };
+        const work = { again: false, promise: Promise.resolve() };
+        unreadRefresh.current = work;
+        work.promise = (async () => {
+            try {
+                do {
+                    work.again = false;
+                    const accountId = activeAccountRef.current;
+                    const counts = await invoke<Record<string, number>>('get_unread_counts');
+                    if (accountId !== activeAccountRef.current) continue;
+                    setUnreadCounts(previous => {
+                        const keys = Object.keys(counts);
+                        return keys.length === Object.keys(previous).length
+                            && keys.every(key => previous[key] === counts[key]) ? previous : counts;
+                    });
+                } while (work.again);
+            } catch (error) {
+                console.error("Failed to fetch unread counts", error);
+            } finally {
+                if (unreadRefresh.current === work) unreadRefresh.current = null;
+            }
+        })();
+        return work.promise;
+    }, [setUnreadCounts]);
 
     const updateUnreadCount = (email: Email, delta: number) => {
         setUnreadCounts(prev => {
@@ -165,7 +186,7 @@ export default function MainLayout() {
     // --- Global State Sync ---
     useEffect(() => {
         fetchUnreadCounts();
-    }, []);
+    }, [fetchUnreadCounts]);
 
     // --- Handlers ---
     const patchMessage=(target:Email,patch:Partial<Email>)=>{
@@ -390,7 +411,7 @@ export default function MainLayout() {
                 }
                 if (revision !== cacheRevisionRef.current || folderToFetch !== currentFolderRef.current) return false;
                 const deduped = dedupeEmails([...formattedEmails, ...pinned]);
-                setEmails(deduped);
+                setEmails(previous => reuseUnchangedMail(previous, deduped));
                 reconcileWithDb(deduped);
                 setHasMore(cached.length === 50);
                 fetchUnreadCounts();
@@ -426,7 +447,7 @@ export default function MainLayout() {
                 const matchesView=(email:Email)=>folder==='starred'?email.starred:folder.startsWith('tag:')?email.tags.includes(folder.slice(4)):email.folder===folder;
                 const loadedIds=new Set(loaded.map(email=>email.id));
                 const next=dedupeEmails([...head.map(formatEmailFromMessage),...existing.map(formatEmailFromMessage).filter(email=>loadedIds.has(email.id))].filter(matchesView));
-                setEmails(next);
+                setEmails(previous => reuseUnchangedMail(previous, next));
                 setSelectedEmailId(previous=>{
                     if(next.some(email=>email.id===previous))return previous;
                     const selected=loaded.find(email=>email.id===previous);
@@ -478,7 +499,7 @@ export default function MainLayout() {
                 const merged = [...formattedEmails, ...prev];
                 const deduped = dedupeEmails(merged);
                 reconcileWithDb(deduped);
-                return deduped;
+                return reuseUnchangedMail(prev, deduped);
             });
 
             fetchUnreadCounts();
@@ -509,7 +530,7 @@ export default function MainLayout() {
                 setEmails(prev => {
                     if (revision !== cacheRevisionRef.current || currentFolderRef.current !== currentFolder) return prev;
                     const merged = [...prev, ...formattedEmails];
-                    return dedupeEmails(merged);
+                    return reuseUnchangedMail(prev, dedupeEmails(merged));
                 });
                 if (nextBatch.length < 50) {
                     setHasMore(false);
@@ -621,14 +642,8 @@ export default function MainLayout() {
         }, 0);
     }, [unreadCounts]);
 
-    useEffect(() => {
-        const interval = setInterval(() => {
-            if(preferencesRef.current.syncPaused)return;
-            invoke('sync_mail_folder', { folder: 'inbox', automatic:true }).catch(console.error);
-            fetchUnreadCounts();
-        }, 60000);
-        return () => clearInterval(interval);
-    }, []);
+    // IMAP IDLE and the backend fallback poll own automatic sync. A second
+    // renderer timer also ran while minimized and ignored the poll preference.
 
     useEffect(() => {
         let unlistenSync: (() => void) | undefined;

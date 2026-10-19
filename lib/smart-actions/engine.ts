@@ -1,155 +1,48 @@
-import {
-    SmartAction,
-    DetectorContext,
-    SmartActionKind,
-    TrustLevel,
-    SmartActionCommand
-} from './types';
+import { SmartAction, DetectorContext, SmartActionKind, TrustLevel, SmartActionCommand } from './types';
+import { safeUrl, meetingUrl, URL_COMMANDS } from './safety';
+import { calendarUrl } from './calendar';
 
-export interface Detector {
-    id: string;
-    detect: (ctx: DetectorContext) => SmartAction[];
-}
-
-export interface DetectorMetrics {
-    detectorId: string;
-    durationMs: number;
-    actionsProduced: number;
-}
+export interface Detector { id: string; detect: (ctx: DetectorContext) => SmartAction[]; }
+export interface DetectorMetrics { detectorId: string; durationMs: number; actionsProduced: number; }
 
 class SmartActionsEngineClass {
     private detectors: Detector[] = [];
     public metrics: DetectorMetrics[] = [];
-
     registerDetector(detector: Detector) {
-        this.detectors.push(detector);
+        if (!this.detectors.some(existing => existing.id === detector.id)) this.detectors.push(detector);
     }
-
-    private validateAction(action: SmartAction): SmartAction | null {
-        // Validation Layer
-        // Ensure URLs are safe (no javascript:, data:, etc.)
-        for (const btn of action.actions) {
-            if (btn.data?.url) {
-                try {
-                    const url = new URL(btn.data.url as string);
-                    if (url.protocol !== 'https:') {
-                        return null; // Reject unsafe protocols entirely
-                    }
-                    
-                    // Domain whitelist for specific trusted actions
-                    if (btn.command === SmartActionCommand.JoinMeeting) {
-                        const trustedDomains = ['zoom.us', 'meet.google.com', 'teams.microsoft.com', 'webex.com'];
-                        if (trustedDomains.some(d => url.hostname.endsWith(d))) {
-                            action.trustLevel = TrustLevel.Trusted;
-                        } else if (action.trustLevel !== TrustLevel.Trusted) {
-                            action.trustLevel = TrustLevel.Unverified;
-                        }
-                    }
-                } catch {
-                    return null; // Invalid URL
-                }
-            }
-        }
-        return action;
+    private validate(action: SmartAction): SmartAction | null {
+        if (!Number.isFinite(action.confidence) || action.confidence < 0.8 || !action.title.trim()) return null;
+        const actions = action.actions.filter(button => {
+            if (button.command === SmartActionCommand.CopyOtp) return typeof button.data?.code === 'string' && /^(?:G-)?[A-Za-z0-9]{4,8}$/.test(button.data.code);
+            if (button.command === SmartActionCommand.AddToCalendar) return Boolean(calendarUrl(button.data?.event));
+            if (!URL_COMMANDS.has(button.command)) return false;
+            return Boolean(button.command === SmartActionCommand.JoinMeeting ? meetingUrl(button.data?.url) : safeUrl(button.data?.url));
+        });
+        return { ...action, trustLevel: TrustLevel.Unverified, actions };
     }
-
-    private aggregateActions(actions: SmartAction[]): SmartAction[] {
-        // Deduplicate logic
-        // E.g., multiple meetings for the same URL, or same OTP
-        const aggregated: SmartAction[] = [];
-        const seenKeys = new Set<string>();
-
-        for (const action of actions) {
-            let key = action.id;
-            
-            if (action.kind === SmartActionKind.MEETING) {
-                const url = action.actions.find(a => a.command === SmartActionCommand.JoinMeeting)?.data?.url;
-                if (url) key = `meeting:${url}`;
-            } else if (action.kind === SmartActionKind.OTP) {
-                const code = action.actions.find(a => a.command === SmartActionCommand.CopyOtp)?.data?.code;
-                if (code) key = `otp:${code}`;
-            } else if (
-                action.kind === SmartActionKind.PURCHASE ||
-                action.kind === SmartActionKind.ORDER ||
-                action.kind === SmartActionKind.INVOICE ||
-                action.kind === SmartActionKind.REFUND ||
-                action.kind === SmartActionKind.SUBSCRIPTION ||
-                action.kind === SmartActionKind.TRANSACTION
-            ) {
-                const ref = action.metadata?.reference || action.metadata?.entityId;
-                if (ref) key = `commerce:${action.kind}:${ref}`;
-            }
-
-            if (!seenKeys.has(key)) {
-                seenKeys.add(key);
-                aggregated.push(action);
-            } else {
-                // We could merge them and upgrade confidence if multiple detectors agree
-                const existing = aggregated.find(a => {
-                    if (a.kind === SmartActionKind.MEETING) {
-                        return a.actions.some(btn => btn.data?.url === action.actions.find(b => b.command === SmartActionCommand.JoinMeeting)?.data?.url);
-                    }
-                    if (a.kind === SmartActionKind.OTP) {
-                        return a.actions.some(btn => btn.data?.code === action.actions.find(b => b.command === SmartActionCommand.CopyOtp)?.data?.code);
-                    }
-                    if (
-                        a.kind === SmartActionKind.PURCHASE ||
-                        a.kind === SmartActionKind.ORDER ||
-                        a.kind === SmartActionKind.INVOICE ||
-                        a.kind === SmartActionKind.REFUND ||
-                        a.kind === SmartActionKind.SUBSCRIPTION ||
-                        a.kind === SmartActionKind.TRANSACTION
-                    ) {
-                        return a.metadata?.reference === action.metadata?.reference && a.kind === action.kind;
-                    }
-                    return a.id === action.id;
-                });
-                
-                if (existing) {
-                    existing.confidence = Math.min(1.0, existing.confidence + action.confidence * 0.5);
-                    // Upgrade trust level if applicable
-                    if (action.trustLevel === TrustLevel.Trusted || existing.trustLevel === TrustLevel.Trusted) {
-                        existing.trustLevel = TrustLevel.Trusted;
-                    }
-                }
-            }
-        }
-        return aggregated;
-    }
-
     detect(ctx: DetectorContext): SmartAction[] {
-        if (!ctx.extractedData || !ctx.extractedData.entities) return [];
-
-        const rawActions: SmartAction[] = [];
+        if (!ctx.extractedData || ctx.extractedData.version < 12 || !Array.isArray(ctx.extractedData.entities)) return [];
+        const unique = new Map<string, SmartAction>();
         this.metrics = [];
-
         for (const detector of this.detectors) {
             const start = performance.now();
             try {
-                const actions = detector.detect(ctx);
-                const validActions = actions.map(a => this.validateAction(a)).filter(a => a !== null) as SmartAction[];
-                
-                rawActions.push(...validActions);
-                
-                this.metrics.push({
-                    detectorId: detector.id,
-                    durationMs: performance.now() - start,
-                    actionsProduced: validActions.length,
-                });
-            } catch (err) {
-                console.error(`Detector ${detector.id} failed:`, err);
-            }
+                const actions = detector.detect(ctx).map(action => this.validate(action)).filter((action): action is SmartAction => Boolean(action));
+                for (const action of actions) {
+                    let key = action.id;
+                    if (action.kind === SmartActionKind.OTP) key = `otp:${action.metadata?.code}`;
+                    if (action.kind === SmartActionKind.MEETING) {
+                        const join = action.actions.find(button => button.command === SmartActionCommand.JoinMeeting)?.data?.url;
+                        if (join) key = `meeting:${join}`;
+                    }
+                    const old = unique.get(key);
+                    if (!old || action.confidence > old.confidence) unique.set(key, action);
+                }
+                this.metrics.push({ detectorId: detector.id, durationMs: performance.now() - start, actionsProduced: actions.length });
+            } catch (error) { console.error(`Smart action detector ${detector.id} failed`, error); }
         }
-
-        const aggregated = this.aggregateActions(rawActions);
-
-        // Sort by Priority > Confidence > Timestamp
-        return aggregated.sort((a, b) => {
-            if (a.priority !== b.priority) return b.priority - a.priority;
-            if (a.confidence !== b.confidence) return b.confidence - a.confidence;
-            return b.timestamp - a.timestamp;
-        });
+        return [...unique.values()].sort((a, b) => b.priority - a.priority || b.confidence - a.confidence || b.timestamp - a.timestamp).slice(0, 8);
     }
 }
-
 export const SmartActionsEngine = new SmartActionsEngineClass();

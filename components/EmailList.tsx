@@ -120,7 +120,10 @@ const EmailList: React.FC<EmailListProps> = ({
         getItemKey,
     });
     const {user}=useAuth();
-    const visibleEmails=virtualItems.map(item=>displayedEmails[item.index]).filter((email):email is Email=>Boolean(email));
+    const viewportStart = rowVirtualizer.scrollOffset ?? 0;
+    const viewportEnd = viewportStart + (rowVirtualizer.scrollRect?.height ?? 600);
+    const visibleRows = virtualItems.filter(item => item.end >= viewportStart && item.start <= viewportEnd);
+    const visibleEmails=visibleRows.map(item=>displayedEmails[item.index]).filter((email):email is Email=>Boolean(email));
     useVisibleMailLabels(user?.id,visibleEmails,!preferences.syncPaused);
 
     React.useEffect(() => { rowVirtualizer.measure(); }, [preferences.density, preferences.previewLines, preferences.showAvatars, rowVirtualizer]);
@@ -129,9 +132,7 @@ const EmailList: React.FC<EmailListProps> = ({
         ? allTags[currentFolder.slice(4)]?.name || 'Tag'
         : currentFolder ? currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1) : 'Mailbox';
 
-    const viewportStart = rowVirtualizer.scrollOffset ?? 0;
-    const viewportEnd = viewportStart + (rowVirtualizer.scrollRect?.height ?? 600);
-    const prefetchRequests = virtualItems.filter(item => item.end >= viewportStart && item.start <= viewportEnd)
+    const prefetchRequests = visibleRows
         .slice(0, 12).map(item => displayedEmails[item.index]).filter(Boolean)
         .map(email => ({ folder: email.folder, uid: email.uid }));
     const prefetchSignature = JSON.stringify(prefetchRequests);
@@ -152,12 +153,23 @@ const EmailList: React.FC<EmailListProps> = ({
             }, 600);
         };
         const online = () => { lastPrefetch.current = ''; schedule(); };
+        const pause = () => {
+            if (timer) clearTimeout(timer);
+            // Native minimization drops speculative jobs. Revisit the current
+            // viewport on return even if its message IDs have not changed.
+            lastPrefetch.current = '';
+        };
+        const visibility = () => document.visibilityState === 'visible' ? schedule() : pause();
         schedule();
         window.addEventListener('focus', schedule);
+        window.addEventListener('blur', pause);
+        document.addEventListener('visibilitychange', visibility);
         window.addEventListener('online', online);
         return () => {
             if (timer) clearTimeout(timer);
             window.removeEventListener('focus', schedule);
+            window.removeEventListener('blur', pause);
+            document.removeEventListener('visibilitychange', visibility);
             window.removeEventListener('online', online);
         };
     }, [prefetchSignature, user?.id, preferences.prefetchBodies, preferences.syncPaused]);

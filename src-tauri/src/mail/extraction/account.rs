@@ -1,5 +1,5 @@
 use super::ExtractedEntity;
-use regex::Regex;
+use crate::mail::patterns::regex as cached_regex;
 
 pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
     let entities = Vec::new();
@@ -11,7 +11,7 @@ pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
     ];
 
     for (_i, (p, _subtype)) in patterns.iter().enumerate() {
-        if let Ok(re) = Regex::new(p) {
+        if let Ok(re) = cached_regex(p) {
             if let Some(_m) = re.find(text) {
                 // Return a generic "Link" type or a specific Account type?
                 // The instructions said AccountAction is classified by frontend, so we can just emit an entity type

@@ -1,5 +1,5 @@
 use super::{ExtractedEntity, EntityType, Provenance, ExtractionSource};
-use regex::Regex;
+use crate::mail::patterns::regex as cached_regex;
 
 pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
     let mut entities = Vec::new();
@@ -12,7 +12,7 @@ pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
 
     let mut id_counter = 0;
     for (p, provider) in patterns {
-        if let Ok(re) = Regex::new(p) {
+        if let Ok(re) = cached_regex(p) {
             for cap in re.captures_iter(text) {
                 if let Some(m) = cap.get(1) {
                     // Only match if tracking words are nearby
@@ -31,13 +31,14 @@ pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
                     let context = &text[context_start..context_end];
                     
                     let context_lower = context.to_lowercase();
-                    if context_lower.contains("track") || context_lower.contains("ship") || context_lower.contains("deliver") {
+                    let carrier_context = context_lower.contains(&provider.to_lowercase());
+                    if (carrier_context || provider == "UPS") && (context_lower.contains("track") || context_lower.contains("ship") || context_lower.contains("deliver")) {
                         entities.push(ExtractedEntity {
                             id: format!("tracking:{}:{}", provider.to_lowercase(), id_counter),
                             entity_type: EntityType::TrackingNumber,
                             provider: Some(provider.to_string()),
                             value: m.as_str().to_string(),
-                            confidence: 0.7,
+                            confidence: 0.9,
                             provenance: Provenance {
                                 source: ExtractionSource::Regex,
                                 extractor: "tracking.rs".to_string(),

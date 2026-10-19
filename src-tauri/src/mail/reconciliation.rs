@@ -147,6 +147,7 @@ fn apply_snapshot(
     remote: &[Flags],
     now: i64,
 ) -> Result<Changes, String> {
+    let _work = crate::performance::WorkSpan::new("reconciliation commit");
     let cached_set: HashSet<_> = cached.iter().copied().collect();
     if cached_set.len() != cached.len() {
         return Err("Duplicate UID in reconciliation snapshot".into());
@@ -173,7 +174,7 @@ fn apply_snapshot(
     let mut changes = Changes::default();
     for uid in cached {
         if let Some(remote) = flags.get(uid) {
-            let updated = tx.execute("UPDATE messages SET seen = ?1, flagged = ?2
+            let updated = database::execute_cached(&tx, "UPDATE messages SET seen = ?1, flagged = ?2
                 WHERE account_id = ?3 AND folder = ?4 AND uid = ?5 AND uid_validity = ?6
                 AND (seen != ?1 OR flagged != ?2)
                 AND NOT EXISTS (SELECT 1 FROM pending_message_actions p WHERE p.account_id = ?3 AND p.folder = ?4 AND p.uid = ?5 AND (p.last_error IS NULL OR p.last_error NOT LIKE 'CONFLICT:%'))",
@@ -185,15 +186,15 @@ fn apply_snapshot(
         } else {
             // A delete already confirmed by the provider is complete. Other queued
             // actions now have an explicit conflict rather than retrying forever.
-            tx.execute("DELETE FROM pending_message_actions WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND action = 'delete'",
+            database::execute_cached(&tx, "DELETE FROM pending_message_actions WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND action = 'delete'",
                 params![account, folder, uid]).map_err(|e| e.to_string())?;
-            let conflicts = tx.execute("UPDATE pending_message_actions SET last_error = 'CONFLICT: Message was removed at the provider'
+            let conflicts = database::execute_cached(&tx, "UPDATE pending_message_actions SET last_error = 'CONFLICT: Message was removed at the provider'
                 WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND (last_error IS NULL OR last_error NOT LIKE 'CONFLICT:%')",
                 params![account, folder, uid]).map_err(|e| e.to_string())?;
             if conflicts > 0 {
                 changes.conflicts.push(*uid);
             }
-            let removed = tx.execute("DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND uid_validity = ?4",
+            let removed = database::execute_cached(&tx, "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid = ?3 AND uid_validity = ?4",
                 params![account, folder, uid, validity]).map_err(|e| e.to_string())?;
             changes.removed += removed;
             if removed > 0 {
@@ -201,7 +202,7 @@ fn apply_snapshot(
             }
         }
     }
-    tx.execute(
+    database::execute_cached(&tx,
         "UPDATE folder_sync_state SET last_full_sync_at = ?1 WHERE account_id = ?2 AND folder = ?3",
         params![now, account, folder],
     )

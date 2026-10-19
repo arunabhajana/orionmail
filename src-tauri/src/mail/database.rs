@@ -252,6 +252,12 @@ pub(crate) fn open_connection(app_handle: &AppHandle) -> Result<Connection, Stri
     Ok(conn)
 }
 
+/// Reuse prepared statements within a batch instead of recompiling SQL for
+/// each message. The connection owns the bounded statement cache.
+pub(crate) fn execute_cached(conn: &Connection, sql: &str, params: impl rusqlite::Params) -> rusqlite::Result<usize> {
+    conn.prepare_cached(sql)?.execute(params)
+}
+
 #[cfg(test)]
 mod account_scope_tests {
     use super::*;
@@ -864,6 +870,7 @@ pub fn load_messages_page(app_handle: &AppHandle, account_id: &str, folder: &str
 }
 
 pub fn load_messages_page_with_cursor(app_handle: &AppHandle, account_id: &str, folder: &str, before_uid: Option<u32>, before_folder: Option<&str>, limit: u32) -> Result<Vec<MessageHeader>, String> {
+    let _work = crate::performance::WorkSpan::new("mail list page query");
     let conn = open_connection(app_handle)?;
 
     let parse_row = |row: &rusqlite::Row| -> rusqlite::Result<MessageHeader> {
@@ -1057,6 +1064,13 @@ pub fn update_message_body(app_handle: &AppHandle, account_id: &str, folder: &st
     ).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+pub fn update_message_extraction(app: &AppHandle, account: &str, folder: &str, uid: u32, expected_body: &str, extracted: &str) -> Result<bool, String> {
+    // Re-extraction must not blank the preview or rewrite/re-index the body.
+    // A concurrent mailbox reset/body replacement invalidates this result.
+    open_connection(app)?.execute("UPDATE messages SET extracted_data=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3 AND processed_html=?5",
+        rusqlite::params![account, folder, uid, extracted, expected_body]).map(|count| count == 1).map_err(|e| e.to_string())
 }
 
 pub fn get_unfetched_recent_uids(app_handle: &AppHandle, account_id: &str, folder: &str, limit: u32) -> Result<Vec<u32>, String> {

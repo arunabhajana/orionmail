@@ -52,18 +52,21 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
 
     React.useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [email?.id, user?.id]);
 
-    const smartActions = React.useMemo(() => {
-        if (!preferences.smartActionsGlobal) return [];
-        if (!extractedData || isLoadingBody) return [];
+    const detectedActions = React.useMemo(() => {
+        if (!preferences.smartActionsGlobal || !extractedData || isLoadingBody) return [];
         
-        const actions = SmartActionsEngine.detect({
+        return SmartActionsEngine.detect({
             extractedData,
             receivedAt: email?.timestamp || 0,
             subject: email?.subject || '',
             sender: email?.sender || ''
         });
 
-        return actions.filter(action => {
+    }, [extractedData, isLoadingBody, email?.timestamp, email?.subject, email?.sender, preferences.smartActionsGlobal]);
+
+    const smartActions = React.useMemo(() => {
+        if (!preferences.smartActionsGlobal) return [];
+        return detectedActions.filter(action => {
             if (action.kind === SmartActionKind.OTP && !preferences.smartActionsOtp) return false;
             if (action.kind === SmartActionKind.MEETING && !preferences.smartActionsMeetings) return false;
             
@@ -78,85 +81,25 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
             
             return true;
         });
-    }, [extractedData, isLoadingBody, email?.timestamp, email?.subject, email?.sender, preferences]);
+    }, [detectedActions, preferences.smartActionsGlobal, preferences.smartActionsOtp, preferences.smartActionsMeetings, preferences.smartActionsCommerce, preferences.smartActionsTravel]);
 
-    if (!email) {
-        return (
-            <section className={cn(
-                "mail-reader-surface flex flex-col h-full items-center justify-center text-muted-foreground gap-4 p-8",
-                className
-            )}>
-                <div className="w-16 h-16 rounded-2xl bg-black/5 dark:bg-white/10 flex items-center justify-center">
-                    <File className="w-8 h-8 opacity-50" />
-                </div>
-                <div className="text-center">
-                    <h3 className="font-semibold text-foreground text-lg">A little space to focus</h3>
-                    <p className="text-sm opacity-70">Choose a message to start reading.</p>
-                </div>
-            </section>
-        );
-    }
-
-    return (
-        <section
-            data-context-menu="message"
-            className={cn(
-                "mail-reader-surface flex flex-col h-full",
-                className
-            )}
-        >
-            <DetailToolbar
-                isStarred={email?.starred}
-                isUnread={email?.unread}
-                onBack={onBack}
-                onToggleRead={onToggleRead ? () => onToggleRead(email.id) : undefined}
-                onToggleStar={() => email && onToggleStar?.(email.id)}
-                onDelete={() => email && onDeleteMessage?.(email.id)}
-            />
-
-            {/* Content Scroll Area */}
-            <div ref={scrollRef} className="mail-reader-scroll min-h-0 flex-1 overflow-y-auto custom-scrollbar">
-                    <div key={remoteMessageKey} className="mail-reading-sheet">
-                        <MessageHeader email={email} />
-
-                        {smartActions.map((action) => (
-                            <SmartActionCard key={action.id} action={action} />
-                        ))}
-
-                        {!isLoadingBody && !error && preferences.blockRemoteImages && <div className="mail-privacy-bar"><span className="flex min-w-0 items-center gap-2 text-muted-foreground"><ShieldCheck aria-hidden="true" className="size-3.5 shrink-0" />{remoteAllowed ? 'Remote content allowed' : 'Remote content blocked'}</span><button type="button" className="shrink-0 rounded px-1 py-0.5 font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => setAllowedRemoteMessage(remoteAllowed ? null : remoteMessageKey)}>{remoteAllowed ? 'Block again' : 'Load images'}</button></div>}
-                        {error ? (() => {
-                            const isTimeout = error.includes("Timeout");
-                            const Icon = isTimeout ? Clock : AlertOctagon;
-                            return (
-                                <div className={cn("flex flex-col h-[40vh] items-center justify-center border rounded-2xl mx-auto my-8 max-w-2xl", isTimeout ? "border-orange-500/20 bg-orange-500/5" : "border-red-500/20 bg-red-500/5")}>
-                                    <Icon className={cn("w-10 h-10 mb-4 opacity-80", isTimeout ? "text-orange-500" : "text-red-500")} />
-                                    <h3 className={cn("text-lg font-semibold mb-2", isTimeout ? "text-orange-600 dark:text-orange-400" : "text-red-600 dark:text-red-400")}>
-                                        {isTimeout ? "Connection Timeout" : "Message Body Unavailable"}
-                                    </h3>
-                                    <p className={cn("text-sm mb-6 text-center px-8 line-clamp-3", isTimeout ? "text-orange-600/70 dark:text-orange-400/70" : "text-red-600/70 dark:text-red-400/70")} title={error}>
-                                        {isTimeout ? "The server took too long to fetch the email content. This may be due to a slow network or large email size." : error}
-                                    </p>
-                                    <button onClick={retry} className={cn("px-6 py-2 rounded-lg font-medium transition-colors", isTimeout ? "bg-orange-500/10 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400" : "bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400")}>
-                                        Try Again
-                                    </button>
-                                </div>
-                            );
-                        })() : isLoadingBody ? (
-                            <div className="flex min-h-60 flex-col items-center justify-center py-10">
-                                <OrbitLoader
-                                    message="Loading message…"
-                                    size="md"
-                                />
-                            </div>
-                        ) : (
-                            <iframe
-                                ref={emailIframeRef}
-                                title="Email Content"
-                                className="w-full border-0 email-content-iframe bg-white dark:bg-[#111111]"
-                                sandbox="allow-scripts"
-                                scrolling="no"
-                                style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}
-                                srcDoc={`
+    // Height, flags, sync and toolbar updates must not reparse the entire
+    // message or allocate another srcDoc string on every reader render.
+    const sanitizedBody = React.useMemo(() => DOMPurify.sanitize(
+        sanitizeHtml(bodyContent, {
+            allowedTags: sanitizeHtml.defaults.allowedTags.concat([
+                "img", "table", "tbody", "tr", "td", "th", "style", "head", "meta", "html", "body"
+            ]),
+            allowedAttributes: {
+                a: ["href", "name", "target"],
+                img: ["src", "alt", "width", "height"],
+                td: ["colspan", "rowspan", "align"],
+                "*": ["style"]
+            }
+        }),
+        { FORBID_TAGS: ['script', 'iframe', 'object', 'embed'] }
+    ), [bodyContent]);
+    const messageDocument = React.useMemo(() => `
                                 <!DOCTYPE html>
                                 <html>
                                 <head>
@@ -194,20 +137,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                 </head>
                                 <body>
                                     <div id="email-content-wrapper">
-                                        ${DOMPurify.sanitize(
-                                    sanitizeHtml(bodyContent, {
-                                        allowedTags: sanitizeHtml.defaults.allowedTags.concat([
-                                            "img", "table", "tbody", "tr", "td", "th", "style", "head", "meta", "html", "body"
-                                        ]),
-                                        allowedAttributes: {
-                                            a: ["href", "name", "target"],
-                                            img: ["src", "alt", "width", "height"],
-                                            td: ["colspan", "rowspan", "align"],
-                                            "*": ["style"]
-                                        }
-                                    }),
-                                    { FORBID_TAGS: ['script', 'iframe', 'object', 'embed'] }
-                                )}
+                                        ${sanitizedBody}
                                     </div>
                                     <script>
                                         const wrapper = document.getElementById('email-content-wrapper');
@@ -260,7 +190,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                                 const height = wrapper.scrollHeight;
                                                 if (height !== lastHeight) {
                                                     lastHeight = height;
-                                                    window.parent.postMessage({ type: 'resize', height, id: '${email.id}' }, '*');
+                                                    window.parent.postMessage({ type: 'resize', height, id: '${email?.id}' }, '*');
                                                 }
                                             });
                                         };
@@ -284,13 +214,92 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                             const a = target && target.closest ? target.closest('a') : null;
                                             if (a && a.href) {
                                                 e.preventDefault();
-                                                window.parent.postMessage({ type: 'open_url', url: a.href, id: '${email.id}' }, '*');
+                                                window.parent.postMessage({ type: 'open_url', url: a.href, id: '${email?.id}' }, '*');
                                             }
                                         });
                                     </script>
                                 </body>
                                 </html>
-                            `}
+                            `, [sanitizedBody, remoteAllowed, isDark, email?.id, preferences.readingFontSize]);
+
+    if (!email) {
+        return (
+            <section className={cn(
+                "mail-reader-surface flex flex-col h-full items-center justify-center text-muted-foreground gap-4 p-8",
+                className
+            )}>
+                <div className="w-16 h-16 rounded-2xl bg-black/5 dark:bg-white/10 flex items-center justify-center">
+                    <File className="w-8 h-8 opacity-50" />
+                </div>
+                <div className="text-center">
+                    <h3 className="font-semibold text-foreground text-lg">A little space to focus</h3>
+                    <p className="text-sm opacity-70">Choose a message to start reading.</p>
+                </div>
+            </section>
+        );
+    }
+
+    return (
+        <section
+            data-context-menu="message"
+            className={cn(
+                "mail-reader-surface flex flex-col h-full",
+                className
+            )}
+        >
+            <DetailToolbar
+                isStarred={email?.starred}
+                isUnread={email?.unread}
+                onBack={onBack}
+                onToggleRead={onToggleRead ? () => onToggleRead(email.id) : undefined}
+                onToggleStar={() => email && onToggleStar?.(email.id)}
+                onDelete={() => email && onDeleteMessage?.(email.id)}
+            />
+
+            {/* Content Scroll Area */}
+            <div ref={scrollRef} className="mail-reader-scroll min-h-0 flex-1 overflow-y-auto custom-scrollbar">
+                    <div key={remoteMessageKey} className="mail-reading-sheet">
+                        <MessageHeader email={email} />
+
+                        {smartActions.length > 0 && <section aria-label="Email highlights" className="mb-4 space-y-2.5">
+                            <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Highlights</h2>
+                            {smartActions.map(action => <SmartActionCard key={action.id} action={action} />)}
+                        </section>}
+
+                        {!isLoadingBody && !error && preferences.blockRemoteImages && <div className="mail-privacy-bar"><span className="flex min-w-0 items-center gap-2 text-muted-foreground"><ShieldCheck aria-hidden="true" className="size-3.5 shrink-0" />{remoteAllowed ? 'Remote content allowed' : 'Remote content blocked'}</span><button type="button" className="shrink-0 rounded px-1 py-0.5 font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => setAllowedRemoteMessage(remoteAllowed ? null : remoteMessageKey)}>{remoteAllowed ? 'Block again' : 'Load images'}</button></div>}
+                        {error ? (() => {
+                            const isTimeout = error.includes("Timeout");
+                            const Icon = isTimeout ? Clock : AlertOctagon;
+                            return (
+                                <div className={cn("flex flex-col h-[40vh] items-center justify-center border rounded-2xl mx-auto my-8 max-w-2xl", isTimeout ? "border-orange-500/20 bg-orange-500/5" : "border-red-500/20 bg-red-500/5")}>
+                                    <Icon className={cn("w-10 h-10 mb-4 opacity-80", isTimeout ? "text-orange-500" : "text-red-500")} />
+                                    <h3 className={cn("text-lg font-semibold mb-2", isTimeout ? "text-orange-600 dark:text-orange-400" : "text-red-600 dark:text-red-400")}>
+                                        {isTimeout ? "Connection Timeout" : "Message Body Unavailable"}
+                                    </h3>
+                                    <p className={cn("text-sm mb-6 text-center px-8 line-clamp-3", isTimeout ? "text-orange-600/70 dark:text-orange-400/70" : "text-red-600/70 dark:text-red-400/70")} title={error}>
+                                        {isTimeout ? "The server took too long to fetch the email content. This may be due to a slow network or large email size." : error}
+                                    </p>
+                                    <button onClick={retry} className={cn("px-6 py-2 rounded-lg font-medium transition-colors", isTimeout ? "bg-orange-500/10 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400" : "bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400")}>
+                                        Try Again
+                                    </button>
+                                </div>
+                            );
+                        })() : isLoadingBody ? (
+                            <div className="flex min-h-60 flex-col items-center justify-center py-10">
+                                <OrbitLoader
+                                    message="Loading message…"
+                                    size="md"
+                                />
+                            </div>
+                        ) : (
+                            <iframe
+                                ref={emailIframeRef}
+                                title="Email Content"
+                                className="w-full border-0 email-content-iframe bg-white dark:bg-[#111111]"
+                                sandbox="allow-scripts"
+                                scrolling="no"
+                                style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}
+                                srcDoc={messageDocument}
                             />
                         )}
 

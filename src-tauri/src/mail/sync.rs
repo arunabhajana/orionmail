@@ -334,26 +334,31 @@ pub async fn sync_folder_with_options(
         Err(_) => return Err("Sync Connection Timeout".to_string()),
     };
 
-    // Enqueue top 10 most recent UIDs for prefetching immediately after sync
-    let uids = database::get_unfetched_recent_uids(app_handle, &account.id, &folder_name, 10)
-        .unwrap_or_default();
-
-    for uid in uids {
-        let pf_app = app_handle.clone();
-        let pf_acc = account.clone();
-        let pf_folder = folder_name.clone();
-        tokio::spawn(async move {
+    // Quiet syncs must not keep crawling older uncached bodies while the user
+    // is idle. The settled viewport already prefetches messages being browsed.
+    let preferences = crate::mail_preferences::load(app_handle);
+    if new_messages_count > 0 && crate::window_activity::is_displayed()
+        && preferences.prefetch_bodies && !preferences.sync_paused
+    {
+        let cache_app = app_handle.clone();
+        let cache_account = account.id.clone();
+        let cache_folder = folder_name.clone();
+        let uids = tokio::task::spawn_blocking(move || {
+            database::get_unfetched_recent_uids(&cache_app, &cache_account, &cache_folder, 10)
+                .unwrap_or_default()
+        }).await.unwrap_or_default();
+        for uid in uids {
             crate::mail::body_prefetch_manager::PREFETCH_MANAGER
                 .enqueue(
-                    pf_app,
-                    pf_acc,
-                    pf_folder,
+                    app_handle.clone(),
+                    account.clone(),
+                    folder_name.clone(),
                     uid,
                     crate::mail::body_prefetch_manager::PrefetchPriority::Background,
                     None,
                 )
                 .await;
-        });
+        }
     }
 
     Ok(new_messages_count)

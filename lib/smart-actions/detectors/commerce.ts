@@ -4,11 +4,14 @@ import {
     SmartActionKind,
     SmartActionPriority,
     SmartActionButton,
+    SmartActionCommand,
     TrustLevel,
     DetectorSource,
-    EntityType
+    EntityType,
+    ExtractedEntity,
 } from '../types';
 import { Detector } from '../engine';
+import { safeUrl, textValue, record } from '../safety';
 
 const commerceEntityTypes = new Set<string>([
     EntityType.InvoiceReference,
@@ -23,10 +26,10 @@ type CommerceKind = 'purchase' | 'order' | 'invoice' | 'refund' | 'subscription'
 export const CommerceDetector: Detector = {
     id: 'commerce',
     detect: (ctx: DetectorContext): SmartAction[] => {
-        const commerceEntities = ctx.extractedData.entities.filter(entity => {
+        const commerceEntities = [...ctx.extractedData.entities.filter(entity => {
             const commerceType = entity.metadata?.commerceType;
             return commerceEntityTypes.has(String(entity.entityType)) || typeof commerceType === 'string';
-        });
+        }), ...ctx.extractedData.entities.flatMap(schemaOrder)];
 
         if (!commerceEntities.length) return [];
 
@@ -42,12 +45,11 @@ export const CommerceDetector: Detector = {
             : metadataProvider || contextProvider || senderName(ctx.sender);
         const merchant = subjectParts.seller || stringValue(metadata.merchant);
         const amount = formatAmount(metadata.amount);
-        const status = stringValue(metadata.status);
         const referenceLabel = referenceText(best.entityType, best.value);
         const hasItems = Array.isArray(metadata.items) && metadata.items.length > 0;
         const confidence = scoreWithContext(best.confidence, ctx.subject, ctx.sender, provider);
 
-        if (!amount || confidence < 0.8 || (!referenceLabel && !merchant && !hasItems)) {
+        if (confidence < 0.8 || (!referenceLabel && !merchant && !hasItems) || (!amount && !referenceLabel)) {
             return [];
         }
 
@@ -58,9 +60,9 @@ export const CommerceDetector: Detector = {
             trustLevel: provider && (contextProvider || providerConfidence >= 0.9) ? TrustLevel.Verified : TrustLevel.Unverified,
             detectorSource: DetectorSource.RuleBased,
             title: titleFor(commerceType, provider),
-            subtitle: [merchant, referenceLabel, amount, status].filter(Boolean).join(' • '),
+            subtitle: merchant,
             confidence,
-            timestamp: Date.now(),
+            timestamp: ctx.receivedAt,
             metadata: {
                 ...metadata,
                 entityId: best.id,
@@ -73,7 +75,7 @@ export const CommerceDetector: Detector = {
                 subject: ctx.subject,
                 sender: ctx.sender,
             },
-            actions: actionsFor(),
+            actions: actionsFor(ctx, commerceType),
         }];
     }
 };
@@ -127,12 +129,44 @@ function titleFor(kind: CommerceKind, provider?: string): string {
     return provider ? `${label} from ${provider}` : label;
 }
 
-function actionsFor(): SmartActionButton[] {
-    return [];
+function actionsFor(ctx: DetectorContext, kind: CommerceKind): SmartActionButton[] {
+    const purpose = kind === 'subscription' ? /manage.*subscription|view.*subscription/i
+        : kind === 'invoice' ? /view.*invoice|download.*invoice/i
+        : kind === 'order' ? /track.*order|view.*order|order details/i
+        : /view.*receipt|view.*transaction|payment details|view.*order/i;
+    const links = ctx.extractedData.entities.filter(entity => entity.entityType === EntityType.Link && safeUrl(entity.value)
+        && purpose.test(String(entity.metadata.label || '')));
+    const unique = [...new Set(links.map(link => link.value))];
+    if (unique.length !== 1) return [];
+    const command = kind === 'subscription' ? SmartActionCommand.ManageSubscription : kind === 'invoice' ? SmartActionCommand.ViewInvoice
+        : kind === 'order' ? SmartActionCommand.TrackOrder : SmartActionCommand.ViewReceipt;
+    return [{ label: kind === 'subscription' ? 'Manage subscription' : kind === 'invoice' ? 'View invoice' : kind === 'order' ? 'View order' : 'View receipt', command, data: { url: unique[0] } }];
+}
+
+function schemaOrder(entity: ExtractedEntity): ExtractedEntity[] {
+    const data = entity.metadata;
+    if (entity.entityType !== EntityType.SchemaOrgObject || !/(?:^|\/)Order$/.test(String(data['@type']))) return [];
+    const reference = textValue(data.orderNumber, 50);
+    if (!reference) return [];
+    const merchant = record(data.merchant) ? textValue(data.merchant.name) : textValue(data.merchant);
+    const value = typeof data.price === 'number' ? data.price : typeof data.price === 'string' && /^\d+(?:\.\d{1,2})?$/.test(data.price) ? Number(data.price) : undefined;
+    const amount = typeof value === 'number' && Number.isFinite(value) && value >= 0 && typeof data.priceCurrency === 'string' && /^[A-Z]{3}$/.test(data.priceCurrency)
+        ? { value, currency: data.priceCurrency } : undefined;
+    const offers = Array.isArray(data.acceptedOffer) ? data.acceptedOffer : record(data.acceptedOffer) ? [data.acceptedOffer] : [];
+    const items = offers.filter(record).flatMap(offer => {
+        const product = record(offer.itemOffered) ? offer.itemOffered : record(offer.itemOrdered) ? offer.itemOrdered : {};
+        const name = textValue(product.name); if (!name) return [];
+        const quantity = record(offer.eligibleQuantity) ? Number(offer.eligibleQuantity.value) : undefined;
+        return [{ name, quantity: quantity && Number.isInteger(quantity) && quantity > 0 && quantity <= 1000 ? quantity : undefined }];
+    }).slice(0, 10);
+    const statusName = String(data.orderStatus || '').split('/').pop();
+    const statuses: Record<string, string> = { OrderDelivered: 'Delivered', OrderCancelled: 'Cancelled', OrderInTransit: 'In transit', OrderProcessing: 'Processing', OrderReturned: 'Returned' };
+    return [{ ...entity, entityType: EntityType.OrderReference, value: reference, confidence: 0.95,
+        metadata: { commerceType: 'order', reference, merchant, amount, items, status: statusName ? statuses[statusName] : undefined } }];
 }
 
 function formatAmount(amount: unknown): string | null {
-    if (!isRecord(amount) || typeof amount.value !== 'number' || typeof amount.currency !== 'string') return null;
+    if (!isRecord(amount) || typeof amount.value !== 'number' || !Number.isFinite(amount.value) || amount.value < 0 || typeof amount.currency !== 'string' || !/^[A-Z]{3}$/.test(amount.currency)) return null;
     try {
         return new Intl.NumberFormat(undefined, {
             style: 'currency',

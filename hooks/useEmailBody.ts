@@ -1,6 +1,7 @@
 import { useAppPreferences } from "@/components/AppPreferencesContext";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { useState, useEffect, useRef, type RefObject } from "react";
+import { useState, useEffect, useRef, useCallback, type RefObject } from "react";
+import { useAuth } from "@/components/AuthContext";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -33,6 +34,7 @@ interface MessageDetail {
 
 export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, iframeRef: RefObject<HTMLIFrameElement | null>, onMarkAsRead?: (id: string) => void) {
     const { preferences } = useAppPreferences();
+    const { user } = useAuth();
     const [bodyContent, setBodyContent] = useState<string>("");
     const [attachments, setAttachments] = useState<Attachment[]>([]);
     const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
@@ -40,118 +42,78 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     const [iframeHeight, setIframeHeight] = useState<number>(400);
     const [error, setError] = useState<string | null>(null);
 
-    const fetchBody = async () => {
-        if (!emailUid) return;
-        setIsLoadingBody(true);
-        setError(null);
-        setIframeHeight(400); // Reset height on new email
-        try {
-            const dbFolder = folder || "inbox";
-            console.log("Fetching body for folder:", dbFolder, "uid:", emailUid, "original folder prop:", folder);
-            const detail: MessageDetail = await invoke('get_message_body', { folder: dbFolder, uid: emailUid });
-            setBodyContent(detail.body || "<p>Message has no content.</p>");
-            setAttachments(detail.attachments || []);
-            setExtractedData(detail.extractedData || null);
-        } catch (err) {
-            console.error("Failed to load message body:", err);
-            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                localStorage.removeItem("orion_user");
-                window.location.href = "/";
-                return;
-            }
-            setError(String(err));
-            setBodyContent("");
-            setAttachments([]);
-            setExtractedData(null);
-        } finally {
-            setIsLoadingBody(false);
-        }
-    };
+    const retryRef = useRef<() => Promise<void>>(async () => {});
+    const retry = useCallback(() => retryRef.current(), []);
 
-    // Fetch the email body content via IPC
     useEffect(() => {
-        let isMounted = true;
-        if (!emailId || emailUid === undefined) {
-            setBodyContent("");
-            setAttachments([]);
-            setExtractedData(null);
-            setError(null);
-            return;
-        }
+        let active = true;
+        let inFlight = false;
+        const dbFolder = folder
+            ? (folder.toLowerCase().startsWith('tag:') ? folder : folder.toLowerCase())
+            : "inbox";
 
-        const runFetch = async () => {
+        const load = async () => {
+            if (!active || inFlight || !user?.id || !emailId || emailUid === undefined) return;
+            inFlight = true;
             setIsLoadingBody(true);
             setError(null);
             setIframeHeight(400);
             try {
-                const dbFolder = folder || "inbox";
-                console.log("Fetching body for folder:", dbFolder, "uid:", emailUid, "original folder prop:", folder);
-                const detail: MessageDetail = await invoke('get_message_body', { folder: dbFolder, uid: emailUid });
-                if (isMounted) {
-                    setBodyContent(detail.body || "<p>Message has no content.</p>");
-                    setAttachments(detail.attachments || []);
-                    setExtractedData(detail.extractedData || null);
-                }
+                // This command already waits for an in-progress backend prefetch.
+                // Re-fetching on body_cached used to duplicate IPC and reset the reader.
+                const detail = await invoke<MessageDetail>('get_message_body', { folder: dbFolder, uid: emailUid });
+                if (!active) return;
+                setBodyContent(detail.body || "<p>Message has no content.</p>");
+                setAttachments(detail.attachments || []);
+                setExtractedData(detail.extractedData || null);
             } catch (err) {
+                if (!active) return;
                 console.error("Failed to load message body:", err);
                 if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
                     localStorage.removeItem("orion_user");
                     window.location.href = "/";
                     return;
                 }
-                if (isMounted) {
-                    setError(String(err));
-                    setBodyContent("");
-                    setAttachments([]);
-                    setExtractedData(null);
-                }
+                setError(String(err));
+                setBodyContent("");
+                setAttachments([]);
+                setExtractedData(null);
             } finally {
-                if (isMounted) {
-                    setIsLoadingBody(false);
-                }
+                inFlight = false;
+                if (active) setIsLoadingBody(false);
             }
         };
+        retryRef.current = load;
+        setBodyContent("");
+        setAttachments([]);
+        setExtractedData(null);
+        setError(null);
+        setIsLoadingBody(false);
+        void load();
 
-        runFetch();
-
-        // Listen for background prefetch completion
-        const unlisten = listen('mail:body_cached', (event) => {
-            const payload = event.payload as { folder: string; uid: number };
-            const dbFolder = folder ? (folder.toLowerCase().startsWith('tag:') ? folder : folder.toLowerCase()) : "inbox";
-            if (payload.folder === dbFolder && payload.uid === emailUid) {
-                fetchBody();
+        const unlistenExtracted = listen<{
+            accountId: string; folder: string; uid: number; extractedData: ExtractedData;
+        }>('mail:re_extracted', ({ payload }) => {
+            if (active && payload.accountId === user?.id && payload.folder === dbFolder && payload.uid === emailUid) {
+                setExtractedData(payload.extractedData);
             }
         });
-
-        const unlistenExtracted = listen('mail:re_extracted', (event) => {
-            const payload = event.payload as { folder: string; uid: number; extractedData: ExtractedData };
-            const dbFolder = folder === "sent" ? "sent" : "inbox";
-            if (payload.folder === dbFolder && payload.uid === emailUid) {
-                if (isMounted) {
-                    setExtractedData(payload.extractedData);
-                }
-            }
-        });
-
-        // Listen for dev tools simulate error event
-        const handleSimulateError = (e: Event) => {
-            const customEvent = e as CustomEvent;
-            if (isMounted && customEvent.detail) {
-                setError(customEvent.detail);
+        const handleSimulateError = (event: Event) => {
+            const detail = (event as CustomEvent).detail;
+            if (active && detail) {
+                setError(detail);
                 setBodyContent("");
                 setAttachments([]);
                 setExtractedData(null);
             }
         };
         window.addEventListener("orion:simulate_error", handleSimulateError);
-
         return () => {
-            isMounted = false;
-            unlisten.then(f => f());
-            unlistenExtracted.then(f => f());
+            active = false;
+            void unlistenExtracted.then(unlisten => unlisten()).catch(console.error);
             window.removeEventListener("orion:simulate_error", handleSimulateError);
         };
-    }, [emailId, emailUid, folder]);
+    }, [emailId, emailUid, folder, user?.id]);
 
     const readCallback = useRef(onMarkAsRead);
     const unreadRef = useRef(emailUnread);
@@ -189,5 +151,5 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         return () => window.removeEventListener('message', handleMessage);
     }, [emailId, iframeRef, preferences.confirmExternalLinks]);
 
-    return { bodyContent, attachments, extractedData, isLoadingBody, iframeHeight, error, retry: fetchBody };
+    return { bodyContent, attachments, extractedData, isLoadingBody, iframeHeight, error, retry };
 }

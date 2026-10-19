@@ -34,7 +34,7 @@ export function useVirtualEmailList({
         count: itemCount,
         getScrollElement: () => parentRef.current,
         estimateSize: () => 100,
-        overscan: 10,
+        overscan: 4,
         getItemKey,
     });
 
@@ -44,7 +44,10 @@ export function useVirtualEmailList({
     useEffect(() => {
         if (!onLoadMore || !hasMore || isLoadingMore || loadingRef.current) return;
 
-        const lastItem = virtualItems[virtualItems.length - 1];
+        // Use the actual viewport, not overscan rows, to request another page.
+        const viewportEnd = (rowVirtualizer.scrollOffset ?? 0)
+            + (rowVirtualizer.scrollRect?.height ?? 0);
+        const lastItem = virtualItems.findLast(item => item.start < viewportEnd);
         if (!lastItem) return;
 
         if (lastItem.index >= itemCount - 5) {
@@ -54,7 +57,7 @@ export function useVirtualEmailList({
                 loadingRef.current = false;
             }, 500);
         }
-    }, [virtualItems, hasMore, isLoadingMore, itemCount, onLoadMore]);
+    }, [virtualItems, hasMore, isLoadingMore, itemCount, onLoadMore, rowVirtualizer]);
 
     return {
         parentRef,

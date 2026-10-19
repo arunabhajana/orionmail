@@ -44,6 +44,7 @@ mailparse = "0.16.1"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 once_cell = "1.21.3"
 regex = "1.12.3"
+kuchikiki = "=0.8.8-speedreader"
 futures = "0.3"
 imap-proto = "0.10.2"
 dashmap = "6.1.0"
@@ -78,6 +79,30 @@ features = [
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.55"
 windows-core = "0.58"
+webview2-com = "=0.38.2"
+windows-core-webview = { package = "windows-core", version = "0.61" }
 
 [patch.crates-io]
 imap = { path = "vendor/imap" }
+
+# Keep local builds within a modest disk budget. Retain app line information
+# and debug checks, but avoid large dependency PDBs and incremental snapshots.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.dev.package."*"]
+debug = 0
+
+# Keep CPU-intensive mail matching optimized during `tauri dev` as well.
+[profile.dev.package.regex]
+opt-level = 2
+debug = 0
+
+[profile.dev.package.regex-automata]
+opt-level = 2
+debug = 0
+
+[profile.dev.package.regex-syntax]
+opt-level = 2
+debug = 0

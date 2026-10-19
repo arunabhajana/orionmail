@@ -4,6 +4,8 @@ mod mail;
 mod contacts;
 mod config;
 mod mail_preferences;
+mod window_activity;
+mod performance;
 pub mod tray_state;
 
 use crate::commands::auth_commands::*;
@@ -70,6 +72,7 @@ pub fn run() {
                           window.show().unwrap();
                           window.unminimize().unwrap();
                           window.set_focus().unwrap();
+                          window_activity::refresh(&window);
                       }
                   }
                   "compose" => {
@@ -78,6 +81,7 @@ pub fn run() {
                           window.unminimize().unwrap();
                           window.set_focus().unwrap();
                           window.emit("tray:compose", ()).ok();
+                          window_activity::refresh(&window);
                       }
                   }
                   "sync" => {
@@ -96,6 +100,7 @@ pub fn run() {
                           window.unminimize().unwrap();
                           window.set_focus().unwrap();
                       }
+                      window_activity::refresh(&window);
                   }
               }
           })
@@ -118,6 +123,7 @@ pub fn run() {
           } else {
               window.show().unwrap();
           }
+          window_activity::refresh(&window);
 
           window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -127,11 +133,15 @@ pub fn run() {
                   log::info!("Window close intercepted. Hiding window to run in background.");
                   api.prevent_close();
                   window_clone.hide().unwrap();
+                  window_activity::refresh(&window_clone);
                   window_clone.emit("window:hidden", ()).ok();
               } else {
                   log::info!("App closing permanently.");
                   crate::mail::shutdown::trigger_shutdown();
               }
+            }
+            if matches!(event, tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)) {
+                window_activity::refresh(&window_clone);
             }
           });
         }
@@ -189,7 +199,12 @@ pub fn run() {
 
       })?;
       #[cfg(not(target_os = "windows"))]
-      if let Some(window) = app.get_webview_window("main") { let _ = window.show(); }
+      if let Some(window) = app.get_webview_window("main") {
+          let _ = window.show();
+          window_activity::refresh(&window);
+          let observed = window.clone();
+          window.on_window_event(move |_| window_activity::refresh(&observed));
+      }
 
 
       Ok(())

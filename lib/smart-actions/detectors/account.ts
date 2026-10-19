@@ -1,62 +1,24 @@
-import {
-    DetectorContext,
-    SmartAction,
-    SmartActionKind,
-    SmartActionPriority,
-    SmartActionCommand,
-    TrustLevel,
-    DetectorSource,
-} from '../types';
-import { Detector } from '../engine';
+import { SmartActionKind, SmartActionPriority, SmartActionCommand, TrustLevel, DetectorSource, EntityType } from '../types';
+import type { Detector } from '../engine';
+import { safeUrl } from '../safety';
 
 export const AccountActionDetector: Detector = {
     id: 'account',
-    detect: (ctx: DetectorContext): SmartAction[] => {
-        const actions: SmartAction[] = [];
-        const subj = ctx.subject.toLowerCase();
-        
-        let isSecurity = false;
-        let command = SmartActionCommand.OpenLink;
-        let title = 'Account Action';
-        
-        if (subj.includes('verify') && subj.includes('email')) {
-            isSecurity = true;
-            command = SmartActionCommand.VerifyAccount;
-            title = 'Verify Your Email';
-        } else if (subj.includes('reset') && subj.includes('password')) {
-            isSecurity = true;
-            command = SmartActionCommand.ResetPassword;
-            title = 'Password Reset Requested';
-        } else if (subj.includes('new sign-in') || subj.includes('new login')) {
-            isSecurity = true;
-            title = 'New Sign-in Detected';
-        }
-        
-        if (isSecurity) {
-            // Find a primary link to act on
-            const primaryLink = ctx.extractedData.entities.find(e => e.entityType === 'Link' && e.confidence > 0.8);
-            
-            actions.push({
-                id: `action_account_${ctx.extractedData.extractedAt}`,
-                kind: SmartActionKind.SECURITY,
-                priority: SmartActionPriority.High,
-                trustLevel: TrustLevel.Unverified, // Validator might upgrade it
-                detectorSource: DetectorSource.RuleBased,
-                title,
-                subtitle: 'Please review this security event.',
-                confidence: 0.9,
-                timestamp: Date.now(),
-                actions: [
-                    {
-                        label: 'Review Activity',
-                        command,
-                        data: { url: primaryLink?.value || '' },
-                        primary: true
-                    }
-                ]
-            });
-        }
-        
-        return actions;
-    }
+    detect: ctx => {
+        const reset = /\breset\b.*\bpassword\b|\bpassword reset\b/i.test(ctx.subject);
+        const verify = /\bverify\b.*\b(?:email|account)\b|\b(?:email|account) verification\b/i.test(ctx.subject);
+        const signin = /\bnew (?:sign-in|login)\b/i.test(ctx.subject) && !/\bcode\b/i.test(ctx.subject);
+        if (!reset && !verify && !signin) return [];
+        const purpose = reset ? /reset.*password|change.*password/i : verify ? /verify.*(?:email|account)|confirm.*(?:email|account)/i : /review.*(?:activity|sign-in)|secure.*account/i;
+        const matches = ctx.extractedData.entities.filter(entity => entity.entityType === EntityType.Link
+            && safeUrl(entity.value) && purpose.test(String(entity.metadata.label || '')));
+        const link = matches.length === 1 ? matches[0].value : undefined;
+        const command = reset ? SmartActionCommand.ResetPassword : verify ? SmartActionCommand.VerifyAccount : SmartActionCommand.OpenLink;
+        return [{ id: 'account:review', kind: SmartActionKind.SECURITY, priority: SmartActionPriority.High,
+            trustLevel: TrustLevel.Unverified, detectorSource: DetectorSource.RuleBased,
+            title: reset ? 'Password reset' : verify ? 'Email verification' : 'New sign-in',
+            subtitle: 'Check the sender before following account links.', confidence: 0.9, timestamp: ctx.receivedAt,
+            actions: link ? [{ label: reset ? 'Reset password' : verify ? 'Verify email' : 'Review activity', command, data: { url: link } }] : [],
+        }];
+    },
 };

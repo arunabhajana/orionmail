@@ -1,4 +1,4 @@
-use regex::Regex;
+use crate::mail::patterns::regex as cached_regex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -83,13 +83,12 @@ const PROVIDERS: &[Provider] = &[
 
 pub fn detect_provider(headers_and_text: &str, body_text: &str) -> Option<ProviderDetection> {
     detect_from_sender_headers(headers_and_text)
-        .or_else(|| detect_from_text(headers_and_text, 0.75, true))
         .or_else(|| detect_from_text(body_text, 0.60, false))
 }
 
 fn detect_from_sender_headers(text: &str) -> Option<ProviderDetection> {
-    let header_block = text.lines().take(80).collect::<Vec<_>>().join("\n");
-    let Ok(email_re) = Regex::new(
+    let header_block = text.split("\n\n").next().unwrap_or("").lines().take(30).collect::<Vec<_>>().join("\n");
+    let Ok(email_re) = cached_regex(
         r"(?im)^(from|sender|reply-to|return-path)\s*:\s*.*?([A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,}))",
     ) else {
         return None;

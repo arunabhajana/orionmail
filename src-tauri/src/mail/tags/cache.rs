@@ -16,7 +16,7 @@ fn copies(
     uid: u32,
     validity: u32,
 ) -> Result<Vec<CopyKey>, String> {
-    let identity = tx.query_row("SELECT message_id,date,sender,subject,uid_validity FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3", params![account,folder,uid], |r| {
+    let identity = tx.prepare_cached("SELECT message_id,date,sender,subject,uid_validity FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3").map_err(|e| e.to_string())?.query_row(params![account,folder,uid], |r| {
         Ok((r.get::<_, Option<String>>(0)?,r.get::<_, i64>(1)?,r.get::<_, String>(2)?,r.get::<_, String>(3)?,r.get::<_, u32>(4)?))
     }).optional().map_err(|e| e.to_string())?;
     let Some((id, date, sender, subject, epoch)) = identity else {
@@ -25,7 +25,10 @@ fn copies(
     if epoch != validity {
         return Err("Mailbox identity changed while updating tags".into());
     }
-    let mut stmt = tx.prepare("SELECT folder,uid FROM messages WHERE account_id=?1 AND ((folder=?2 AND uid=?3) OR (NULLIF(message_id,'')=?4 AND date=?5 AND sender=?6 AND subject=?7))").map_err(|e| e.to_string())?;
+    // Separate indexed lookups avoid scanning every row in this account for
+    // each message in a label refresh. UNION preserves copy deduplication.
+    let mut stmt = tx.prepare_cached("SELECT folder,uid FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3
+        UNION SELECT folder,uid FROM messages WHERE account_id=?1 AND message_id=?4 AND ?4!='' AND date=?5 AND sender=?6 AND subject=?7").map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(
             params![account, folder, uid, id, date, sender, subject],
@@ -43,7 +46,7 @@ fn copies(
 
 fn tags(tx: &Transaction<'_>, account: &str, key: &CopyKey) -> Result<BTreeSet<String>, String> {
     let mut stmt = tx
-        .prepare(
+        .prepare_cached(
             "SELECT tag_id FROM message_tags WHERE account_id=?1 AND folder=?2 AND message_uid=?3",
         )
         .map_err(|e| e.to_string())?;
@@ -64,10 +67,10 @@ fn write_delta(
     let mut changed = 0;
     for key in keys {
         for id in removed {
-            changed+=tx.execute("DELETE FROM message_tags WHERE account_id=?1 AND folder=?2 AND message_uid=?3 AND tag_id=?4",params![account,key.folder,key.uid,id]).map_err(|e|e.to_string())?;
+            changed+=database::execute_cached(&tx, "DELETE FROM message_tags WHERE account_id=?1 AND folder=?2 AND message_uid=?3 AND tag_id=?4",params![account,key.folder,key.uid,id]).map_err(|e|e.to_string())?;
         }
         for id in added {
-            changed+=tx.execute("INSERT OR IGNORE INTO message_tags(account_id,folder,message_uid,tag_id) VALUES(?1,?2,?3,?4)",params![account,key.folder,key.uid,id]).map_err(|e|e.to_string())?;
+            changed+=database::execute_cached(&tx, "INSERT OR IGNORE INTO message_tags(account_id,folder,message_uid,tag_id) VALUES(?1,?2,?3,?4)",params![account,key.folder,key.uid,id]).map_err(|e|e.to_string())?;
         }
         if key
             .folder
@@ -114,7 +117,7 @@ fn apply_delta_conn(
     removed: &[String],
 ) -> Result<Vec<String>, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let updated=tx.execute("UPDATE messages SET message_id=COALESCE(?4,message_id) WHERE account_id=?1 AND folder=?2 AND uid=?3 AND uid_validity=?5",params![account,folder,uid,message_id,validity]).map_err(|e|e.to_string())?;
+    let updated=database::execute_cached(&tx, "UPDATE messages SET message_id=COALESCE(?4,message_id) WHERE account_id=?1 AND folder=?2 AND uid=?3 AND uid_validity=?5",params![account,folder,uid,message_id,validity]).map_err(|e|e.to_string())?;
     if updated != 1 {
         return Err("Message changed while saving tags. Refresh and retry.".into());
     }
@@ -159,10 +162,10 @@ pub fn apply_metadata(
     let mut changed = 0;
     for (uid, id, seen, starred) in metadata {
         if let Some(id) = id {
-            changed+=tx.execute("UPDATE messages SET message_id=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3 AND uid_validity=?5 AND (message_id IS NULL OR message_id='')",params![account,folder,uid,id,validity]).map_err(|e|e.to_string())?;
+            changed+=database::execute_cached(&tx, "UPDATE messages SET message_id=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3 AND uid_validity=?5 AND (message_id IS NULL OR message_id='')",params![account,folder,uid,id,validity]).map_err(|e|e.to_string())?;
         }
         for key in copies(&tx, account, folder, *uid, validity)? {
-            changed+=tx.execute("UPDATE messages SET seen=?4,flagged=?5 WHERE account_id=?1 AND folder=?2 AND uid=?3 AND (seen!=?4 OR flagged!=?5) AND NOT EXISTS(SELECT 1 FROM pending_message_actions p WHERE p.account_id=?1 AND p.folder=?2 AND p.uid=?3 AND p.action IN('seen','flagged') AND (p.last_error IS NULL OR p.last_error NOT LIKE 'CONFLICT:%'))",params![account,key.folder,key.uid,seen,starred]).map_err(|e|e.to_string())?;
+            changed+=database::execute_cached(&tx, "UPDATE messages SET seen=?4,flagged=?5 WHERE account_id=?1 AND folder=?2 AND uid=?3 AND (seen!=?4 OR flagged!=?5) AND NOT EXISTS(SELECT 1 FROM pending_message_actions p WHERE p.account_id=?1 AND p.folder=?2 AND p.uid=?3 AND p.action IN('seen','flagged') AND (p.last_error IS NULL OR p.last_error NOT LIKE 'CONFLICT:%'))",params![account,key.folder,key.uid,seen,starred]).map_err(|e|e.to_string())?;
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
@@ -202,10 +205,10 @@ fn apply_message_action_conn(
             _ => return Err("Unknown message action".into()),
         };
         if action == "delete" {
-            tx.execute(sql, params![account, key.folder, key.uid])
+            database::execute_cached(&tx, sql, params![account, key.folder, key.uid])
                 .map_err(|e| e.to_string())?;
         } else {
-            tx.execute(
+            database::execute_cached(&tx,
                 sql,
                 params![
                     account,
@@ -233,7 +236,7 @@ pub(crate) fn supersede_flags_in_tx(
         return Ok(());
     }
     for key in copies(tx, account, folder, uid, validity)? {
-        tx.execute("DELETE FROM pending_message_actions WHERE account_id=?1 AND folder=?2 AND uid=?3 AND action=?4",params![account,key.folder,key.uid,action]).map_err(|e|e.to_string())?;
+        database::execute_cached(&tx, "DELETE FROM pending_message_actions WHERE account_id=?1 AND folder=?2 AND uid=?3 AND action=?4",params![account,key.folder,key.uid,action]).map_err(|e|e.to_string())?;
     }
     Ok(())
 }
@@ -246,6 +249,7 @@ fn apply_snapshot_conn(
     batch: &[(u32, Vec<String>)],
     missing: &[u32],
 ) -> Result<bool, String> {
+    let _work = crate::performance::WorkSpan::new("label snapshot commit");
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let user_ids: BTreeSet<String> = {
         let mut stmt = tx
@@ -289,7 +293,7 @@ fn apply_snapshot_conn(
         if let Some(own) = folder.strip_prefix("tag:") {
             changed |= write_delta(&tx, account, &keys, &[], &[own.into()])?;
         }
-        changed|=tx.execute("DELETE FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3 AND uid_validity=?4",params![account,folder,uid,validity]).map_err(|e|e.to_string())?>0;
+        changed|=database::execute_cached(&tx, "DELETE FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3 AND uid_validity=?4",params![account,folder,uid,validity]).map_err(|e|e.to_string())?>0;
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(changed)

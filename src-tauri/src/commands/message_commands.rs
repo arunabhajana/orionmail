@@ -61,26 +61,8 @@ pub async fn get_messages_page(
     .await
     .map_err(|e| e.to_string())??;
 
-    if folder == "inbox" {
-        if let Ok(account) = crate::auth::bootstrap::ensure_active_account(&app_handle).await {
-            let uids_to_prefetch = pages.iter().take(8).map(|m| m.uid).collect::<Vec<_>>();
-            let app_handle_pf = app_handle.clone();
-            
-            // Fire-and-forget background prefetch enqueue
-            tokio::spawn(async move {
-                for uid in uids_to_prefetch {
-                    crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
-                        app_handle_pf.clone(),
-                        account.clone(),
-                        "inbox".to_string(),
-                        uid,
-                        crate::mail::body_prefetch_manager::PrefetchPriority::Background,
-                        None,
-                    ).await;
-                }
-            });
-        }
-    }
+    // The settled viewport requests speculative bodies. Loading a page should
+    // not download bodies the user may scroll straight past.
 
     Ok(pages)
 }
@@ -90,12 +72,13 @@ pub async fn prefetch_messages(
     app_handle: tauri::AppHandle,
     requests: Vec<crate::mail::body_prefetch_manager::BodyKey>,
 ) -> Result<(), String> {
+    if !crate::window_activity::is_displayed() { return Ok(()); }
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
     // Clear old background queue before queueing the new viewport items
     crate::mail::body_prefetch_manager::PREFETCH_MANAGER.clear_background_queue().await;
 
-    for request in requests {
+    for request in requests.into_iter().take(12) {
         crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
             app_handle.clone(),
             account.clone(),

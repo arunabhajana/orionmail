@@ -3,6 +3,7 @@ use tauri::AppHandle;
 use std::sync::Mutex;
 use chrono::Timelike;
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
+static CACHE: once_cell::sync::OnceCell<std::sync::RwLock<MailPreferences>> = once_cell::sync::OnceCell::new();
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct MailPreferences {
@@ -46,8 +47,12 @@ impl MailPreferences {
 }
 fn path(app: &AppHandle) -> std::path::PathBuf { crate::config::get_config_path(app).with_file_name("mail-preferences.json") }
 pub fn load(app: &AppHandle) -> MailPreferences {
-    std::fs::read(path(app)).ok().and_then(|bytes| serde_json::from_slice::<MailPreferences>(&bytes).ok())
-        .filter(|prefs| prefs.validate().is_ok()).unwrap_or_default()
+    CACHE.get_or_init(|| {
+        let preferences = std::fs::read(path(app)).ok()
+            .and_then(|bytes| serde_json::from_slice::<MailPreferences>(&bytes).ok())
+            .filter(|prefs| prefs.validate().is_ok()).unwrap_or_default();
+        std::sync::RwLock::new(preferences)
+    }).read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
 }
 #[tauri::command]
 pub fn get_mail_preferences(app_handle: AppHandle) -> MailPreferences { load(&app_handle) }
@@ -62,6 +67,10 @@ pub fn set_mail_preferences(app_handle: AppHandle, preferences: MailPreferences)
     let bytes = serde_json::to_vec(&preferences).map_err(|e| e.to_string())?;
     std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
     std::fs::rename(temp, path).map_err(|e| e.to_string())?;
+    // Publish only after the atomic file replacement succeeds. Every worker
+    // observes an in-app preference change without reopening JSON per job.
+    let cache = CACHE.get_or_init(|| std::sync::RwLock::new(preferences.clone()));
+    *cache.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = preferences;
     crate::mail::notifications::refresh_policy(&app_handle);
     Ok(())
 }

@@ -2,7 +2,7 @@ use super::{ExtractedEntity, EntityType, Provenance, ExtractionSource};
 
 pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
     let mut entities = Vec::new();
-    if let Some(start) = text.find("BEGIN:VCALENDAR") {
+    for (start, _) in text.match_indices("BEGIN:VCALENDAR").take(4) {
         if let Some(end) = text[start..].find("END:VCALENDAR") {
             let vcal = &text[start..start+end+"END:VCALENDAR".len()];
             entities.push(ExtractedEntity {
@@ -15,7 +15,7 @@ pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
                     source: ExtractionSource::Calendar,
                     extractor: "calendar.rs".to_string(),
                 },
-                evidence: Some(vcal.to_string()),
+                evidence: Some("Calendar invitation".into()),
                 metadata: serde_json::json!({ "vcalendar": vcal }),
             });
         }

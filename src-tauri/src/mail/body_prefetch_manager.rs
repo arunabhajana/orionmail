@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify, oneshot};
 use once_cell::sync::Lazy;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use crate::auth::account::Account;
 use crate::mail::database;
 use crate::mail::message_body::{self, MessageDetail};
@@ -66,18 +66,15 @@ impl BodyPrefetchManager {
         responder: Option<oneshot::Sender<Result<MessageDetail, String>>>,
     ) {
         if priority == PrefetchPriority::Background {
+            if !crate::window_activity::is_displayed() { return; }
             let prefs = crate::mail_preferences::load(&app_handle);
             if !prefs.prefetch_bodies || prefs.sync_paused { return; }
         }
         let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
         let key = BodyKey { account_id: account.id.clone(), folder, uid };
         
-        // Skip background duplicates if cached
-        if priority == PrefetchPriority::Background {
-            if database::has_message_body_cache(&app_handle, &key.account_id, &key.folder, key.uid).unwrap_or(false) {
-                return;
-            }
-        }
+        // The worker checks SQLite off the async executor. Enqueuing every
+        // visible row must not perform synchronous filesystem/database work.
 
         let mut state = self.state.lock().await;
 
@@ -181,9 +178,18 @@ impl BodyPrefetchManager {
         
         tokio::spawn(async move {
             loop {
+                let allow_background = crate::window_activity::is_displayed() && {
+                    let prefs = crate::mail_preferences::load(&app_handle);
+                    prefs.prefetch_bodies && !prefs.sync_paused
+                };
                 let req_opt = {
                     let mut state = manager.state.lock().await;
-                    if let Some(job) = state.immediate_queue.pop_front() {
+                    if !allow_background {
+                        while let Some(job) = state.background_queue.pop_front() {
+                            if !job.responders.is_empty() { state.immediate_queue.push_back(job); }
+                        }
+                    }
+                    let next = if let Some(job) = state.immediate_queue.pop_front() {
                         Some((job, PrefetchPriority::Immediate))
                     } else if let Some(job) = state.search_queue.pop_front() {
                         Some((job, PrefetchPriority::Search))
@@ -191,7 +197,13 @@ impl BodyPrefetchManager {
                         Some((job, PrefetchPriority::Background))
                     } else {
                         None
-                    }
+                    };
+                    // Register in-progress under the same lock as dequeue, so
+                    // a foreground open cannot enqueue a duplicate in between.
+                    next.map(|(mut job, priority)| {
+                        state.in_progress.insert(job.key.clone(), std::mem::take(&mut job.responders));
+                        (job, priority)
+                    })
                 };
 
                 let (job, priority) = match req_opt {
@@ -204,18 +216,6 @@ impl BodyPrefetchManager {
                     }
                 };
 
-                {
-                    let mut state = manager.state.lock().await;
-                    state.in_progress.insert(job.key.clone(), job.responders);
-                }
-
-                if priority == PrefetchPriority::Background {
-                    let prefs = crate::mail_preferences::load(&app_handle);
-                    if !prefs.prefetch_bodies || prefs.sync_paused {
-                        manager.state.lock().await.in_progress.remove(&job.key);
-                        continue;
-                    }
-                }
                 // If background fetch, strictly reserve 1 permit for UI fast-paths
                 if priority == PrefetchPriority::Background && message_body::CONCURRENT_FETCH_LIMIT.available_permits() <= 1 {
                     // Re-enqueue and yield to avoid starving user
@@ -223,7 +223,12 @@ impl BodyPrefetchManager {
                     let mut state = manager.state.lock().await;
                     let key = job.key.clone();
                     let responders = state.in_progress.remove(&key).unwrap_or_default();
-                    state.background_queue.push_front(FetchJob { key: key.clone(), account: job.account, responders });
+                    let deferred = FetchJob { key, account: job.account, responders };
+                    if deferred.responders.is_empty() {
+                        state.background_queue.push_front(deferred);
+                    } else {
+                        state.immediate_queue.push_front(deferred);
+                    }
                     drop(state);
                     tokio::select! {
                         _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => continue,
@@ -234,10 +239,11 @@ impl BodyPrefetchManager {
                 let account = job.account.clone();
 
                 // Double check cache in worker
-                let mut should_fetch = true;
-                if database::has_message_body_cache(&app_handle, &job.key.account_id, &job.key.folder, job.key.uid).unwrap_or(false) {
-                    should_fetch = false;
-                }
+                let cache_app = app_handle.clone();
+                let cache_key = job.key.clone();
+                let should_fetch = priority == PrefetchPriority::Immediate || !tokio::task::spawn_blocking(move || {
+                    database::has_message_body_cache(&cache_app, &cache_key.account_id, &cache_key.folder, cache_key.uid).unwrap_or(false)
+                }).await.unwrap_or(false);
 
                 let mut fetch_res: Result<MessageDetail, String> = Err("Not fetched".to_string());
                 if should_fetch {
@@ -255,8 +261,9 @@ impl BodyPrefetchManager {
 
                 // Reply to oneshot waiters inline
                 // Try to read from cache regardless of fetch_res (it may already have been cached)
-                if priority == PrefetchPriority::Search && should_fetch {
-                    // Search downloads headers only; a body-cache entry is not expected.
+                if should_fetch {
+                    // The fetch already returns the decoded detail. Avoid a
+                    // second SQLite body read and attachment JSON parse.
                     for tx in responders {
                         let _ = tx.send(fetch_res.clone());
                     }
@@ -264,7 +271,12 @@ impl BodyPrefetchManager {
                     // Background jobs have no UI waiter. Do not load and parse
                     // the entire cached body a second time just to discard it.
                 } else if fetch_res.is_ok() || !should_fetch {
-                    if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle, &job.key.account_id, &job.key.folder, job.key.uid) {
+                    let cache_app = app_handle.clone();
+                    let cache_key = job.key.clone();
+                    let cached = tokio::task::spawn_blocking(move || {
+                        database::get_message_body_cache(&cache_app, &cache_key.account_id, &cache_key.folder, cache_key.uid)
+                    }).await;
+                    if let Ok(Ok(Some((cached_body, attachments_json, extracted_data_json)))) = cached {
                         let attachments = if let Some(json) = attachments_json {
                             serde_json::from_str(&json).unwrap_or_default()
                         } else {
@@ -289,20 +301,17 @@ impl BodyPrefetchManager {
                     }
                 }
 
-                if fetch_res.is_ok() {
-                    // Emit event for frontend
-                    #[derive(serde::Serialize, Clone)]
-                    struct BodyCachedPayload {
-                        folder: String,
-                        uid: u32,
+                // Selected mail already receives its result through the oneshot
+                // responder. No renderer broadcast is needed for each body.
+                // Space speculative processing out; a newly queued foreground
+                // request wakes the worker without waiting for this interval.
+                if priority == PrefetchPriority::Background && should_fetch {
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => {},
+                        _ = manager.notify.notified() => {},
+                        _ = PREFETCH_TOKEN.cancelled() => break,
                     }
-                    let _ = app_handle.emit("mail:body_cached", BodyCachedPayload {
-                        folder: job.key.folder.clone(),
-                        uid: job.key.uid,
-                    });
                 }
-
-                // State was already cleaned up
             }
             log::info!("Prefetch worker gracefully shut down");
         });
@@ -310,6 +319,8 @@ impl BodyPrefetchManager {
     
     pub async fn clear_background_queue(&self) {
         let mut state = self.state.lock().await;
-        state.background_queue.clear();
+        while let Some(job) = state.background_queue.pop_front() {
+            if !job.responders.is_empty() { state.immediate_queue.push_back(job); }
+        }
     }
 }

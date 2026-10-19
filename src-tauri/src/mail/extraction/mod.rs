@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use regex::Regex;
 
 pub mod schema_org;
 pub mod calendar;
@@ -10,41 +9,9 @@ pub mod invoice;
 pub mod account;
 pub mod provider_registry;
 pub mod commerce;
+pub(crate) mod content;
 
-pub const CURRENT_EXTRACTOR_VERSION: u32 = 11;
-
-/// Strip HTML tags and decode common entities to get clean visible text.
-/// Shared utility for all extractors so they don't match against CSS/HTML artifacts.
-pub fn strip_html(input: &str) -> String {
-    // Remove <style> and <script> blocks entirely
-    let re_style = Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
-    let re_script = Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
-    let cleaned = re_style.replace_all(input, " ");
-    let cleaned = re_script.replace_all(&cleaned, " ");
-
-    // Replace block-level tags with spaces to preserve word boundaries
-    let re_block = Regex::new(r"(?i)<(?:br|p|div|tr|td|li|h[1-6])[^>]*/?>|</(?:p|div|tr|td|li|h[1-6])>").unwrap();
-    let cleaned = re_block.replace_all(&cleaned, " ");
-
-    // Remove all remaining HTML tags
-    let re_tags = Regex::new(r"<[^>]+>").unwrap();
-    let cleaned = re_tags.replace_all(&cleaned, "");
-
-    // Decode common HTML entities
-    let cleaned = cleaned
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-        .replace("&nbsp;", " ")
-        .replace("&#160;", " ");
-
-    // Collapse whitespace (including zero-width chars) into single spaces
-    let re_ws = Regex::new(r"[\s\u{200b}\u{200c}\u{200d}\u{feff}]+").unwrap();
-    re_ws.replace_all(&cleaned, " ").trim().to_string()
-}
+pub const CURRENT_EXTRACTOR_VERSION: u32 = 12;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ExtractionSource {
@@ -96,7 +63,8 @@ pub struct ExtractedData {
     pub entities: Vec<ExtractedEntity>,
 }
 
-pub fn run_extraction_pipeline(html: &str, text: &str) -> ExtractedData {
+pub fn run_with_context(html: &str, text: &str, subject: &str, sender: &str) -> ExtractedData {
+    let _work = crate::performance::WorkSpan::new("smart-action extraction");
     let mut entities = Vec::new();
 
     let now = std::time::SystemTime::now()
@@ -106,17 +74,18 @@ pub fn run_extraction_pipeline(html: &str, text: &str) -> ExtractedData {
 
     // Pre-compute clean visible text for extractors that need it.
     // This strips HTML/CSS so extractors don't match against invisible markup.
-    let clean_text = strip_html(html);
-    let clean_raw = strip_html(text);
-    // Use whichever has more visible content
-    let best_clean = if clean_text.len() >= clean_raw.len() { &clean_text } else { &clean_raw };
+    let content = content::parse(html);
+    // Body text has already been decoded by MIME processing. HTML wins when
+    // present; raw MIME, CSS and encoded attachments never feed OTP matching.
+    let best_clean = content.text.as_str();
+    let envelope = format!("From: {}\nSubject: {}\n\n{}", sender.replace(['\r','\n'], " "), subject.replace(['\r','\n'], " "), best_clean);
 
     entities.extend(schema_org::extract(html, text));
     entities.extend(calendar::extract(html, text));
-    entities.extend(links::extract(html, best_clean));
-    entities.extend(otp::extract(html, text));
+    entities.extend(links::from_content(&content));
+    entities.extend(otp::extract_visible(best_clean, subject));
     entities.extend(tracking::extract(html, best_clean));
-    entities.extend(commerce::extract(html, text));
+    entities.extend(commerce::extract_visible(best_clean, &envelope));
     entities.extend(invoice::extract(html, best_clean));
     entities.extend(account::extract(html, best_clean));
 

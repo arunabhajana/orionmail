@@ -16,6 +16,7 @@ pub mod smtp_client;
 pub mod folder;
 pub mod sync_manager;
 pub mod extraction;
+pub(crate) mod patterns;
 pub mod shutdown;
 pub mod search;
 pub mod tags;

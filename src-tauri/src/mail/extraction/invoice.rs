@@ -1,10 +1,10 @@
 use super::{ExtractedEntity, EntityType, Provenance, ExtractionSource};
-use regex::Regex;
+use crate::mail::patterns::regex as cached_regex;
 
 pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
     let mut entities = Vec::new();
     
-    if let Ok(re) = Regex::new(r"(?i)\b(?:invoice|receipt|order)(?:\s+(?:no|number|#))?\s*:?-?\s*([A-Z0-9-]{4,15})\b") {
+    if let Ok(re) = cached_regex(r"(?i)\b(?:invoice|receipt|order)(?:\s+(?:no|number|#))?\s*:?-?\s*([A-Z0-9-]{4,15})\b") {
         for (i, cap) in re.captures_iter(text).enumerate() {
             if let Some(m) = cap.get(1) {
                 entities.push(ExtractedEntity {
