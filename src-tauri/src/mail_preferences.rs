@@ -61,5 +61,7 @@ pub fn set_mail_preferences(app_handle: AppHandle, preferences: MailPreferences)
     let temp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec(&preferences).map_err(|e| e.to_string())?;
     std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
-    std::fs::rename(temp, path).map_err(|e| e.to_string())
+    std::fs::rename(temp, path).map_err(|e| e.to_string())?;
+    crate::mail::notifications::refresh_policy(&app_handle);
+    Ok(())
 }

@@ -58,12 +58,26 @@ mime_guess = "2"
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.58"
 features = [
+    "implement",
+    "Data_Xml_Dom",
+    "Foundation_Collections",
+    "UI_Notifications",
     "Security_Credentials_UI",
     "Foundation",
     "Win32_Foundation",
     "Win32_Security_Credentials",
     "Win32_System_WinRT",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Notifications",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
 ]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"
+windows-core = "0.58"
 
 [patch.crates-io]
 imap = { path = "vendor/imap" }

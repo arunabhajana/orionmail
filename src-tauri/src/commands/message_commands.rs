@@ -1,6 +1,5 @@
 use crate::mail::database;
 use tauri::AppHandle;
-use crate::BootError;
 
 #[tauri::command]
 pub async fn mark_as_read(app_handle: AppHandle, account_id:String,expected_uid_validity:u32,uid: u32, folder: Option<String>) -> Result<(), String> {
@@ -335,8 +334,8 @@ fn validate_external_url(raw: &str) -> Result<url::Url, String> {
 }
 
 #[tauri::command]
-pub fn get_boot_error(state: tauri::State<'_, BootError>) -> Option<String> {
-    state.0.lock().unwrap().clone()
+pub async fn get_boot_error(app_handle: AppHandle) -> Option<String> {
+    crate::wait_for_boot(&app_handle).await.err()
 }
 
 #[derive(serde::Serialize)]

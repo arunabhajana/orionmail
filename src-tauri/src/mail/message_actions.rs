@@ -150,6 +150,9 @@ fn apply_local_action(app: &AppHandle, item: &database::PendingMessageAction, pr
 }
 
 fn notify_action_applied(app: &AppHandle, item: &database::PendingMessageAction) {
+    if matches!(item.action.as_str(),"seen"|"delete"){
+        crate::mail::notifications::schedule_refresh(app, &item.account_id);
+    }
     crate::mail::tags::assignment::LABEL_GENERATION.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
     use tauri::Emitter;
     let (flags, removed) = if item.action == "delete" {
@@ -217,6 +220,10 @@ pub async fn retry_pending(app: &AppHandle, account: &Account) {
             if error.starts_with("CONFLICT:") {
                 use tauri::Emitter;
                 let _ = app.emit("mail:action_conflict", serde_json::json!({"account_id":account.id,"folder":item.folder,"uid":item.uid,"error":error}));
+            } else {
+                // A bulk notification action is persisted before delivery.
+                // Avoid one network timeout per queued message while offline.
+                break;
             }
         } else {
             log::info!("Reconciled pending message action {} for account {}", item.id, account.id);

@@ -61,7 +61,6 @@ const EmailList: React.FC<EmailListProps> = ({
     onSelectEmail,
     onToggleStar,
     onToggleRead,
-    onDeleteMessage,
     onSync,
     isSyncing,
     onLoadMore,
@@ -83,6 +82,17 @@ const EmailList: React.FC<EmailListProps> = ({
     const [contextMenuState, setContextMenuState] = React.useState<EmailContextMenuState | null>(null);
     const [tagPickerEmail, setTagPickerEmail] = React.useState<Email | null>(null);
 
+    const latestHandlers = React.useRef({ onSelectEmail, onToggleStar, emails });
+    React.useLayoutEffect(() => { latestHandlers.current = { onSelectEmail, onToggleStar, emails }; });
+    const selectItem = React.useCallback((id: string) => latestHandlers.current.onSelectEmail(id), []);
+    const starItem = React.useCallback((id: string) => latestHandlers.current.onToggleStar?.(id), []);
+    const itemContextMenu = React.useCallback((event: React.MouseEvent, id: string) => {
+        event.preventDefault(); event.stopPropagation();
+        const email = latestHandlers.current.emails.find(email => email.id === id);
+        if (email) setContextMenuState({ x: event.clientX, y: event.clientY, emailId: id, unread: Boolean(email.unread) });
+    }, []);
+
+
     React.useEffect(() => {
         let active = true;
         let stop: (() => void) | undefined;
@@ -100,13 +110,14 @@ const EmailList: React.FC<EmailListProps> = ({
         }
     }, [emails, currentFilter]);
 
+    const getItemKey = React.useCallback((index: number) => displayedEmails[index]?.id || index, [displayedEmails]);
     const { parentRef, rowVirtualizer, virtualItems } = useVirtualEmailList({
         itemCount: displayedEmails.length,
         hasMore,
         isLoadingMore,
         onLoadMore: searchQuery ? (onSearchLoadMore || onLoadMore) : onLoadMore,
         listRef,
-        getItemKey: (index) => displayedEmails[index]?.id || index,
+        getItemKey,
     });
     const {user}=useAuth();
     const visibleEmails=virtualItems.map(item=>displayedEmails[item.index]).filter((email):email is Email=>Boolean(email));
@@ -118,32 +129,38 @@ const EmailList: React.FC<EmailListProps> = ({
         ? allTags[currentFolder.slice(4)]?.name || 'Tag'
         : currentFolder ? currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1) : 'Mailbox';
 
+    const viewportStart = rowVirtualizer.scrollOffset ?? 0;
+    const viewportEnd = viewportStart + (rowVirtualizer.scrollRect?.height ?? 600);
+    const prefetchRequests = virtualItems.filter(item => item.end >= viewportStart && item.start <= viewportEnd)
+        .slice(0, 12).map(item => displayedEmails[item.index]).filter(Boolean)
+        .map(email => ({ folder: email.folder, uid: email.uid }));
+    const prefetchSignature = JSON.stringify(prefetchRequests);
+    const lastPrefetch = React.useRef('');
     React.useEffect(() => {
-        if (!preferences.prefetchBodies || preferences.syncPaused || !virtualItems || virtualItems.length === 0) return;
-
-        const timer = setTimeout(() => {
-            const firstVisible = virtualItems[0].index;
-            const lastVisible = virtualItems[virtualItems.length - 1].index;
-            
-            // +/- 5 rows for prefetch window
-            const startIdx = Math.max(0, firstVisible - 5);
-            const endIdx = Math.min(displayedEmails.length - 1, lastVisible + 5);
-            
-            const requests = [];
-            for (let i = startIdx; i <= endIdx; i++) {
-                const email = displayedEmails[i];
-                if (email) {
-                    requests.push({ folder: email.folder, uid: email.uid });
-                }
-            }
-            
-            if (requests.length > 0) {
-                invoke('prefetch_messages', { requests }).catch(console.error);
-            }
-        }, 300); // 300ms debounce
-
-        return () => clearTimeout(timer);
-    }, [virtualItems, displayedEmails, preferences.prefetchBodies, preferences.syncPaused]);
+        if (!preferences.prefetchBodies || preferences.syncPaused || !user?.id || prefetchSignature === '[]') return;
+        const key = `${user.id}:${prefetchSignature}`;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const schedule = () => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => {
+                if (document.visibilityState !== 'visible' || !document.hasFocus() || !navigator.onLine || key === lastPrefetch.current) return;
+                lastPrefetch.current = key;
+                void invoke('prefetch_messages', { requests: JSON.parse(prefetchSignature) }).catch(error => {
+                    if (lastPrefetch.current === key) lastPrefetch.current = '';
+                    console.error(error);
+                });
+            }, 600);
+        };
+        const online = () => { lastPrefetch.current = ''; schedule(); };
+        schedule();
+        window.addEventListener('focus', schedule);
+        window.addEventListener('online', online);
+        return () => {
+            if (timer) clearTimeout(timer);
+            window.removeEventListener('focus', schedule);
+            window.removeEventListener('online', online);
+        };
+    }, [prefetchSignature, user?.id, preferences.prefetchBodies, preferences.syncPaused]);
 
     const pullDistance = React.useRef(0);
     const touchStart = React.useRef(0);
@@ -342,20 +359,9 @@ const EmailList: React.FC<EmailListProps> = ({
                                     <EmailListItem
                                         email={email}
                                         isSelected={selectedEmailId === email.id}
-                                        onSelect={onSelectEmail}
-                                        onToggleStar={onToggleStar}
-                                        onToggleRead={onToggleRead}
-                                        onDelete={onDeleteMessage}
-                                        onContextMenu={(e, id) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            setContextMenuState({
-                                                x: e.clientX,
-                                                y: e.clientY,
-                                                emailId: id,
-                                                unread: email.unread || false
-                                            });
-                                        }}
+                                        onSelect={selectItem}
+                                        onToggleStar={starItem}
+                                        onContextMenu={itemContextMenu}
                                         allTags={allTags}
                                     />
                                 </div>

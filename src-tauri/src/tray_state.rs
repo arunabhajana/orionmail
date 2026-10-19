@@ -18,7 +18,7 @@ pub fn init_from_db(app: &AppHandle) {
     let mut state = STATE.lock().unwrap();
     state.unread_count = 0;
     state.last_sync_timestamp = None;
-    if let Some(account) = crate::auth::session::get_active_account(app) {
+    if let Some(account) = crate::auth::session::get_active_profile(app) {
         if let Ok(db_state) = crate::mail::database::get_global_sync_state(app, &account.id) {
             state.last_sync_timestamp = db_state.last_sync_at;
         }
@@ -29,7 +29,7 @@ pub fn init_from_db(app: &AppHandle) {
 }
 
 pub fn refresh_unread_count_from_db(app: &AppHandle) {
-    if let Some(account) = crate::auth::session::get_active_account(app) {
+    if let Some(account) = crate::auth::session::get_active_profile(app) {
         if let Ok(count) = crate::mail::database::get_global_unread_count(app, &account.id) {
             {
                 let mut state = STATE.lock().unwrap();
@@ -47,7 +47,7 @@ pub fn refresh_unread_count_from_db(app: &AppHandle) {
 }
 
 pub fn set_last_sync_time(app: &AppHandle, account_id: &str) {
-    if crate::auth::session::get_active_account(app).map(|account| account.id) == Some(account_id.to_string()) {
+    if crate::auth::session::get_active_profile(app).map(|account| account.id) == Some(account_id.to_string()) {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         {
             let mut state = STATE.lock().unwrap();

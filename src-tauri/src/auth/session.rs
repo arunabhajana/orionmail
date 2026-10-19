@@ -60,6 +60,18 @@ pub fn load_accounts(app_handle: &AppHandle) -> Vec<Account> {
     load_store(app_handle).accounts
 }
 
+// Display-only consumers must not read Windows Credential Manager or trigger
+// token self-healing just to draw a tray tooltip or notification attribution.
+pub fn load_profile_metadata(app_handle: &AppHandle) -> (Vec<crate::auth::account::UserProfile>,Option<String>) {
+    let store:AuthStore=fs::read(get_store_path(app_handle)).ok()
+        .and_then(|bytes|serde_json::from_slice(&bytes).ok()).unwrap_or_default();
+    (store.accounts.into_iter().map(crate::auth::account::UserProfile::from).collect(),store.active_account_id)
+}
+pub fn get_active_profile(app_handle:&AppHandle)->Option<crate::auth::account::UserProfile>{
+    let (profiles,active)=load_profile_metadata(app_handle);
+    profiles.into_iter().find(|profile|Some(&profile.id)==active.as_ref())
+}
+
 /// Retrieves the profile currently marked as active.
 pub fn get_active_account(app_handle: &AppHandle) -> Option<Account> {
     let store = load_store(app_handle);

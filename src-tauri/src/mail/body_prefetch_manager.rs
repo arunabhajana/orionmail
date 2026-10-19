@@ -74,7 +74,7 @@ impl BodyPrefetchManager {
         
         // Skip background duplicates if cached
         if priority == PrefetchPriority::Background {
-            if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, &key.account_id, &key.folder, key.uid) {
+            if database::has_message_body_cache(&app_handle, &key.account_id, &key.folder, key.uid).unwrap_or(false) {
                 return;
             }
         }
@@ -160,7 +160,7 @@ impl BodyPrefetchManager {
             log::debug!("Body prefetch queued (Search): {} {}", key.folder, key.uid);
         } else {
             // Cap background queue size to avoid memory bloat on massive scrolls
-            if state.background_queue.len() >= 50 {
+            if state.background_queue.len() >= 16 {
                 state.background_queue.pop_front();
             }
             state.background_queue.push_back(new_job);
@@ -235,7 +235,7 @@ impl BodyPrefetchManager {
 
                 // Double check cache in worker
                 let mut should_fetch = true;
-                if let Ok(Some(_)) = database::get_message_body_cache(&app_handle, &job.key.account_id, &job.key.folder, job.key.uid) {
+                if database::has_message_body_cache(&app_handle, &job.key.account_id, &job.key.folder, job.key.uid).unwrap_or(false) {
                     should_fetch = false;
                 }
 
@@ -260,6 +260,9 @@ impl BodyPrefetchManager {
                     for tx in responders {
                         let _ = tx.send(fetch_res.clone());
                     }
+                } else if responders.is_empty() {
+                    // Background jobs have no UI waiter. Do not load and parse
+                    // the entire cached body a second time just to discard it.
                 } else if fetch_res.is_ok() || !should_fetch {
                     if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle, &job.key.account_id, &job.key.folder, job.key.uid) {
                         let attachments = if let Some(json) = attachments_json {

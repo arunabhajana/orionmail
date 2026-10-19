@@ -252,34 +252,31 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                         applySmartInvert();
                                         document.documentElement.classList.add('ready');
 
+                                        let heightFrame = 0;
                                         const sendHeight = () => {
-                                            if (!wrapper) return;
-                                            // Only measure the strict wrapper height, ignoring the stretched iframe
-                                            const height = wrapper.scrollHeight;
-                                            
-                                            if (height !== lastHeight) {
-                                                lastHeight = height;
-                                                window.parent.postMessage({ type: 'resize', height: height, id: '${email.id}' }, '*');
-                                            }
+                                            if (!wrapper || heightFrame) return;
+                                            heightFrame = requestAnimationFrame(() => {
+                                                heightFrame = 0;
+                                                const height = wrapper.scrollHeight;
+                                                if (height !== lastHeight) {
+                                                    lastHeight = height;
+                                                    window.parent.postMessage({ type: 'resize', height, id: '${email.id}' }, '*');
+                                                }
+                                            });
                                         };
-                                        
+                                        // Coalesce image/font/DOM changes into one measurement per frame.
+                                        const resizeObserver = new ResizeObserver(sendHeight);
+                                        if (wrapper) resizeObserver.observe(wrapper);
+                                        const mutationObserver = new MutationObserver(sendHeight);
+                                        if (wrapper) mutationObserver.observe(wrapper, { childList: true, subtree: true, attributes: true });
                                         window.addEventListener('load', sendHeight);
-                                        
-                                        // 1. Observe size changes strictly on wrapper, NOT document.body
-                                        new ResizeObserver(sendHeight).observe(wrapper);
-                                        
-                                        // 2. Observe DOM mutations strictly inside wrapper
-                                        new MutationObserver(sendHeight).observe(wrapper, { 
-                                            childList: true, subtree: true, attributes: true 
-                                        });
-                                        
-                                        // 3. Aggressive polling for 5 seconds
-                                        let pollCount = 0;
-                                        const pollInterval = setInterval(() => {
-                                            sendHeight();
-                                            pollCount++;
-                                            if (pollCount > 50) clearInterval(pollInterval);
-                                        }, 100);
+                                        document.addEventListener('load', sendHeight, true);
+                                        if (document.fonts) document.fonts.ready.then(sendHeight);
+                                        sendHeight();
+                                        window.addEventListener('pagehide', () => {
+                                            resizeObserver.disconnect(); mutationObserver.disconnect();
+                                            if (heightFrame) cancelAnimationFrame(heightFrame);
+                                        }, { once: true });
 
                                         // 4. Intercept link clicks
                                         document.addEventListener('click', function(e) {

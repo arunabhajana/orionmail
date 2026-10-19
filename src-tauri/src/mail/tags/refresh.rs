@@ -74,6 +74,9 @@ pub async fn visible(
             .join(",");
         let mailbox = message_actions::resolve_mailbox(app, account, &folder)?;
         let labels = labels.clone();
+        let fetch_fields=if cached.iter().all(|message|message.message_id.as_ref().is_some_and(|id|!id.is_empty())) {
+            "(UID FLAGS)"
+        } else { "(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])" };
         let generation = super::assignment::LABEL_GENERATION.load(Ordering::SeqCst);
         let (batch, missing, metadata) =
             execute_with_session(account, SessionKind::Labels, move |session| {
@@ -82,7 +85,7 @@ pub async fn visible(
                     return Err("Mailbox changed during visible mail refresh".into());
                 }
                 let fetched = session
-                    .uid_fetch(&range, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+                    .uid_fetch(&range, fetch_fields)
                     .map_err(|e| e.to_string())?;
                 let metadata = fetched
                     .iter()
@@ -135,6 +138,7 @@ pub async fn visible(
             super::cache::apply_snapshot(app, &account.id, &folder, validity, &batch, &missing)?;
     }
     if changed {
+        crate::mail::notifications::schedule_refresh(app,&account.id);
         let _ = app.emit("mail:labels_changed", &account.id);
     }
     Ok(())

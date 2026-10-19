@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "orionmail",
+  "productName": "OrionMail",
   "version": "0.1.0",
   "identifier": "com.orionmail.app",
   "build": {
@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "orionmail",
+        "visible": false,
         "width": 1200,
         "height": 800,
         "decorations": false,

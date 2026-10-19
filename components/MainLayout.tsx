@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Email } from '@/lib/types';
 import { dedupeMail, sameMail,mailIdentity } from '@/lib/mail-identity';
 import { formatEmailTime } from '@/lib/utils';
@@ -10,7 +10,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ComposeModal, { type ComposeHandle } from '@/components/ComposeModal';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { isPermissionGranted, requestPermission, onAction, registerActionTypes, sendNotification } from '@tauri-apps/plugin-notification';
 import { useSync } from '@/components/SyncContext';
 import { useAuth } from '@/components/AuthContext';
 import LogoSpinner from '@/components/LogoSpinner';
@@ -33,6 +32,11 @@ interface FolderSearchState {
     hasMoreSearch: boolean;
     isLoadingMoreSearch: boolean;
 }
+
+const EMPTY_SEARCH_STATE: FolderSearchState = {
+    searchQuery: '', activeSearchId: null, searchProgress: null,
+    searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false,
+};
 
 export default function MainLayout() {
     const { user } = useAuth();
@@ -69,20 +73,17 @@ export default function MainLayout() {
     const [hasMore, setHasMore] = useState(true);
     const emailListContainerRef = useRef<HTMLDivElement>(null);
     const emailsRef = useRef<Email[]>([]);
+    const notificationTargetRef = useRef<{ accountId: string; email: Email } | null>(null);
+    useEffect(() => {
+        if (notificationTargetRef.current?.email.id !== selectedEmailId || currentFolder !== 'inbox') notificationTargetRef.current = null;
+    }, [selectedEmailId, currentFolder]);
     const cacheRevisionRef = useRef(0);
 
     const [folderSearchContexts, setFolderSearchContexts] = useState<Record<string, FolderSearchState>>({});
     const folderSearchRef=useRef(folderSearchContexts);
     folderSearchRef.current=folderSearchContexts;
 
-    const activeSearchState = folderSearchContexts[currentFolder] || {
-        searchQuery: '',
-        activeSearchId: null,
-        searchProgress: null,
-        searchResults: [],
-        hasMoreSearch: false,
-        isLoadingMoreSearch: false,
-    };
+    const activeSearchState = folderSearchContexts[currentFolder] || EMPTY_SEARCH_STATE;
 
     const activeSearchIdRef = useRef<string | null>(null);
     useEffect(() => {
@@ -109,29 +110,33 @@ export default function MainLayout() {
 
     // --- Derived State ---
 
-    const pendingTags = Object.values(pendingTagAdds).filter(item => item.accountId === user?.id);
-    const overlayTags = (email: Email): Email => {
-        const flagEdits=Object.values(pendingFlags).filter(edit=>edit.accountId===user?.id&&sameMail(edit.email,email));
-        email=Object.assign({},email,...flagEdits.map(edit=>edit.patch));
-        const pending = pendingTags.find(item => sameMail(item.email,email));
-        return pending ? { ...email, tags: [...new Set([...email.tags, ...pending.tags])].filter(id => !pending.removed.includes(id)), tagsPending: true } : email;
-    };
-    const visibleCandidates = emails.map(overlayTags);
-    if (currentFolder.startsWith('tag:')) {
-        for (const pending of pendingTags) {
-            if (pending.tags.includes(currentFolder.slice(4)) && !visibleCandidates.some(item => sameMail(item,pending.email))) {
-                visibleCandidates.unshift(overlayTags(pending.email));
+    const { filteredEmails, visibleEmails } = useMemo(() => {
+        const pendingTags = Object.values(pendingTagAdds).filter(item => item.accountId === user?.id);
+        const overlayTags = (email: Email): Email => {
+            const flagEdits=Object.values(pendingFlags).filter(edit=>edit.accountId===user?.id&&sameMail(edit.email,email));
+            if (flagEdits.length) email=Object.assign({},email,...flagEdits.map(edit=>edit.patch));
+            const pending = pendingTags.find(item => sameMail(item.email,email));
+            return pending ? { ...email, tags: [...new Set([...email.tags, ...pending.tags])].filter(id => !pending.removed.includes(id)), tagsPending: true } : email;
+        };
+        const visibleCandidates = emails.map(overlayTags);
+        if (currentFolder.startsWith('tag:')) {
+            for (const pending of pendingTags) {
+                if (pending.tags.includes(currentFolder.slice(4)) && !visibleCandidates.some(item => sameMail(item,pending.email))) {
+                    visibleCandidates.unshift(overlayTags(pending.email));
+                }
             }
         }
-    }
-    const filteredEmails = activeSearchState.searchQuery ? activeSearchState.searchResults.map(overlayTags) : visibleCandidates.filter(email => {
-        if (currentFolder === 'starred') {
-            return email.starred;
-        }
-        if (currentFolder.startsWith('tag:')) return email.tags.includes(currentFolder.slice(4));
-        return email.folder === currentFolder;
-    });
-    const visibleEmails=filteredEmails.filter(email=>!Object.values(pendingDeletes).some(edit=>edit.accountId===user?.id&&sameMail(edit.email,email)));
+        const filteredEmails = activeSearchState.searchQuery ? activeSearchState.searchResults.map(overlayTags) : visibleCandidates.filter(email => {
+            if (currentFolder === 'starred') {
+                return email.starred;
+            }
+            if (currentFolder.startsWith('tag:')) return email.tags.includes(currentFolder.slice(4));
+            return email.folder === currentFolder;
+        });
+        const visibleEmails=filteredEmails.filter(email=>!Object.values(pendingDeletes).some(edit=>edit.accountId===user?.id&&sameMail(edit.email,email)));
+
+        return { filteredEmails, visibleEmails };
+    }, [emails, pendingTagAdds, pendingFlags, pendingDeletes, user?.id, currentFolder, activeSearchState.searchQuery, activeSearchState.searchResults]);
 
     const selectedEmail = visibleEmails.find(e => e.id === selectedEmailId);
 
@@ -377,7 +382,14 @@ export default function MainLayout() {
             if (revision !== cacheRevisionRef.current || folderToFetch !== currentFolderRef.current) return false;
             if (cached && cached.length > 0) {
                 const formattedEmails = cached.map(formatEmailFromMessage);
-                const deduped = dedupeEmails(formattedEmails);
+                const target = notificationTargetRef.current;
+                let pinned: Email[] = [];
+                if (folderToFetch === 'inbox' && target && target.accountId === activeAccountRef.current && !formattedEmails.some(email => email.id === target.email.id)) {
+                    const rows = await invoke<Parameters<typeof formatEmailFromMessage>[0][]>('get_cached_message_headers', { requests: [{ folder: target.email.folder, uid: target.email.uid }] });
+                    pinned = rows.map(formatEmailFromMessage).filter(email => email.uidValidity === target.email.uidValidity);
+                }
+                if (revision !== cacheRevisionRef.current || folderToFetch !== currentFolderRef.current) return false;
+                const deduped = dedupeEmails([...formattedEmails, ...pinned]);
                 setEmails(deduped);
                 reconcileWithDb(deduped);
                 setHasMore(cached.length === 50);
@@ -638,10 +650,7 @@ export default function MainLayout() {
                 const hintShown = localStorage.getItem("orion_tray_hint");
                 if (!hintShown) {
                     try {
-                        sendNotification({
-                            title: 'Orion Mail is still running',
-                            body: "You'll continue receiving notifications and syncing email in the background."
-                        });
+                        await invoke('show_background_notification');
                         localStorage.setItem("orion_tray_hint", "true");
                     } catch (e) {
                         console.error("Failed to send tray hint notification", e);
@@ -729,9 +738,11 @@ export default function MainLayout() {
         let cancelled = false;
         let syncTimer: ReturnType<typeof setTimeout> | undefined;
         const folder = currentFolder;
-        setSelectedEmailId(null);
+        const notificationTarget = notificationTargetRef.current;
+        const pinned = folder === 'inbox' && notificationTarget?.accountId === activeAccountRef.current ? notificationTarget?.email : null;
+        setSelectedEmailId(pinned?.id ?? null);
         setIsLoadingFolder(true);
-        setEmails([]);
+        setEmails(pinned ? [pinned] : []);
         setHasMore(false);
         setIsLoadingMore(false);
         void fetchCache(folder).then(hasCache => {
@@ -843,97 +854,52 @@ export default function MainLayout() {
         };
     }, []);
 
-    // --- Notification Permissions & Logic ---
+    // Register before consuming: cold-start activations are retained in Rust
+    // until auth and the initial mailbox load have completed.
     useEffect(() => {
-        const setupNotifications = async () => {
+        if (!user?.id || isBootstrapping) return;
+        let disposed = false;
+        let running = false;
+        let rerun = false;
+        const stops: (() => void)[] = [];
+        const consume = async () => {
+            if (running) { rerun = true; return; }
+            running = true;
             try {
-                let permissionGranted = await isPermissionGranted();
-                if (!permissionGranted) {
-                    const permission = await requestPermission();
-                    permissionGranted = permission === 'granted';
-                }
-
-                if (permissionGranted) {
-                    console.log("Notification permission granted");
-
-                    try {
-                        await registerActionTypes([
-                            {
-                                id: 'new_email',
-                                actions: [
-                                    { id: 'open', title: 'Open' },
-                                    { id: 'mark_read', title: 'Mark as Read' }
-                                ]
-                            },
-                            {
-                                id: 'summary_email',
-                                actions: [
-                                    { id: 'open', title: 'Open Inbox' }
-                                ]
-                            }
-                        ]);
-                    } catch (e) {
-                        console.warn("Failed to register action types. May not be supported on this OS.", e);
-                    }
-
-                    // Listen for notification clicks
-                    try {
-                        const unlisten = await onAction((result: any) => {
-                            console.log('Notification action:', result);
-
-                            // Handle 'mark_read' action without focusing the window
-                            if (result.actionId === 'mark_read') {
-                                const uid = result.notification?.extra?.uid;
-                                if (uid) {
-                                    const emailId = `inbox-${uid}`; // Assuming inbox since notifications are for inbox
-                                    markAsRead(emailId).catch(console.error);
-                                }
-                                return;
-                            }
-
-                            // Handle 'open' or default click
-                            invoke('show_main_window').catch(console.error);
-                            setCurrentFolder("inbox"); // Force navigation to inbox
-
-                            if (result.notification?.actionTypeId === 'new_email') {
-                                const uid = result.notification?.extra?.uid;
-                                if (uid) {
-                                    setSelectedEmailId(`inbox-${uid}`);
-                                }
-                            } else if (result.notification?.actionTypeId === 'summary_email') {
-                                // Just clear selection so the list is shown
-                                setSelectedEmailId(null);
-                            } else {
-                                // Fallback for default notifications
-                                const uid = result.notification?.extra?.uid;
-                                if (uid) {
-                                    setSelectedEmailId(`inbox-${uid}`);
-                                }
-                            }
-                        });
-                        return unlisten;
-                    } catch (e: any) {
-                        if (e?.includes?.("registerListener not allowed") || e?.includes?.("not found")) {
-                            console.info("Notification clicks are not currently supported by Tauri on this desktop OS.");
-                        } else {
-                            console.error("Failed to setup notification action listener:", e);
-                        }
-                    }
-                }
+                do {
+                    rerun = false;
+                    const target = await invoke<{ account_id: string; message: Parameters<typeof formatEmailFromMessage>[0] | null } | null>('consume_notification_navigation');
+                    if (disposed || !target || target.account_id !== activeAccountRef.current) continue;
+                    const current = await invoke<Parameters<typeof formatEmailFromMessage>[0][]>('get_folder_messages', { folder: 'inbox', beforeUid: null, limit: 50 });
+                    if (disposed || target.account_id !== activeAccountRef.current) continue;
+                    currentFolderRef.current = 'inbox';
+                    cacheRevisionRef.current += 1;
+                    setCurrentFolder('inbox');
+                    setFolderSearchContexts(prev => { const next = { ...prev }; delete next.inbox; return next; });
+                    const message = target.message ? formatEmailFromMessage(target.message) : null;
+                    notificationTargetRef.current = message ? { accountId: target.account_id, email: message } : null;
+                    setEmails(dedupeEmails([...(message ? [message] : []), ...current.map(formatEmailFromMessage)]));
+                    setSelectedEmailId(message?.id ?? null);
+                    setHasMore(current.length === 50);
+                    rerun = true;
+                } while (rerun && !disposed);
             } catch (error) {
-                console.error("Failed to setup notifications:", error);
+                if (!disposed) toast.error('Could not complete notification action', { description: String(error) });
+            } finally { running = false; }
+        };
+        const setup = async () => {
+            for (const [event, handler] of [
+                ['mail:notification_navigation', () => { void consume(); }],
+                ['mail:notification_error', (event: { payload: string }) => toast.error('Mail action needs attention', { description: event.payload })],
+            ] as const) {
+                const stop = await listen<string>(event, handler);
+                if (disposed) stop(); else stops.push(stop);
             }
+            if (!disposed) await consume();
         };
-
-        const listenerPromise = setupNotifications();
-        return () => {
-            listenerPromise.then(listener => {
-                if (listener && typeof listener.unregister === 'function') {
-                    listener.unregister();
-                }
-            });
-        };
-    }, []);
+        void setup().catch(console.error);
+        return () => { disposed = true; stops.forEach(stop => stop()); };
+    }, [user?.id, isBootstrapping]);
 
     const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const searchRevision = useRef(0);

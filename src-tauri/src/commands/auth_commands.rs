@@ -57,13 +57,18 @@ pub fn list_accounts(app_handle: AppHandle) -> Result<Vec<UserProfile>, String> 
 }
 
 #[command]
-pub fn logout_user(app_handle: AppHandle, account_id: String) -> Result<(), String> {
+pub async fn logout_user(app_handle: AppHandle, account_id: String) -> Result<(), String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    session::remove_account(&app_handle, account_id)
+    tauri::async_runtime::spawn_blocking(move||{
+    session::remove_account(&app_handle, account_id.clone())?;
+    if let Err(e)=crate::mail::notifications::forget_account(&app_handle,&account_id){log::warn!("Could not remove signed-out account's notifications: {}",e);}
+    Ok(())
+    }).await.map_err(|e|e.to_string())?
 }
 
 #[command]
 pub async fn bootstrap_accounts(app_handle: AppHandle) -> Result<crate::auth::bootstrap::BootstrapResult, String> {
+    crate::wait_for_boot(&app_handle).await?;
     crate::auth::app_lock::require_unlocked(&app_handle)?;
     let res = crate::auth::bootstrap::bootstrap_accounts(&app_handle).await;
     if res.user.is_some() {
@@ -192,7 +197,8 @@ pub async fn clear_local_cache(app_handle: AppHandle) -> Result<(), String> {
     let conn = crate::mail::database::open_connection(&app_handle)?;
     let pending: i64 = conn.query_row("SELECT (SELECT COUNT(*) FROM pending_message_actions WHERE account_id = ?1) + (SELECT COUNT(*) FROM pending_tag_edits WHERE account_id = ?1)", [&account.id], |row| row.get(0)).map_err(|e| e.to_string())?;
     if pending > 0 { return Err("Sync or resolve pending message actions before clearing cached mail.".into()); }
-    crate::mail::database::clear_account_cache(&app_handle, &account.id)
+    crate::mail::database::clear_account_cache(&app_handle, &account.id)?;
+    crate::mail::notifications::forget_account(&app_handle,&account.id)
 }
 
 #[tauri::command]

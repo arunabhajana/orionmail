@@ -1,0 +1,3 @@
+[build]
+# Keep Rust rebuilds from consuming every core alongside Next.js and WebView2.
+jobs = 2

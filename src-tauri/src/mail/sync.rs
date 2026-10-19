@@ -299,6 +299,7 @@ pub async fn sync_folder_with_options(
             sync_state.last_error = None;
             database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
 
+            notifications::schedule_refresh(&app_handle_clone,&account_id);
             Ok(num_new)
         },
     );

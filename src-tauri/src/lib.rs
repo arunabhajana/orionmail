@@ -17,7 +17,15 @@ use std::sync::Mutex;
 use crate::config::{AppSettings, get_app_settings, set_app_settings, was_launched_minimized};
 use tauri_plugin_autostart::MacosLauncher;
 
-pub struct BootError(pub Mutex<Option<String>>);
+pub struct BootError(pub tokio::sync::watch::Receiver<Option<Result<(), String>>>);
+
+pub async fn wait_for_boot(app: &tauri::AppHandle) -> Result<(), String> {
+    let mut ready=app.state::<BootError>().0.clone();
+    loop {
+        if let Some(result)=ready.borrow().clone(){return result;}
+        ready.changed().await.map_err(|_|"Application initialization stopped".to_string())?;
+    }
+}
 
 
 #[cfg(target_os = "windows")]
@@ -50,7 +58,7 @@ pub fn run() {
       let _tray = TrayIconBuilder::with_id("main")
           .icon(app.default_window_icon().unwrap().clone())
           .menu(&menu)
-          .tooltip("Orion Mail")
+          .tooltip(mail::notifications::display_name())
           .on_menu_event(move |app_handle, event| {
               match event.id.as_ref() {
                   "quit" => {
@@ -97,6 +105,7 @@ pub fn run() {
       #[cfg(target_os = "windows")]
       {
         if let Some(window) = app.get_webview_window("main") {
+          let _ = window.set_title(mail::notifications::display_name());
           apply_mica(&window, None).ok();
           
           let app_handle = window.app_handle().clone();
@@ -104,7 +113,7 @@ pub fn run() {
           
           // Initial Window Visibility Logic
           let launched_with_minimized = was_launched_minimized();
-          if launched_with_minimized && start_hidden {
+          if (launched_with_minimized && start_hidden) || mail::notifications::is_activation_launch() {
               window.hide().unwrap();
           } else {
               window.show().unwrap();
@@ -150,25 +159,46 @@ pub fn run() {
       app.handle().plugin(tauri_plugin_notification::init())?;
       app.handle().plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))?;
 
-      if let Ok(cache_dir) = app.handle().path().app_cache_dir() {
-        let inline_dir = cache_dir.join("orbitmail_inline");
-        let _ = std::fs::remove_dir_all(&inline_dir);
-      }
+      let (ready_tx,ready_rx)=tokio::sync::watch::channel(None);
+      app.manage(BootError(ready_rx));
+      let handle=app.handle().clone();
+      // Never wait for SQLite migration, credential I/O, COM registration, or
+      // cache cleanup on the Windows message loop.
+      std::thread::Builder::new().name("app-startup".into()).spawn(move||{
+          let started=std::time::Instant::now();
+          if let Ok(cache_dir)=handle.path().app_cache_dir(){
+              // This fixed, app-owned cache contains temporary inline images.
+              let inline_dir=cache_dir.join("orbitmail_inline");
+              if inline_dir.is_absolute() && inline_dir.parent()==Some(cache_dir.as_path()) {
+                  let _=std::fs::remove_dir_all(&inline_dir);
+              }
+          }
+          let result=crate::mail::database::init_db(&handle)
+              .and_then(|_|crate::contacts::contact_store::init_contacts_db(&handle));
+          let failed=result.is_err();
+          ready_tx.send_replace(Some(result));
+          log::info!("Mail database initialization finished in {} ms",started.elapsed().as_millis());
+          if failed{return;}
+          if let Err(error)=mail::notifications::initialize(&handle){
+              log::error!("Native notifications could not initialize: {}",error);
+              if mail::notifications::is_activation_launch(){
+                  if let Some(window)=handle.get_webview_window("main"){let _=window.show();}
+              }
+          }
+          crate::tray_state::spawn_tray_update_loop(handle.clone());
 
-      let boot_err = match crate::mail::database::init_db(app.handle()) {
-          Ok(_) => match crate::contacts::contact_store::init_contacts_db(app.handle()) {
-              Ok(_) => None,
-              Err(e) => Some(format!("Contacts Database Error: {}", e)),
-          },
-          Err(e) => Some(format!("Mail Database Error: {}", e)),
-      };
-      app.manage(BootError(Mutex::new(boot_err)));
+      })?;
+      #[cfg(not(target_os = "windows"))]
+      if let Some(window) = app.get_webview_window("main") { let _ = window.show(); }
 
-      crate::tray_state::spawn_tray_update_loop(app.handle().clone());
 
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+      mail::notifications::consume_notification_navigation,
+      mail::notifications::show_background_notification,
+      mail::notifications::preview_notification,
+      mail::notifications::open_notification_settings,
       get_boot_error,
         get_cache_summary,
         mail_preferences::get_mail_preferences,

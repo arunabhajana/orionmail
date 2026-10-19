@@ -575,7 +575,12 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     ).map_err(|e| e.to_string())?;
 
     conn.execute(
-        "CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+        "CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF account_id,subject,sender,recipient,body,snippet,attachments_json ON messages
+        WHEN old.account_id IS NOT new.account_id OR old.subject IS NOT new.subject
+          OR old.sender IS NOT new.sender OR old.recipient IS NOT new.recipient
+          OR coalesce(old.body,old.snippet,'') IS NOT coalesce(new.body,new.snippet,'')
+          OR coalesce(old.attachments_json,'') IS NOT coalesce(new.attachments_json,'')
+        BEGIN
             INSERT INTO messages_fts(messages_fts, rowid, account_id, subject, sender, recipient, body, attachment_names)
             VALUES ('delete', old.rowid, old.account_id, old.subject, old.sender, old.recipient, coalesce(old.body, old.snippet, ''), coalesce(old.attachments_json, ''));
             INSERT INTO messages_fts(rowid, account_id, subject, sender, recipient, body, attachment_names)
@@ -1026,6 +1031,10 @@ impl Drop for SyncProgressGuard {
     }
 }
 
+
+pub fn has_message_body_cache(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32) -> Result<bool,String> {
+    open_connection(app_handle)?.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3 AND body_fetched=1 AND processed_html IS NOT NULL)",rusqlite::params![account_id,folder,uid],|row|row.get(0)).map_err(|e|e.to_string())
+}
 
 pub fn get_message_body_cache(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32) -> Result<Option<(String, Option<String>, Option<String>)>, String> {
     let conn = open_connection(app_handle)?;
