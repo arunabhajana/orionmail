@@ -21,3 +21,4 @@ pub mod shutdown;
 pub mod search;
 pub mod tags;
 pub mod drafts;
+pub mod trash;

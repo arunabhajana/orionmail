@@ -8,6 +8,7 @@ use tauri::AppHandle;
 pub(crate) fn resolve_mailbox(app: &AppHandle, account: &Account, folder: &str) -> Result<String, String> {
     match MailFolder::from_str(folder) {
         Ok(MailFolder::Inbox) => Ok("INBOX".to_string()),
+        Ok(MailFolder::Trash) => Ok(crate::mail::trash::mailbox(app, account)),
         Ok(MailFolder::Sent) => MailFolder::Sent.to_imap_mailbox(&account.provider)
             .map(str::to_string).ok_or_else(|| "Sent mailbox is not configured".to_string()),
         Ok(MailFolder::Tag(tag_id)) => {
@@ -35,6 +36,7 @@ pub(crate) fn resolve_mailbox(app: &AppHandle, account: &Account, folder: &str) 
     }
 }
 
+#[cfg(test)]
 fn trash_mailbox(provider: &MailProvider) -> &'static str {
     match provider {
         MailProvider::Google => "[Gmail]/Trash",
@@ -54,13 +56,15 @@ fn flag_store_command(action: &str, desired: Option<bool>) -> Result<String, Str
     Ok(format!("{}FLAGS.SILENT (\\{})", sign, flag))
 }
 
-async fn execute_remote_action(account: &Account, item: &database::PendingMessageAction) -> Result<(), String> {
+async fn execute_remote_action(app: &AppHandle, account: &Account, item: &database::PendingMessageAction) -> Result<(), String> {
     let uid = item.uid;
     let mailbox = item.mailbox.clone();
     let provider = account.provider.clone();
     let action = item.action.clone();
     let desired = item.desired;
     let uid_validity = item.uid_validity;
+    let app = app.clone();
+    let account_copy = account.clone();
     execute_with_session(account, SessionKind::Primary, move |session| {
         let selected = session.select(&mailbox).map_err(|e| format!("Could not select mailbox '{}': {}", mailbox, e))?;
         validate_uid_validity(uid_validity, selected.uid_validity)?;
@@ -75,8 +79,8 @@ async fn execute_remote_action(account: &Account, item: &database::PendingMessag
                 Ok(())
             }
             "delete" => {
-                let trash = trash_mailbox(&provider);
-                match session.uid_mv(uid.to_string(), trash) {
+                let trash = crate::mail::trash::discover(&app, &account_copy, session)?;
+                match session.uid_mv(uid.to_string(), &trash) {
                     Ok(_) => Ok(()),
                     Err(move_error) if matches!(provider, MailProvider::Google) => {
                         // Gmail's label operation is an idempotent MOVE-to-Trash fallback.
@@ -171,8 +175,14 @@ fn notify_action_applied(app: &AppHandle, item: &database::PendingMessageAction)
     crate::tray_state::refresh_unread_count_from_db(app);
 }
 
-pub async fn perform(app: &AppHandle, account: &Account, folder: &str, uid: u32, action: &str, desired: Option<bool>,expected_uid_validity:u32) -> Result<(), String> {
-    let _mutation = MUTATION_LOCK.lock().await;
+pub async fn perform_for_location(app:&AppHandle,account:&Account,folder:&str,uid:u32,action:&str,desired:Option<bool>,expected:u32,local_id:Option<&str>)->Result<Option<crate::mail::trash::Pending>,String>{
+    let _mutation=MUTATION_LOCK.lock().await;
+    let (folder,uid,epoch)=crate::mail::trash::source(app,&account.id,local_id,folder,uid)?;
+    perform_locked(app,account,&folder,uid,action,desired,epoch.unwrap_or(expected)).await?;
+    crate::mail::trash::refresh_metadata(app,&account.id,&folder,uid,local_id)
+}
+
+async fn perform_locked(app:&AppHandle,account:&Account,folder:&str,uid:u32,action:&str,desired:Option<bool>,expected_uid_validity:u32)->Result<(),String>{
     let uid_validity = database::message_uid_validity(app, &account.id, folder, uid)?;
     validate_uid_validity(Some(expected_uid_validity),Some(uid_validity))?;
     let mailbox = resolve_mailbox(app, account, folder)?;
@@ -182,7 +192,7 @@ pub async fn perform(app: &AppHandle, account: &Account, folder: &str, uid: u32,
         action: action.to_string(), desired, uid_validity: Some(uid_validity),
     };
 
-    if let Err(remote_error) = execute_remote_action(account, &item).await {
+    if let Err(remote_error) = execute_remote_action(app, account, &item).await {
         let _ = database::record_message_action_error(app, id, &remote_error);
         if remote_error.starts_with("CONFLICT:") { return Err(remote_error); }
         log::warn!("Queued {} action {} for account {} (UID {}): {}", action, id, account.id, uid, remote_error);
@@ -210,7 +220,7 @@ pub async fn retry_pending(app: &AppHandle, account: &Account) {
     };
     for item in items {
         let result = async {
-            execute_remote_action(account, &item).await?;
+            execute_remote_action(app, account, &item).await?;
             apply_local_action(app, &item, &account.provider)?;
             database::complete_message_action(app, item.id)
         }.await;

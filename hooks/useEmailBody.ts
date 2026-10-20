@@ -32,7 +32,7 @@ interface MessageDetail {
     extractedData?: ExtractedData;
 }
 
-export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, iframeRef: RefObject<HTMLIFrameElement | null>, onMarkAsRead?: (id: string) => void) {
+export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, iframeRef: RefObject<HTMLIFrameElement | null>, onMarkAsRead?: (id: string) => void, localId?: string) {
     const { preferences } = useAppPreferences();
     const { user } = useAuth();
     const [bodyContent, setBodyContent] = useState<string>("");
@@ -43,11 +43,13 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     const [error, setError] = useState<string | null>(null);
 
     const retryRef = useRef<() => Promise<void>>(async () => {});
+    const loadedKey = useRef<string | null>(null);
     const retry = useCallback(() => retryRef.current(), []);
 
     useEffect(() => {
         let active = true;
         let inFlight = false;
+        const key = `${user?.id}:${emailId}`;
         const dbFolder = folder
             ? (folder.toLowerCase().startsWith('tag:') ? folder : folder.toLowerCase())
             : "inbox";
@@ -55,14 +57,15 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         const load = async () => {
             if (!active || inFlight || !user?.id || !emailId || emailUid === undefined) return;
             inFlight = true;
-            setIsLoadingBody(true);
+            setIsLoadingBody(loadedKey.current !== key);
             setError(null);
-            setIframeHeight(400);
+            if (loadedKey.current !== key) setIframeHeight(400);
             try {
                 // This command already waits for an in-progress backend prefetch.
                 // Re-fetching on body_cached used to duplicate IPC and reset the reader.
-                const detail = await invoke<MessageDetail>('get_message_body', { folder: dbFolder, uid: emailUid });
+                const detail = await invoke<MessageDetail>('get_message_body', { folder: dbFolder, uid: emailUid, localId });
                 if (!active) return;
+                loadedKey.current = key;
                 setBodyContent(detail.body || "<p>Message has no content.</p>");
                 setAttachments(detail.attachments || []);
                 setExtractedData(detail.extractedData || null);
@@ -74,19 +77,24 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
                     window.location.href = "/";
                     return;
                 }
-                setError(String(err));
-                setBodyContent("");
-                setAttachments([]);
-                setExtractedData(null);
+                if (loadedKey.current !== key) {
+                    setError(String(err));
+                    setBodyContent("");
+                    setAttachments([]);
+                    setExtractedData(null);
+                }
             } finally {
                 inFlight = false;
                 if (active) setIsLoadingBody(false);
             }
         };
         retryRef.current = load;
-        setBodyContent("");
-        setAttachments([]);
-        setExtractedData(null);
+        if (loadedKey.current !== key) {
+            loadedKey.current = null;
+            setBodyContent("");
+            setAttachments([]);
+            setExtractedData(null);
+        }
         setError(null);
         setIsLoadingBody(false);
         void load();
@@ -113,7 +121,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             void unlistenExtracted.then(unlisten => unlisten()).catch(console.error);
             window.removeEventListener("orion:simulate_error", handleSimulateError);
         };
-    }, [emailId, emailUid, folder, user?.id]);
+    }, [emailId, emailUid, folder, user?.id, localId]);
 
     const readCallback = useRef(onMarkAsRead);
     const unreadRef = useRef(emailUnread);

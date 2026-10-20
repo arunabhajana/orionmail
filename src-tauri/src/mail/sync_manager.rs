@@ -72,6 +72,7 @@ pub async fn enqueue_sync_with_force(
                 MailFolder::Inbox => 30,
                 MailFolder::Sent => 300,
                 MailFolder::Starred => 0,
+                MailFolder::Trash => 30,
                 MailFolder::Tag(_) => 60,
             };
             let now = chrono::Utc::now().timestamp();

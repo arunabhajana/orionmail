@@ -18,7 +18,7 @@ export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, 
     allTags?: Record<string, Tag>;
 }) => {
     const { preferences } = useAppPreferences();
-    const sent = email.folder === 'sent';
+    const sent = (email.displayFolder || email.folder) === 'sent';
     const sender = sent && email.to ? splitHeaderAddresses(email.to).map(value => contactFromHeader(value).name).join(", ") : contactFromHeader(email.sender).name;
     const tags = email.tags.map(id => allTags[id]).filter(tag => tag && tag.tag_type !== 'system');
     const validDate = Number.isFinite(new Date(email.timestamp).getTime());

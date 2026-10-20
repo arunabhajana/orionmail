@@ -210,6 +210,8 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+      mail::trash::trash_action,
+      mail::trash::list_trash_actions,
       mail::drafts::commands::list_drafts,
       mail::drafts::commands::draft_status,
       mail::drafts::commands::open_draft,

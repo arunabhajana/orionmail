@@ -705,6 +705,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_message_actions_account ON pending_message_actions(account_id, id)", ())
         .map_err(|e| e.to_string())?;
     migrate_reconciliation_identity(&conn)?;
+    crate::mail::trash::init(&conn)?;
 
     conn.execute_batch("CREATE TABLE IF NOT EXISTS pending_tag_edits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -764,7 +765,7 @@ pub fn reset_mailbox_epoch(app: &AppHandle, account: &str, folder: &str, mailbox
         WHERE account_id = ?1 AND mailbox = ?2 AND (uid_validity IS NULL OR uid_validity != ?3) AND (last_error IS NULL OR last_error NOT LIKE 'CONFLICT:%')",
         rusqlite::params![account, mailbox, validity]).map_err(|e| e.to_string())?;
     tx.execute("INSERT OR REPLACE INTO mailbox_state (account_id, mailbox, uid_validity) VALUES (?1,?2,?3)", rusqlite::params![account, mailbox, validity]).map_err(|e| e.to_string())?;
-    tx.execute("UPDATE folder_sync_state SET last_uid = 0, last_full_sync_at = 0, uid_validity = ?3 WHERE account_id = ?1 AND folder = ?2", rusqlite::params![account, folder, validity]).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE folder_sync_state SET last_uid = 0, last_synced_at = 0, last_full_sync_at = 0, uid_validity = ?3 WHERE account_id = ?1 AND folder = ?2", rusqlite::params![account, folder, validity]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(conflicts)
 }
@@ -774,7 +775,7 @@ pub fn clear_account_cache(app_handle: &AppHandle, account_id: &str) -> Result<(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     // Enqueue is intentionally independent of the network mutation lock.
     // Check again in this transaction so a concurrent enqueue cannot be erased.
-    let pending: i64 = tx.query_row("SELECT (SELECT COUNT(*) FROM pending_message_actions WHERE account_id=?1) + (SELECT COUNT(*) FROM pending_tag_edits WHERE account_id=?1)", [account_id], |row| row.get(0)).map_err(|e|e.to_string())?;
+    let pending: i64 = tx.query_row("SELECT (SELECT COUNT(*) FROM pending_message_actions WHERE account_id=?1) + (SELECT COUNT(*) FROM pending_tag_edits WHERE account_id=?1) + (SELECT COUNT(*) FROM mail_location_intents WHERE account_id=?1 AND phase<>'settled')", [account_id], |row| row.get(0)).map_err(|e|e.to_string())?;
     if pending > 0 { return Err("Sync or resolve pending message actions before clearing cached mail.".into()); }
     tx.execute("DELETE FROM message_tags WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM messages WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
@@ -783,6 +784,7 @@ pub fn clear_account_cache(app_handle: &AppHandle, account_id: &str) -> Result<(
     tx.execute("DELETE FROM global_sync_state WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM pending_message_actions WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM pending_tag_edits WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM mail_location_intents WHERE account_id=?1 AND phase='settled'",[account_id]).map_err(|e|e.to_string())?;
     tx.execute("DELETE FROM tags WHERE account_id = ?1", [account_id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
@@ -903,8 +905,8 @@ pub fn load_messages_page_with_cursor(app_handle: &AppHandle, account_id: &str, 
 }
 
 const TAG_MESSAGES_SQL: &str = "WITH membership AS (
-    SELECT folder, uid FROM messages WHERE account_id = ?1 AND ((?2='starred' AND flagged=1) OR folder=?2)
-    UNION SELECT folder, message_uid AS uid FROM message_tags WHERE account_id = ?1 AND tag_id = ?3 AND ?3 IS NOT NULL
+    SELECT folder, uid FROM messages WHERE account_id = ?1 AND ((?2='starred' AND flagged=1 AND folder<>'trash') OR folder=?2)
+    UNION SELECT folder, message_uid AS uid FROM message_tags WHERE account_id = ?1 AND tag_id = ?3 AND ?3 IS NOT NULL AND folder<>'trash'
 ), candidates AS (
     SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id,
     ROW_NUMBER() OVER (
@@ -912,6 +914,7 @@ const TAG_MESSAGES_SQL: &str = "WITH membership AS (
         ORDER BY CASE m.folder WHEN 'inbox' THEN 0 WHEN 'sent' THEN 1 ELSE 2 END, m.folder, m.uid DESC
     ) AS copy_rank
     FROM membership membership JOIN messages m ON m.account_id = ?1 AND m.folder = membership.folder AND m.uid = membership.uid
+    WHERE NOT EXISTS (SELECT 1 FROM mail_location_intents p WHERE p.account_id=m.account_id AND p.optimistic=1 AND p.identity=CASE WHEN NULLIF(m.message_id,'') IS NOT NULL THEN json_array('id',m.message_id,m.date,m.sender,m.subject) ELSE json_array('row',m.folder,m.uid,m.uid_validity) END)
 ), visible AS (SELECT * FROM candidates WHERE copy_rank = 1), cursor AS (
     SELECT date, folder, uid FROM messages WHERE account_id=?1 AND uid = ?4 AND (?5 IS NULL OR folder = ?5) LIMIT 1
 )
@@ -926,6 +929,7 @@ mod tag_view_tests {
     #[test]
     fn membership_view_keeps_source_uids_deduplicates_and_pages_collisions() {
         let conn = Connection::open_in_memory().unwrap();
+        crate::mail::trash::init(&conn).unwrap();
         conn.execute_batch("CREATE TABLE messages(account_id TEXT, folder TEXT, uid INTEGER, uid_validity INTEGER DEFAULT 9, subject TEXT DEFAULT '', sender TEXT DEFAULT '', date INTEGER DEFAULT 100, seen INTEGER DEFAULT 0, flagged INTEGER DEFAULT 0, snippet TEXT, has_attachments INTEGER DEFAULT 0, thread_id TEXT, recipient TEXT, message_id TEXT);
             CREATE TABLE message_tags(account_id TEXT, folder TEXT, message_uid INTEGER, tag_id TEXT);
             INSERT INTO messages(account_id,folder,uid,message_id) VALUES ('a','inbox',42,'x'),('a','tag:paper',7,'x'),('a','sent',42,'y'),('a','inbox',43,'z'),('a','inbox',12,'outsider'),('b','inbox',99,'private');
@@ -1326,13 +1330,21 @@ pub fn update_global_notification_time(app_handle: &AppHandle, account_id: &str,
 
 pub fn get_global_unread_count(app_handle: &AppHandle, account_id: &str) -> Result<u32, String> {
     let conn = open_connection(app_handle)?;
-    let sql=format!("SELECT COUNT(DISTINCT {CACHED_MESSAGE_IDENTITY_SQL}) FROM messages WHERE account_id=?1 AND seen=0");
+    let sql=format!("{VISIBLE_MAIL_CTE} SELECT COUNT(DISTINCT identity) FROM visible_mail WHERE seen=0 AND folder<>'trash'");
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let count: u32 = stmt.query_row([account_id], |row| row.get(0)).unwrap_or(0);
     Ok(count)
 }
 
+#[cfg(test)]
 pub const CACHED_MESSAGE_IDENTITY_SQL:&str="CASE WHEN NULLIF(message_id,'') IS NOT NULL THEN json_array('id',message_id,date,sender,subject) ELSE json_array('row',folder,uid) END";
+
+// Count the same desired locations that the mail list displays, without
+// storing synthetic mailbox UIDs or counting both a source and a projection.
+pub const VISIBLE_MAIL_CTE:&str="WITH visible_mail AS (
+ SELECT m.folder,m.seen,m.flagged,CASE WHEN NULLIF(m.message_id,'') IS NOT NULL THEN json_array('id',m.message_id,m.date,m.sender,m.subject) ELSE json_array('row',m.folder,m.uid,m.uid_validity) END AS identity
+ FROM messages m WHERE m.account_id=?1 AND NOT EXISTS(SELECT 1 FROM mail_location_intents p WHERE p.account_id=m.account_id AND p.optimistic=1 AND p.identity=CASE WHEN NULLIF(m.message_id,'') IS NOT NULL THEN json_array('id',m.message_id,m.date,m.sender,m.subject) ELSE json_array('row',m.folder,m.uid,m.uid_validity) END)
+ UNION ALL SELECT desired,json_extract(source,'$.seen'),json_extract(source,'$.flagged'),identity FROM mail_location_intents WHERE account_id=?1 AND optimistic=1 AND deleted=0 AND desired IN ('inbox','trash'))";
 
 pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
     let conn = open_connection(app_handle)?;
@@ -1357,14 +1369,14 @@ pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &
         "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
          FROM messages m
          JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
-         WHERE m.account_id = ?1 AND messages_fts MATCH ?2
+         WHERE m.account_id = ?1 AND m.folder<>'trash' AND NOT EXISTS (SELECT 1 FROM mail_location_intents p WHERE p.account_id=m.account_id AND p.optimistic=1 AND p.identity=CASE WHEN NULLIF(m.message_id,'') IS NOT NULL THEN json_array('id',m.message_id,m.date,m.sender,m.subject) ELSE json_array('row',m.folder,m.uid,m.uid_validity) END) AND messages_fts MATCH ?2
          ORDER BY bm25(messages_fts, 0.0, 8.0, 5.0, 3.0, 1.0, 1.0) ASC, m.date DESC
          LIMIT ?3"
     } else {
         "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
          FROM messages m
          JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
-         WHERE m.account_id = ?1 AND ((?2 = 'starred' AND m.flagged = 1) OR m.folder = ?2 OR (?2 LIKE 'tag:%' AND EXISTS (
+         WHERE m.account_id = ?1 AND NOT EXISTS (SELECT 1 FROM mail_location_intents p WHERE p.account_id=m.account_id AND p.optimistic=1 AND p.identity=CASE WHEN NULLIF(m.message_id,'') IS NOT NULL THEN json_array('id',m.message_id,m.date,m.sender,m.subject) ELSE json_array('row',m.folder,m.uid,m.uid_validity) END) AND ((?2 = 'starred' AND m.flagged = 1 AND m.folder<>'trash') OR m.folder = ?2 OR (?2 LIKE 'tag:%' AND m.folder<>'trash' AND EXISTS (
              SELECT 1 FROM message_tags mt WHERE mt.account_id = m.account_id AND mt.folder = m.folder AND mt.message_uid = m.uid AND mt.tag_id = substr(?2, 5)
          ))) AND messages_fts MATCH ?3
          ORDER BY bm25(messages_fts, 0.0, 8.0, 5.0, 3.0, 1.0, 1.0) ASC, m.date DESC
@@ -1454,6 +1466,16 @@ pub fn get_existing_uids(app_handle: &AppHandle, account_id: &str, folder: &str,
     Ok(existing)
 }
 
+/// UI/search reads honor pending Trash visibility. Internal identity checks
+/// still use the raw rows so rollback never needs to recreate cached content.
+pub fn get_visible_messages_by_uids(app_handle: &AppHandle, account_id: &str, folder: &str, uids: &[u32]) -> Result<Vec<MessageHeader>, String> {
+    let mut messages=get_messages_by_uids(app_handle,account_id,folder,uids)?;
+    let conn=open_connection(app_handle)?;
+    let mut stmt=conn.prepare("SELECT identity FROM mail_location_intents WHERE account_id=?1 AND optimistic=1").map_err(|e|e.to_string())?;
+    let hidden=stmt.query_map([account_id],|row|row.get::<_,String>(0)).map_err(|e|e.to_string())?.collect::<rusqlite::Result<std::collections::HashSet<_>>>().map_err(|e|e.to_string())?;
+    messages.retain(|header|!hidden.contains(&crate::mail::trash::identity(header)));
+    Ok(messages)
+}
 pub fn get_messages_by_uids(app_handle: &AppHandle, account_id: &str, folder: &str, uids: &[u32]) -> Result<Vec<MessageHeader>, String> {
     if uids.is_empty() {
         return Ok(Vec::new());

@@ -8,6 +8,7 @@ Implemented 20 October 2026. Provider and Windows interaction checks remain nece
 - Drafts opens cached messages immediately, shows skeletons while initially loading, searches subject/recipients/preview locally, and virtualizes the list.
 - Opening a message resumes its recipients, pending recipient input, Cc/Bcc, subject, HTML/plain bodies and attachment references. An existing draft is not rewritten just because its editor normalized HTML on startup.
 - Offline work stays on the device. A single background worker coalesces provider saves after a pause and checks Gmail periodically. Explicit Drafts refresh and Sync Now also reconcile. Paused background sync leaves local saving enabled.
+- Opening Drafts starts the background worker even before an Inbox sync or local edit. Returning to the window or reconnecting also refreshes the open folder (throttled), without a second renderer polling loop.
 - Gmail changes never replace text inside an open editor. Divergent local/provider versions are preserved as separate drafts, marked as copies.
 - A shutdown journal attempts recovery of an interrupted local save when Drafts next opens. Recovery uses a separate copy if its saved revision diverged. Missing attachment bytes are called out and sending stays disabled until the files are removed/reselected.
 

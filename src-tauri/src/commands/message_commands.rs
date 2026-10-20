@@ -2,42 +2,38 @@ use crate::mail::database;
 use tauri::AppHandle;
 
 #[tauri::command]
-pub async fn mark_as_read(app_handle: AppHandle, account_id:String,expected_uid_validity:u32,uid: u32, folder: Option<String>) -> Result<(), String> {
+pub async fn mark_as_read(app_handle: AppHandle, account_id:String,expected_uid_validity:u32,uid: u32, folder: Option<String>,local_id:Option<String>) -> Result<Option<crate::mail::trash::Pending>, String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "seen", Some(true),expected_uid_validity).await?;
+    let receipt=crate::mail::message_actions::perform_for_location(&app_handle, &account, &folder_str, uid, "seen", Some(true),expected_uid_validity,local_id.as_deref()).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
-    Ok(())
+    Ok(receipt)
 }
 
 #[tauri::command]
-pub async fn toggle_read(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, should_read: bool, folder: Option<String>) -> Result<(), String> {
+pub async fn toggle_read(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, should_read: bool, folder: Option<String>,local_id:Option<String>) -> Result<Option<crate::mail::trash::Pending>, String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "seen", Some(should_read),expected_uid_validity).await?;
+    let receipt=crate::mail::message_actions::perform_for_location(&app_handle, &account, &folder_str, uid, "seen", Some(should_read),expected_uid_validity,local_id.as_deref()).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
-    Ok(())
+    Ok(receipt)
 }
 
 #[tauri::command]
-pub async fn toggle_star(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, should_star: bool, folder: Option<String>) -> Result<(), String> {
+pub async fn toggle_star(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, should_star: bool, folder: Option<String>,local_id:Option<String>) -> Result<Option<crate::mail::trash::Pending>, String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "flagged", Some(should_star),expected_uid_validity).await?;
-    Ok(())
+    crate::mail::message_actions::perform_for_location(&app_handle, &account, &folder_str, uid, "flagged", Some(should_star),expected_uid_validity,local_id.as_deref()).await
 }
 
 #[tauri::command]
 pub async fn delete_message(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, folder: Option<String>) -> Result<(), String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
-    crate::mail::message_actions::perform(&app_handle, &account, &folder_str, uid, "delete", None,expected_uid_validity).await?;
-    crate::tray_state::refresh_unread_count_from_db(&app_handle);
-    Ok(())
+    if folder_str=="trash" { return Err("Use Delete forever from Trash, with explicit confirmation.".into()); }
+    crate::mail::trash::trash_action(app_handle,account_id,uid,expected_uid_validity,"move".into(),Some(folder_str),None,None).await.map(|_|())
 }
 
 #[tauri::command]
@@ -48,7 +44,8 @@ pub async fn get_messages_page(
     before_folder: Option<String>,
     limit: u32,
 ) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let account = crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
     let safe_limit = limit.min(100);
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
     
@@ -99,11 +96,22 @@ pub async fn download_attachment(
     uid: u32,
     part_id: String,
     save_path: String,
+    local_id: Option<String>,
 ) -> Result<String, String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
+    let (folder,uid,_)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
     
-    let bytes = crate::mail::message_body::fetch_attachment_part(&account, &folder, uid, &part_id).await?;
+    let first=crate::mail::message_body::fetch_attachment_part(&account, &folder, uid, &part_id).await;
+    let bytes=match first {
+        Ok(bytes)=>bytes,
+        Err(error)=>{
+            if crate::auth::session::get_active_profile(&app_handle).is_none_or(|active|active.id!=account.id){return Err("Account changed".into());}
+            let (current_folder,current_uid,_)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
+            if local_id.is_none() || (current_folder==folder && current_uid==uid){return Err(error);}
+            crate::mail::message_body::fetch_attachment_part(&account,&current_folder,current_uid,&part_id).await?
+        }
+    };
     
     std::fs::write(&save_path, bytes).map_err(|e| e.to_string())?;
     Ok(save_path)
@@ -190,14 +198,15 @@ pub fn show_main_window(app_handle: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::collections::HashMap<String, u32>, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let account=crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
     tokio::task::spawn_blocking(move || {
         let db_path = crate::mail::database::get_db_path(&app_handle)?;
         let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
 
         let mut counts = std::collections::HashMap::new();
 
-        let sql=format!("SELECT folder, COUNT(DISTINCT {}) FROM messages WHERE account_id=?1 AND seen=0 GROUP BY folder",database::CACHED_MESSAGE_IDENTITY_SQL);
+        let sql=format!("{} SELECT folder,COUNT(DISTINCT identity) FROM visible_mail WHERE seen=0 GROUP BY folder",database::VISIBLE_MAIL_CTE);
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = stmt.query_map([account.id.as_str()], |row| {
             let folder: String = row.get(0)?;
@@ -211,7 +220,7 @@ pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::coll
             }
         }
 
-        let sql=format!("SELECT COUNT(DISTINCT {}) FROM messages WHERE account_id=?1 AND seen=0 AND flagged=1",database::CACHED_MESSAGE_IDENTITY_SQL);
+        let sql=format!("{} SELECT COUNT(DISTINCT identity) FROM visible_mail WHERE seen=0 AND flagged=1 AND folder<>'trash'",database::VISIBLE_MAIL_CTE);
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         if let Ok(count) = stmt.query_row([account.id.as_str()], |row| row.get(0)) {
             counts.insert("starred".to_string(), count);
@@ -386,13 +395,14 @@ pub async fn refresh_message_labels(app_handle:tauri::AppHandle,account_id:Strin
 
 #[tauri::command]
 pub async fn get_cached_message_headers(app_handle:tauri::AppHandle,requests:Vec<crate::mail::tags::refresh::LabelTarget>)->Result<Vec<crate::mail::message_list::MessageHeader>,String>{
-    let account=crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let account=crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
     if requests.len()>1000{return Err("Too many cached messages".into());}
     tokio::task::spawn_blocking(move||{
         let mut groups:std::collections::BTreeMap<String,Vec<u32>>=std::collections::BTreeMap::new();
         for request in requests{groups.entry(request.folder).or_default().push(request.uid);}
         let mut messages=Vec::new();
-        for(folder,uids)in groups{for batch in uids.chunks(200){messages.extend(database::get_messages_by_uids(&app_handle,&account.id,&folder,batch)?);}}
+        for(folder,uids)in groups{for batch in uids.chunks(200){messages.extend(database::get_visible_messages_by_uids(&app_handle,&account.id,&folder,batch)?);}}
         Ok(messages)
     }).await.map_err(|e|e.to_string())?
 }

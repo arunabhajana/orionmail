@@ -6,6 +6,8 @@ export interface Attachment {
 }
 
 export interface Email {
+    locationId?: string;
+    displayFolder?: 'inbox' | 'trash';
     tagsPending?: boolean;
     id: string;
     uid: number;

@@ -30,6 +30,7 @@ pub async fn sync_folder_with_options(
 ) -> Result<u32, String> {
     crate::auth::app_lock::require_unlocked(app_handle)?;
     crate::mail::drafts::kick(app_handle);
+    crate::mail::trash::retry_pending(app_handle, &account).await;
     crate::mail::message_actions::retry_pending(app_handle, &account).await;
     crate::mail::tags::outbox::retry_pending(app_handle, &account).await;
     // Check global state for tags sync
@@ -80,6 +81,7 @@ pub async fn sync_folder_with_options(
         &account,
         crate::mail::imap_session::SessionKind::Sync,
         move |session| {
+            let imap_mailbox = if folder_clone==MailFolder::Trash {crate::mail::trash::discover(&app_handle_clone,&account_clone,session)?}else{imap_mailbox.clone()};
             // Use the drop guard to automatically clear sync_in_progress if we panic
             let _progress_guard = database::SyncProgressGuard::new(
                 app_handle_clone.clone(),
@@ -130,6 +132,14 @@ pub async fn sync_folder_with_options(
             if stored_validity != Some(server_validity)
                 || sync_state.uid_validity != Some(server_validity)
             {
+                let _mutation=crate::mail::message_actions::MUTATION_LOCK.blocking_lock();
+                // A confirmed move may have initialized this mailbox while
+                // sync was waiting. Re-read before invalidating its new cache.
+                let latest=database::get_folder_sync_state(&app_handle_clone,&account_id,&folder_name_clone)?;
+                let latest_validity=database::get_mailbox_validity(&app_handle_clone,&account_id,&imap_mailbox)?;
+                if let Some(latest) = latest.filter(|state| latest_validity==Some(server_validity) && state.uid_validity==Some(server_validity)) {
+                    sync_state=latest;
+                }else{
                 log::info!(
                     "UIDVALIDITY changed ({} -> {}). Clearing cache.",
                     stored_validity.unwrap_or(0),
@@ -147,16 +157,18 @@ pub async fn sync_folder_with_options(
                     let _ = app_handle_clone.emit("mail:action_conflict", serde_json::json!({"account_id":account_id,"folder":folder_name_clone,"error":"Mailbox identity changed. Old queued actions were stopped to protect your mail."}));
                 }
                 sync_state.last_uid = 0;
+                sync_state.last_synced_at = 0;
                 sync_state.last_full_sync_at = 0;
                 sync_state.uid_validity = Some(server_validity);
                 database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
+                }
             }
 
             // New-arrival delta and existing-message reconciliation are independent.
             let mut num_new = 0;
-            let is_bootstrap = sync_state.last_uid == 0;
+            let is_bootstrap = sync_state.last_uid == 0 || sync_state.last_synced_at == 0;
             if uid_next > sync_state.last_uid.saturating_add(1) {
-                let range = if is_bootstrap {
+                let range = if sync_state.last_uid == 0 {
                     let end = uid_next.saturating_sub(1);
                     format!("{}:{}", 1, end)
                 } else {
@@ -170,9 +182,27 @@ pub async fn sync_folder_with_options(
 
                 log::info!("Fetching interval for {}: {}", folder_name_clone, range);
 
+                // Mailboxes can contain years of mail. Materialize only
+                // UID numbers up front, then fetch/cache at most 200 headers at
+                // a time. Each completed batch advances the resumable cursor.
+                let ranges = {
+                    let mut uids: Vec<_> = session.uid_search(format!("UID {range}"))
+                        .map_err(|e| format!("Mailbox UID search failed: {e}"))?.into_iter().collect();
+                    uids.sort_unstable();
+                    uids.chunks(200).map(|batch| batch.iter().map(u32::to_string).collect::<Vec<_>>().join(",")).collect::<Vec<_>>()
+                };
+                for batch_range in ranges {
+                if std::time::Instant::now() >= deadline {
+                    return Err("Folder history sync paused at its checkpoint. Sync again to continue.".into());
+                }
+                // A FETCH taken before a move must not commit
+                // after that action and resurrect the source row. Enqueue is
+                // independent of this network lock, so clicks remain local.
+                let header_mutation = crate::mail::message_actions::MUTATION_LOCK.blocking_lock();
+
                 let fetch_results = session
                     .uid_fetch(
-                        &range,
+                        &batch_range,
                         "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID)])",
                     )
                     .map_err(|e| format!("IMAP Fetch Error: {}", e))?;
@@ -197,20 +227,37 @@ pub async fn sync_folder_with_options(
                     }
                 }
 
-                num_new = messages.len() as u32;
+                let batch_count = messages.len() as u32;
+                num_new += batch_count;
 
                 log::info!(
                     "Grabbed {} new messages for {}!",
-                    num_new,
+                    batch_count,
                     folder_name_clone
                 );
                 database::insert_or_update_messages(&app_handle_clone, &account_id, &messages)
                     .map_err(|e| e.to_string())?;
+                if folder_clone==MailFolder::Inbox && matches!(account_clone.provider,crate::auth::account::MailProvider::Google) {
+                    crate::mail::trash::inbox_headers(&app_handle_clone,&account_id,&messages)?;
+                }
+                // Protect FETCH + header commit only. Gmail's membership
+                // helper acquires this lock itself when committing labels.
+                // Holding it across that call deadlocks the sync worker.
+                drop(header_mutation);
 
-                if num_new > 0 {
+                // Cached headers are ready to browse before label/contact
+                // enrichment finishes. Do not make the list wait on it.
+                if batch_count > 0 {
+                    use tauri::Emitter;
+                    if let Err(e) = app_handle_clone.emit("mail:updated", &folder_name_clone) {
+                        log::error!("Failed to emit mail:updated event: {}", e);
+                    }
+                }
+
+                if batch_count > 0 {
                     crate::mail::tags::sync_message_tags(
                         session,
-                        &range,
+                        &batch_range,
                         &folder_name_clone,
                         &account_clone.id,
                         &account_clone.provider,
@@ -228,12 +275,7 @@ pub async fn sync_folder_with_options(
                     }
                 }
 
-                if num_new > 0 {
-                    use tauri::Emitter;
-                    if let Err(e) = app_handle_clone.emit("mail:updated", &folder_name_clone) {
-                        log::error!("Failed to emit mail:updated event: {}", e);
-                    }
-
+                if batch_count > 0 {
                     if !is_bootstrap && folder_clone == MailFolder::Inbox {
                         let mut notif_batch = Vec::new();
                         for msg in &messages {
@@ -247,8 +289,14 @@ pub async fn sync_folder_with_options(
                     }
                 }
 
-                // Empty successful ranges are valid when UIDs have been expunged.
-                sync_state.last_uid = std::cmp::max(max_fetched_uid, uid_next.saturating_sub(1));
+                sync_state.last_uid = max_fetched_uid;
+                database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
+                }
+                // Only skip gaps once every batch completed successfully.
+                sync_state.last_uid = uid_next.saturating_sub(1);
+                // Header history is initialized even if the later full flag
+                // scan needs another pass. Future arrivals remain eligible.
+                sync_state.last_synced_at = chrono::Utc::now().timestamp();
                 database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
             }
 
@@ -362,10 +410,20 @@ pub async fn sync_folder_with_options(
         }
     }
 
+    if new_messages_count>0 && folder==MailFolder::Trash && matches!(account.provider,crate::auth::account::MailProvider::Google){
+        let cleanup_app=app_handle.clone();let cleanup_account=account.id.clone();
+        tokio::task::spawn_blocking(move||{
+            let _mutation=crate::mail::message_actions::MUTATION_LOCK.blocking_lock();
+            let conn=database::open_connection(&cleanup_app)?;
+            conn.execute("DELETE FROM messages WHERE rowid IN (SELECT m.rowid FROM messages t JOIN messages m ON m.account_id=t.account_id AND m.message_id=t.message_id AND m.date=t.date AND m.sender=t.sender AND m.subject=t.subject WHERE t.account_id=?1 AND t.folder='trash' AND NULLIF(t.message_id,'') IS NOT NULL AND m.folder<>'trash')",[&cleanup_account]).map_err(|e|e.to_string())?;
+            crate::mail::search::SEARCH_CACHE.retain(|_,entry|entry.account_id!=cleanup_account);Ok::<_,String>(())
+        }).await.map_err(|e|e.to_string())??;
+        use tauri::Emitter;let _=app_handle.emit("mail:labels_changed",&account.id);crate::tray_state::refresh_unread_count_from_db(app_handle);
+    }
     Ok(new_messages_count)
 }
 
-fn parse_header_to_message(
+pub(crate) fn parse_header_to_message(
     msg: &imap::types::Fetch,
     server_validity: u32,
     folder_name: &str,

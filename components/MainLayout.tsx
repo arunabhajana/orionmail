@@ -9,6 +9,10 @@ import { AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ComposeModal, { type ComposeHandle } from '@/components/ComposeModal';
 import { DraftFolder } from '@/components/inbox/DraftFolder';
+import { useTrashOperations } from '@/hooks/useTrashOperations';
+import type { PendingTrashAction } from '@/lib/trash';
+import { useActiveFolderRefresh } from '@/hooks/useActiveFolderRefresh';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import type { MailDraft } from '@/lib/drafts';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -39,6 +43,7 @@ const EMPTY_SEARCH_STATE: FolderSearchState = {
     searchQuery: '', activeSearchId: null, searchProgress: null,
     searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false,
 };
+interface LocalLocationChoice { accountId: string; email: Email; desired: 'inbox' | 'trash' | 'deleted'; token: number; requestId: string; }
 
 export default function MainLayout() {
     const { user } = useAuth();
@@ -50,6 +55,11 @@ export default function MainLayout() {
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
     const [isComposeOpen, setIsComposeOpen] = useState(false);
     const [composeDraft, setComposeDraft] = useState<MailDraft | undefined>();
+    const [locationChoices, setLocationChoices] = useState<Record<string, LocalLocationChoice>>({});
+    const locationChoicesRef = useRef<Record<string, LocalLocationChoice>>({});
+    const locationSerial = useRef(0);
+    const locationChains = useRef(new Map<string, Promise<PendingTrashAction>>());
+    const purgeConfirmations = useRef(new Set<string>());
     const composeWindowRef = useRef<ComposeHandle>(null);
     const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
     const [editingTag, setEditingTag] = useState<Tag | null>(null);
@@ -63,8 +73,6 @@ export default function MainLayout() {
     const tagRequests = useRef(new Set<string>());
     const [pendingFlags,setPendingFlags]=useState<Record<string,{accountId:string;email:Email;patch:Partial<Email>}>>({});
     const flagVersions=useRef(new Map<string,number>());
-    const [pendingDeletes,setPendingDeletes]=useState<Record<string,{accountId:string;email:Email}>>({});
-    const deleteRequests=useRef(new Set<string>());
     const { isSyncing, setIsSyncing, setSyncMessage, unreadCounts, setUnreadCounts, syncTriggerCount, triggerSync } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
     const [isLoadingFolder, setIsLoadingFolder] = useState(false); // Loading skeleton when switching folders
@@ -87,6 +95,19 @@ export default function MainLayout() {
     folderSearchRef.current=folderSearchContexts;
 
     const activeSearchState = folderSearchContexts[currentFolder] || EMPTY_SEARCH_STATE;
+    const { operations: pendingTrash, accept: acceptLocation } = useTrashOperations(user?.id, event => {
+        if (event.account_id !== activeAccountRef.current) return false;
+        if (Object.values(locationChoicesRef.current).some(choice => choice.accountId === event.account_id && (choice.requestId === event.id || choice.email.locationId === event.id))) return false;
+        ++cacheRevisionRef.current;
+        // Roll back from the current cached row, never an obsolete renderer
+        // snapshot or a fabricated Inbox UID. Preserve the scrolled list.
+        if (event.source && currentFolderRef.current === event.source.folder) {
+            const restored = formatEmailFromMessage(event.source);
+            setEmails(previous => dedupeMail([restored, ...previous]));
+            const query = folderSearchRef.current[currentFolderRef.current]?.searchQuery;
+            if (query) handleSearchQueryChange(query);
+        }
+    }, selectedEmailId);
 
     const activeSearchIdRef = useRef<string | null>(null);
     useEffect(() => {
@@ -115,33 +136,63 @@ export default function MainLayout() {
     // --- Derived State ---
 
     const { filteredEmails, visibleEmails } = useMemo(() => {
+        const receipts = new Map(pendingTrash.map(row => [mailIdentity(formatEmailFromMessage(row.source)), row]));
         const pendingTags = Object.values(pendingTagAdds).filter(item => item.accountId === user?.id);
         const overlayTags = (email: Email): Email => {
-            const flagEdits=Object.values(pendingFlags).filter(edit=>edit.accountId===user?.id&&sameMail(edit.email,email));
-            if (flagEdits.length) email=Object.assign({},email,...flagEdits.map(edit=>edit.patch));
-            const pending = pendingTags.find(item => sameMail(item.email,email));
+            const flagEdits = Object.values(pendingFlags).filter(edit => edit.accountId === user?.id && sameMail(edit.email, email));
+            if (flagEdits.length) email = Object.assign({}, email, ...flagEdits.map(edit => edit.patch));
+            const pending = pendingTags.find(item => sameMail(item.email, email));
             return pending ? { ...email, tags: [...new Set([...email.tags, ...pending.tags])].filter(id => !pending.removed.includes(id)), tagsPending: true } : email;
         };
-        const visibleCandidates = emails.map(overlayTags);
-        if (currentFolder.startsWith('tag:')) {
-            for (const pending of pendingTags) {
-                if (pending.tags.includes(currentFolder.slice(4)) && !visibleCandidates.some(item => sameMail(item,pending.email))) {
-                    visibleCandidates.unshift(overlayTags(pending.email));
-                }
+        const candidates = new Map<string, Email>();
+        const base = activeSearchState.searchQuery ? activeSearchState.searchResults : emails;
+        const searchMatches = new Set(base.map(mailIdentity));
+        const matchesSearch = (email: Email) => {
+            if (!activeSearchState.searchQuery || searchMatches.has(mailIdentity(email))) return true;
+            const text = `${email.senderEmail} ${email.to || ''} ${email.subject} ${email.preview}`.toLocaleLowerCase();
+            return activeSearchState.searchQuery.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean).every(word => text.includes(word));
+        };
+        for (const email of base) {
+            const identity = mailIdentity(email);
+            const receipt = receipts.get(identity);
+            if (receipt?.optimistic) continue;
+            if (receipt && !receipt.deleted) {
+                candidates.set(identity, { ...email, id: receipt.locallyTouched ? `local-${receipt.id}` : email.id, locationId: receipt.id });
+            } else candidates.set(identity, email);
+        }
+        for (const row of pendingTrash) {
+            if (row.deleted || (!row.optimistic && (!row.locallyTouched || !row.cached))) continue;
+            const source = formatEmailFromMessage(row.source);
+            const identity = mailIdentity(source);
+            if (row.optimistic && row.desired === 'deleted') { candidates.delete(identity); continue; }
+            if (row.optimistic || !candidates.has(identity)) {
+                const email: Email = { ...source, id: `local-${row.id}`, locationId: row.id,
+                    displayFolder: row.optimistic ? row.desired as 'inbox' | 'trash' : undefined };
+                if (matchesSearch(email)) candidates.set(identity, email);
             }
         }
-        const filteredEmails = activeSearchState.searchQuery ? activeSearchState.searchResults.map(overlayTags) : visibleCandidates.filter(email => {
-            if (currentFolder === 'starred') {
-                return email.starred;
+        for (const choice of Object.values(locationChoices)) {
+            if (choice.accountId !== user?.id) continue;
+            const identity = mailIdentity(choice.email);
+            candidates.delete(identity);
+            if (choice.desired !== 'deleted') {
+                const email: Email = { ...choice.email, id: `local-${choice.requestId}`, locationId: choice.requestId, displayFolder: choice.desired };
+                if (matchesSearch(email)) candidates.set(identity, email);
             }
-            if (currentFolder.startsWith('tag:')) return email.tags.includes(currentFolder.slice(4));
-            return email.folder === currentFolder;
-        });
-        const visibleEmails=filteredEmails.filter(email=>!Object.values(pendingDeletes).some(edit=>edit.accountId===user?.id&&sameMail(edit.email,email)));
-
-        return { filteredEmails, visibleEmails };
-    }, [emails, pendingTagAdds, pendingFlags, pendingDeletes, user?.id, currentFolder, activeSearchState.searchQuery, activeSearchState.searchResults]);
-
+        }
+        for (const pending of pendingTags) {
+            if (!candidates.has(mailIdentity(pending.email)) && pending.tags.includes(currentFolder.slice(4)) && currentFolder.startsWith('tag:') && !receipts.get(mailIdentity(pending.email))?.optimistic) {
+                candidates.set(mailIdentity(pending.email), pending.email);
+            }
+        }
+        const filteredEmails = dedupeMail([...candidates.values()].map(overlayTags).filter(email => {
+            const folder = email.displayFolder || email.folder;
+            if (currentFolder === 'starred') return folder !== 'trash' && email.starred;
+            if (currentFolder.startsWith('tag:')) return folder !== 'trash' && email.tags.includes(currentFolder.slice(4));
+            return folder === currentFolder;
+        }));
+        return { filteredEmails, visibleEmails: filteredEmails };
+    }, [emails, pendingTagAdds, pendingFlags, locationChoices, pendingTrash, user?.id, currentFolder, activeSearchState.searchQuery, activeSearchState.searchResults]);
     const selectedEmail = visibleEmails.find(e => e.id === selectedEmailId);
 
 
@@ -229,7 +280,8 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder || "inbox";
-            await invoke('toggle_star', { accountId:user?.id, expectedUidValidity:target.uidValidity??0, uid: target.uid, shouldStar: newStarredState, folder: folderName });
+            const receipt=await invoke<PendingTrashAction | null>('toggle_star', { accountId:user?.id, expectedUidValidity:target.uidValidity??0, uid: target.uid, shouldStar: newStarredState, folder: folderName, localId: target.locationId });
+            if(receipt && activeAccountRef.current===user?.id) acceptLocation(receipt);
             if(edit.current())patchMessage(target,{starred:newStarredState});
             fetchUnreadCounts();
         } catch (err) {
@@ -262,7 +314,8 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder || "inbox";
-            await invoke('toggle_read', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, shouldRead: newReadState, folder: folderName });
+            const receipt=await invoke<PendingTrashAction | null>('toggle_read', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, shouldRead: newReadState, folder: folderName, localId: target.locationId });
+            if(receipt && activeAccountRef.current===user?.id) acceptLocation(receipt);
             if(edit.current())patchMessage(target,{unread:!newReadState});
             fetchUnreadCounts();
         } catch (err) {
@@ -294,7 +347,8 @@ export default function MainLayout() {
 
         try {
             const folderName = target.folder || "inbox";
-            await invoke('mark_as_read', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, folder: folderName });
+            const receipt=await invoke<PendingTrashAction | null>('mark_as_read', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, folder: folderName, localId: target.locationId });
+            if(receipt && activeAccountRef.current===user?.id) acceptLocation(receipt);
             if(edit.current())patchMessage(target,{unread:false});
             fetchUnreadCounts();
         } catch (err) {
@@ -312,55 +366,70 @@ export default function MainLayout() {
     };
 
     const deleteMessage = async (emailId: string) => {
-        const target = filteredEmails.find(e => e.id === emailId);
-        if (!target) return;
-        const deleteKey=JSON.stringify([user?.id,mailIdentity(target)]);
-        if(deleteRequests.current.has(deleteKey))return;
-        deleteRequests.current.add(deleteKey);
-        setPendingDeletes(prev=>({...prev,[deleteKey]:{accountId:user?.id??'',email:target}}));
-        const removeFromViews=()=>{
-            setEmails(prev=>prev.filter(email=>!sameMail(email,target)));
-            setFolderSearchContexts(prev=>Object.fromEntries(Object.entries(prev).map(([folder,state])=>[folder,{...state,searchResults:state.searchResults.filter(email=>!sameMail(email,target))}])));
-        };
-        const deletedSelected = selectedEmailId === emailId;
-        const targetIndex = filteredEmails.findIndex(e => e.id === emailId);
-        const nextId = filteredEmails[targetIndex + 1]?.id || filteredEmails[targetIndex - 1]?.id || null;
-        // Optimistic Update
-        removeFromViews();
-        if (selectedEmailId === emailId) {
-            setSelectedEmailId(null);
-        }
-
-        if (target.unread) {
-            updateUnreadCount(target, -1);
-        }
-
-        try {
-            const folderName = target.folder || "inbox";
-            await invoke('delete_message', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, folder: folderName });
-            if(activeAccountRef.current===user?.id)removeFromViews();
-            if (deletedSelected && preferences.autoSelectNext && currentFolderRef.current === currentFolder && activeAccountRef.current === user?.id) setSelectedEmailId(current => current === null ? nextId : current);
-            fetchUnreadCounts();
-        } catch (err) {
-            if(activeAccountRef.current!==user?.id)return;
-            console.error("Failed to delete message", err);
-            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                localStorage.removeItem("orion_user");
-                window.location.href = "/";
-                return;
-            }
-            toast.error("Couldn't delete message", { description: String(err) });
-            // Rollback via DB fetch since array splicing is tricky to reverse
-            await fetchCache(currentFolder);
-        }finally{
-            deleteRequests.current.delete(deleteKey);
-            setPendingDeletes(prev=>{const next={...prev};delete next[deleteKey];return next;});
-        }
+        const target = visibleEmails.find(email => email.id === emailId);
+        if (target) await performTrashAction(emailId, (target.displayFolder || target.folder) === 'trash' ? 'purge' : 'move');
     };
 
     const dedupeEmails = dedupeMail;
-
-    const formatEmailFromMessage = (msg: any): Email => {
+    const performTrashAction = async (emailId: string, action: 'move' | 'restore' | 'purge') => {
+        const target = visibleEmails.find(email => email.id === emailId);
+        const accountId = user?.id;
+        if (!target || !accountId) return;
+        const identity = mailIdentity(target);
+        const key = JSON.stringify([accountId, identity]);
+        if (action === 'purge') {
+            if (purgeConfirmations.current.has(key)) return;
+            purgeConfirmations.current.add(key);
+            try {
+                if (!await confirm(`Permanently delete “${target.subject || '(No subject)'}”? This cannot be undone.`, { title: 'Delete forever', kind: 'warning', okLabel: 'Delete forever', cancelLabel: 'Cancel' })) return;
+            } finally { purgeConfirmations.current.delete(key); }
+        }
+        if (activeAccountRef.current !== accountId) return;
+        const desired = action === 'move' ? 'trash' : action === 'restore' ? 'inbox' : 'deleted';
+        const oldChoice = locationChoicesRef.current[key];
+        if (oldChoice?.desired === desired) return;
+        const token = ++locationSerial.current;
+        const requestId = oldChoice?.requestId || target.locationId || crypto.randomUUID();
+        const choice: LocalLocationChoice = { accountId, email: target, desired, token, requestId };
+        locationChoicesRef.current = { ...locationChoicesRef.current, [key]: choice };
+        setLocationChoices(locationChoicesRef.current);
+        ++cacheRevisionRef.current;
+        if (selectedEmailId === emailId) {
+            const index = visibleEmails.findIndex(email => email.id === emailId);
+            const next = visibleEmails[index + 1]?.id || visibleEmails[index - 1]?.id || null;
+            setSelectedEmailId(preferences.autoSelectNext ? next : null);
+        }
+        // Only local queue writes are ordered here. Gmail never blocks another
+        // click, including a reversal on the same still-syncing message.
+        const previous = locationChains.current.get(key);
+        const work = (previous || Promise.resolve(undefined)).catch(() => undefined).then(async receipt => {
+            if (activeAccountRef.current !== accountId) throw new Error('Account changed');
+            return invoke<PendingTrashAction>('trash_action', {
+                accountId, uid: target.uid, expectedUidValidity: target.uidValidity ?? 0,
+                folder: target.folder, localId: receipt?.id || target.locationId || null,
+                requestId, action,
+            });
+        });
+        locationChains.current.set(key, work);
+        try {
+            const receipt = await work;
+            if (activeAccountRef.current === accountId && locationChoicesRef.current[key]?.token === token) {
+                acceptLocation(receipt, true);
+                setSelectedEmailId(previous => previous === `local-${requestId}` ? `local-${receipt.id}` : previous);
+            }
+        } catch (error) {
+            if (activeAccountRef.current === accountId && locationChoicesRef.current[key]?.token === token) {
+                toast.error('Mail change reverted', { description: String(error) });
+            }
+        } finally {
+            if (locationChoicesRef.current[key]?.token === token) {
+                const next = { ...locationChoicesRef.current }; delete next[key];
+                locationChoicesRef.current = next; setLocationChoices(next);
+            }
+            if (locationChains.current.get(key) === work) locationChains.current.delete(key);
+        }
+    };
+    function formatEmailFromMessage(msg: any): Email {
         let folder = msg.folder;
         if (!folder) folder = "inbox";
         else if (folder.toLowerCase() === "sent") folder = "sent";
@@ -396,7 +465,7 @@ export default function MainLayout() {
 
     const fetchCache = async (folderToFetch = currentFolderRef.current) => {
         const revision = cacheRevisionRef.current;
-        if (folderToFetch === "drafts" || folderToFetch === "trash") {
+        if (folderToFetch === "drafts") {
             setEmails([]);
             setHasMore(false);
             return false;
@@ -474,7 +543,7 @@ export default function MainLayout() {
 
     const refreshNewEmails = async (folderToFetch = currentFolderRef.current) => {
         const revision = cacheRevisionRef.current;
-        if (folderToFetch === "drafts" || folderToFetch === "trash") return;
+        if (folderToFetch === "drafts") return;
 
         try {
             const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
@@ -519,7 +588,7 @@ export default function MainLayout() {
     const loadMoreEmails = async () => {
         const revision = cacheRevisionRef.current;
         const currentEmails = emailsRef.current;
-        if (isLoadingMore || !hasMore || currentEmails.length === 0 || currentFolder === "drafts" || currentFolder === "trash") return;
+        if (isLoadingMore || !hasMore || currentEmails.length === 0 || currentFolder === "drafts") return;
         setIsLoadingMore(true);
         try {
             const lastEmail = currentEmails[currentEmails.length - 1];
@@ -587,7 +656,7 @@ export default function MainLayout() {
         const folderAtSyncTime = currentFolderRef.current;
         const targetFolder = requestedFolder ?? folderAtSyncTime;
         if (targetFolder === 'drafts') return invoke('sync_drafts', { accountId: activeAccountRef.current }).then(() => {}).catch(error => { if (!isBackground) toast.error(String(error)); });
-        if (targetFolder === 'trash' || (!requestedFolder && isSyncing)) return Promise.resolve();
+        if (!requestedFolder && isSyncing) return Promise.resolve();
         setIsSyncing(true);
         setSyncError(null);
 
@@ -633,6 +702,7 @@ export default function MainLayout() {
     const handleForceSync = () => {
         triggerSync();
     };
+    useActiveFolderRefresh(!isBootstrapping && !preferences.syncPaused && currentFolder === 'trash', `${user?.id}:${currentFolder}`, () => handleSync(true, 'trash'));
 
     useEffect(() => {
         if (syncTriggerCount > 0) {
@@ -718,7 +788,7 @@ export default function MainLayout() {
     useEffect(() => {
         const loadCache = async () => {
             // Dedicated/placeholder views do not participate in IMAP bootstrap.
-            if (currentFolderRef.current === 'drafts' || currentFolderRef.current === 'trash') {
+            if (currentFolderRef.current === 'drafts') {
                 setIsBootstrapping(false);
                 return;
             }
@@ -730,7 +800,7 @@ export default function MainLayout() {
                 setTimeout(() => setSyncMessage(null), 2500);
             }
 
-            if (!hasCache && !preferencesRef.current.syncPaused) {
+            if (!hasCache && !preferencesRef.current.syncPaused && currentFolderRef.current === 'inbox') {
                 // DB is empty, sync is likely already running in the background. Block and poll.
                 // If this is a fresh launch (not after login), we trigger sync ourselves.
                 handleSync(false);
@@ -773,7 +843,7 @@ export default function MainLayout() {
         setIsLoadingMore(false);
         // DraftFolder owns its local loading and Gmail synchronization. Avoid
         // a second sync from the ordinary mailbox navigation effect.
-        if (folder === 'drafts' || folder === 'trash') {
+        if (folder === 'drafts') {
             setIsLoadingFolder(false);
             return;
         }
@@ -867,6 +937,11 @@ export default function MainLayout() {
             
             unlistenError = await listen<{ folder: string; error: string }>('mail:sync_error', (event) => {
                 console.error(`Sync failed for ${event.payload.folder}:`, event.payload.error);
+                setSyncingFolders(prev => {
+                    const next = new Set(prev);
+                    next.delete(event.payload.folder);
+                    return next;
+                });
                 setSyncErrors(prev => ({
                     ...prev,
                     [event.payload.folder]: event.payload.error
@@ -1196,9 +1271,11 @@ export default function MainLayout() {
                 onToggleStar={toggleStar}
                 onToggleRead={toggleRead}
                 onDeleteMessage={deleteMessage}
+                onRestoreMessage={id => { void performTrashAction(id, 'restore'); }}
                 onAddTags={(email, tags, removed) => { void handleAddTags(email, tags, removed); }}
                 onSync={handleSync}
                 isSyncing={isSyncing || isLoadingFolder || syncingFolders.has(currentFolder)}
+                isLoading={isLoadingFolder}
                 onLoadMore={loadMoreEmails}
                 hasMore={activeSearchState.searchQuery ? activeSearchState.hasMoreSearch : hasMore}
                 isLoadingMore={activeSearchState.searchQuery ? activeSearchState.isLoadingMoreSearch : isLoadingMore}
@@ -1218,6 +1295,7 @@ export default function MainLayout() {
                 email={selectedEmail}
                 onToggleStar={toggleStar}
                 onDeleteMessage={deleteMessage}
+                onRestoreMessage={id => { void performTrashAction(id, 'restore'); }}
                 onMarkAsRead={markAsRead}
                 onToggleRead={toggleRead}
                 onBack={() => setSelectedEmailId(null)}

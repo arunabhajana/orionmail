@@ -84,7 +84,7 @@ static WAKE: tokio::sync::Notify = tokio::sync::Notify::const_new();
 pub fn changed(app: &AppHandle, account: &str) {
     let _ = app.emit("drafts:updated", account);
 }
-pub fn kick(app: &AppHandle) {
+pub fn start_worker(app: &AppHandle) {
     static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !STARTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         let app = app.clone();
@@ -108,5 +108,8 @@ pub fn kick(app: &AppHandle) {
             }
         });
     }
+}
+pub fn kick(app: &AppHandle) {
+    start_worker(app);
     WAKE.notify_one();
 }

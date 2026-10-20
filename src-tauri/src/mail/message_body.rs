@@ -455,6 +455,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
 
     use std::str::FromStr;
     let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
+        Ok(crate::mail::folder::MailFolder::Trash) => crate::mail::trash::mailbox(app_handle,account),
         Ok(mf) => match mf.to_imap_mailbox(&provider_clone) {
             Some(mb) => mb.to_string(),
             None => {
@@ -618,6 +619,7 @@ pub async fn fetch_attachment_part(account: &Account, folder: &str, uid: u32, pa
     let part_id_clone = part_id.to_string();
     let folder_clone = folder.to_string();
     let provider_clone = account.provider.clone();
+    let account_copy=account.clone();
     
     // -- SEMAPHORE ACQUIRE --
     let _permit = CONCURRENT_FETCH_LIMIT.clone().acquire_owned().await.map_err(|e| e.to_string())?;
@@ -625,6 +627,11 @@ pub async fn fetch_attachment_part(account: &Account, folder: &str, uid: u32, pa
     let imap_result = imap_session::execute_with_session(account, imap_session::SessionKind::Primary, move |session| {
         use std::str::FromStr;
         let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
+            Ok(crate::mail::folder::MailFolder::Trash) => {
+                let folders=session.list(Some(""),Some("*")).map_err(|e|e.to_string())?;
+                folders.iter().find(|name|name.attributes().iter().any(|attribute|matches!(attribute,imap::types::NameAttribute::Custom(value) if value.eq_ignore_ascii_case("\\Trash"))))
+                    .map(|name|name.name().to_string()).unwrap_or_else(||crate::mail::folder::MailFolder::Trash.to_imap_mailbox(&account_copy.provider).unwrap_or("Trash").into())
+            },
             Ok(mf) => match mf.to_imap_mailbox(&provider_clone) {
                 Some(mb) => mb.to_string(),
                 None => return Err("Cannot fetch from virtual folder".to_string()),

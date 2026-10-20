@@ -24,6 +24,7 @@ This document tracks the original findings and their current disposition. An imp
 | Gmail label response desynchronized the IMAP connection | A vendored IMAP patch consumes the unsupported Gmail extension response through completion and turns mismatched command tags into errors rather than assertions. Label-fetch errors now propagate so a broken session is discarded. | Previous compile checks; provider validation remains useful. |
 | Context-menu read/unread | Correct target flag is sent, and the open preview does not immediately undo an explicit unread action. Context menus are reusable; other menus have contextual placeholders. | Earlier TypeScript check; remaining menu features are product backlog. |
 | Incorrect sync diagnostics | `sync_in_progress` is read from account-scoped folder state rather than hardcoded false. | Compile/source checks. |
+| Provider-backed Trash | Cached/virtualized folder, skeletons, search, discovered special-use mailbox and targeted permanent deletion. Move/delete and restore immediately show a normal card at the desired local destination, with provider source identity kept separate. One durable queue coalesces the latest folder choice per account/message. Revision/version guards, provider checkpoints and bounded commit locks protect rapid reversals and stale replies. Failures revert unconfirmed local changes and show a grouped toast; successful work is silent. Body/attachment/flag reads follow confirmed UID changes. Mailbox header downloads use batches of 200 with cursor checkpoints. | Rust/TypeScript/focused lint checks; live Gmail, rapid-action and offline/restart checks remain in [Trash guide](TRASH.md). |
 
 ## How reconciliation works
 
@@ -34,7 +35,7 @@ This document tracks the original findings and their current disposition. An imp
 5. Serialize the scan/commit with local message mutations. Apply scoped flag changes and deletions, cascade tag cleanup, retain cached bodies for surviving rows and advance `last_full_sync_at` transactionally. Pending intent is preserved; a pending read/star on a removed message becomes a visible conflict.
 6. Update the list, loaded search results, search cache and unread counts. A cache revision prevents an older refresh response from restoring pre-reconciliation data.
 
-Automatic Inbox polling remains the fallback. Sent and tag reconciliation runs when those folders are synced; this is not a new background scheduler that scans every account/folder on a fixed wall-clock schedule. Network requests are bounded, but an entire very large cached-folder scan can still exceed the sync deadline; failure preserves the previous reconciliation state. Initial-header batching and resumable large-folder work remain below.
+Automatic Inbox polling remains the fallback. Sent and tag reconciliation runs when those folders are synced; this is not a new background scheduler that scans every account/folder on a fixed wall-clock schedule. Header fetch requests are bounded, but an entire very large cached-folder scan can still exceed the sync deadline; failure preserves the previous reconciliation state. Resumable large-folder discovery/reconciliation work remains below.
 
 ## Remaining findings
 
@@ -54,11 +55,11 @@ Lettre client, transient and permanent errors currently map to authentication. C
 
 **Next:** distinguish authentication, connection, timeout/uncertain delivery, rate limiting, invalid recipients and permanent rejection. Preserve safe actionable diagnostics.
 
-### P2 — Initial sync still fetches an unbounded header range
+### P2 — Very large folder discovery and reconciliation need resumable staging
 
-Bootstrap downloads headers from UID 1 through `UIDNEXT - 1` in one operation. Reconciliation's 200-UID requests do not fix this separate initial-header path.
+Mailbox bootstrap/deltas now enumerate UIDs and fetch explicit batches of at most 200 headers, publishing completed batches and preserving cursor checkpoints. Header commits serialize with message moves, then release their lock before Gmail membership enrichment. Initial notification suppression persists through interrupted history batches without suppressing subsequent real arrivals after headers finish.
 
-**Next:** bounded header batches, persisted checkpoints, progress and cancellation/resumption. Continue to keep cached list interaction independent of background history loading. For very large folders, also persist resumable reconciliation staging without pruning from an incomplete snapshot.
+**Remaining:** UID discovery still materializes the matching UID set, and a full cached-folder reconciliation scan can exceed its deadline and restart from the beginning. Persist resumable discovery/reconciliation staging and add progress/cancellation without pruning from an incomplete snapshot.
 
 Source: [sync](../src-tauri/src/mail/sync.rs).
 
@@ -97,6 +98,6 @@ Sources: [native lock policy](../src-tauri/src/auth/app_lock.rs), [callback rece
 
 1. Validate draft/offline/conflict/uncertain-delivery flows with Gmail; decide whether to add a general queued-send outbox.
 2. Accurate SMTP error categories and recipient-field UI.
-3. Bounded initial sync, resumable large-folder reconciliation and progress/cancellation.
+3. Resumable large-folder UID discovery/reconciliation and progress/cancellation.
 4. Provider support/claims and provider-specific integration checks.
 5. Finish context-menu actions individually and broaden end-to-end regression coverage.

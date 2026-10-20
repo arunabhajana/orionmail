@@ -13,7 +13,7 @@ export function sameMail(a: Email, b: Email): boolean {
 const MAIL_SCALARS = [
     'id', 'uid', 'uidValidity', 'messageId', 'sender', 'senderEmail', 'to',
     'subject', 'preview', 'date', 'time', 'timestamp', 'unread', 'starred',
-    'folder', 'avatar', 'body', 'tagsPending',
+    'folder', 'avatar', 'body', 'tagsPending', 'locationId', 'displayFolder',
 ] as const satisfies readonly (keyof Email)[];
 
 /** Preserve unchanged row objects so a quiet sync does not redraw every card. */

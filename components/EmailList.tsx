@@ -33,8 +33,10 @@ interface EmailListProps {
     onToggleStar?: (emailId: string) => void;
     onToggleRead?: (emailId: string) => void;
     onDeleteMessage?: (emailId: string) => void;
+    onRestoreMessage?: (emailId: string) => void;
     onSync?: () => void;
     isSyncing?: boolean;
+    isLoading?: boolean;
     onLoadMore?: () => void;
     hasMore?: boolean;
     isLoadingMore?: boolean;
@@ -61,8 +63,11 @@ const EmailList: React.FC<EmailListProps> = ({
     onSelectEmail,
     onToggleStar,
     onToggleRead,
+    onDeleteMessage,
+    onRestoreMessage,
     onSync,
     isSyncing,
+    isLoading = false,
     onLoadMore,
     hasMore,
     isLoadingMore,
@@ -226,7 +231,7 @@ const EmailList: React.FC<EmailListProps> = ({
             {pendingMessages.length > 0 && currentFilter === 'all' && !searchQuery && <div role="status" aria-label="Outgoing messages" className="max-h-40 shrink-0 overflow-y-auto border-y border-black/[0.04] px-2 py-1 custom-scrollbar dark:border-white/[0.05]">{pendingMessages.map(message => <PendingEmailListItem key={message.id} pending={message} />)}</div>}
 
             {/* 2. Scrollable List or Placeholder */}
-            {(currentFolder === "drafts" || currentFolder === "trash") ? (
+            {currentFolder === "drafts" ? (
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} className="flex-1 flex flex-col items-center justify-center text-center px-4">
                     <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
                         <Mailbox className="w-10 h-10 text-primary opacity-80" />
@@ -285,8 +290,9 @@ const EmailList: React.FC<EmailListProps> = ({
                         Clear Search
                     </button>
                 </motion.div>
-            ) : emails.length === 0 && isSyncing ? (
-                // Loading skeleton shown while the folder is being fetched / synced
+            ) : emails.length === 0 && isLoading ? (
+                // Only the initial local read owns the blocking skeleton.
+                // Background provider sync must not trap an empty folder here.
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -311,17 +317,17 @@ const EmailList: React.FC<EmailListProps> = ({
                         </div>
                     ))}
                 </motion.div>
-            ) : emails.length === 0 && !isSyncing ? (
+            ) : emails.length === 0 ? (
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} className="flex-1 flex flex-col items-center justify-center text-center px-4">
                     <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
                         <Mailbox className="w-10 h-10 text-primary opacity-80" />
                     </div>
-                    <h3 className="text-xl font-semibold text-foreground mb-2">{pendingMessages.length ? "Waiting for mailbox sync" : "No messages here"}</h3>
+                    <h3 className="text-xl font-semibold text-foreground mb-2">{pendingMessages.length ? "Waiting for mailbox sync" : isSyncing ? "Checking mailbox…" : currentFolder === 'trash' ? "Trash is empty" : "No messages here"}</h3>
                     <p className="text-sm text-muted-foreground max-w-[250px]">
-                        {pendingMessages.length ? "Your outgoing mail is shown above and will appear here after sync." : `Your ${folderDisplayName} folder is empty.`}
+                        {pendingMessages.length ? "Your outgoing mail is shown above and will appear here after sync." : isSyncing ? "Messages will appear here as they load. You can keep using the app." : `Your ${folderDisplayName} folder is empty.`}
                     </p>
                 </motion.div>
-            ) : displayedEmails.length === 0 && !isSyncing ? (
+            ) : displayedEmails.length === 0 ? (
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} className="flex-1 flex flex-col items-center justify-center text-center px-4">
                     <div className={cn(
                         "w-20 h-20 rounded-full flex items-center justify-center mb-6",
@@ -401,7 +407,10 @@ const EmailList: React.FC<EmailListProps> = ({
                     : null}
                 onClose={() => setContextMenuState(null)} 
                 onToggleRead={onToggleRead} 
-                onAddTags={onAddTags && !emails.find(email => email.id === contextMenuState?.emailId)?.tagsPending ? id => setTagPickerEmail(emails.find(email => email.id === id) || null) : undefined}
+                isTrash={currentFolder === 'trash'}
+                onDelete={onDeleteMessage}
+                onRestore={onRestoreMessage}
+                onAddTags={currentFolder !== 'trash' && onAddTags && !emails.find(email => email.id === contextMenuState?.emailId)?.tagsPending ? id => setTagPickerEmail(emails.find(email => email.id === id) || null) : undefined}
             />
             {tagPickerEmail && onAddTags && <MessageTagPicker email={tagPickerEmail} tags={Object.values(allTags)} onApply={onAddTags} onClose={() => setTagPickerEmail(null)} />}
         </main>

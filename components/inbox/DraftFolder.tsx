@@ -8,8 +8,11 @@ import { confirm } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
 import { draftStatus, type DraftSummary, type MailDraft } from '@/lib/drafts';
 import { recoverLocalDrafts } from '@/lib/draft-recovery';
+import { useActiveFolderRefresh } from '@/hooks/useActiveFolderRefresh';
+import { useAppPreferences } from '@/components/AppPreferencesContext';
 
 export function DraftFolder({ accountId, onOpen, onCompose, onBeforeOpen }: { accountId: string; onOpen: (draft: MailDraft) => void; onCompose: () => void; onBeforeOpen: () => boolean }) {
+    const { preferences } = useAppPreferences();
     const [drafts, setDrafts] = useState<DraftSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [syncing, setSyncing] = useState(false);
@@ -34,6 +37,7 @@ export function DraftFolder({ accountId, onOpen, onCompose, onBeforeOpen }: { ac
         catch (failure) { if (mounted.current) setError(String(failure)); }
         finally { syncGuard.current = false; if (mounted.current) { setSyncing(false); await load(); } }
     }, [accountId, load]);
+    useActiveFolderRefresh(!preferences.syncPaused, accountId, sync, false);
     useEffect(() => {
         mounted.current = true;
         void recoverLocalDrafts(accountId).then(() => { if (mounted.current) { void load(); void sync(); } }).catch(failure => { if (mounted.current) { setError(`Draft recovery: ${String(failure)}`); void load(); } });

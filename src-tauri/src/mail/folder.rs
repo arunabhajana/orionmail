@@ -9,6 +9,7 @@ pub enum MailFolder {
     Inbox,
     Sent,
     Starred,
+    Trash,
     #[serde(untagged)]
     Tag(String),
 }
@@ -19,6 +20,7 @@ impl fmt::Display for MailFolder {
             MailFolder::Inbox => write!(f, "inbox"),
             MailFolder::Sent => write!(f, "sent"),
             MailFolder::Starred => write!(f, "starred"),
+            MailFolder::Trash => write!(f, "trash"),
             MailFolder::Tag(tag_id) => write!(f, "tag:{}", tag_id),
         }
     }
@@ -38,6 +40,7 @@ impl FromStr for MailFolder {
             "inbox" => Ok(MailFolder::Inbox),
             "sent" => Ok(MailFolder::Sent),
             "starred" => Ok(MailFolder::Starred),
+            "trash" => Ok(MailFolder::Trash),
             _ => Err(format!("Unknown MailFolder: {}", s)),
         }
     }
@@ -55,6 +58,7 @@ impl MailFolder {
                 MailProvider::Custom { .. } => Some("Sent"),
             },
             MailFolder::Starred => None,
+            MailFolder::Trash => Some(match provider { MailProvider::Google => "[Gmail]/Trash", MailProvider::Outlook => "Deleted Items", MailProvider::Custom { .. } => "Trash" }),
             MailFolder::Tag(_) => None, // Handled dynamically in sync.rs
         }
     }

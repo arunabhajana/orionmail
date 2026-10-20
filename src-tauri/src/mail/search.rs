@@ -286,11 +286,15 @@ pub struct SearchContext {
 pub static ACTIVE_SEARCHES: Lazy<DashMap<String, Arc<SearchContext>>> = Lazy::new(|| DashMap::new());
 
 pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32) -> Result<MessageDetail, String> {
+    // Serialize header ingestion with confirmed moves. Otherwise an old
+    // Inbox/label search could recreate a source after it moved to Trash.
+    let _header_mutation = crate::mail::message_actions::MUTATION_LOCK.lock().await;
     let folder_clone = folder.to_string();
     let provider_clone = account.provider.clone();
     
     use std::str::FromStr;
     let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
+        Ok(crate::mail::folder::MailFolder::Trash) => crate::mail::trash::mailbox(app_handle,account),
         Ok(mf) => match mf.to_imap_mailbox(&provider_clone) {
             Some(mb) => mb.to_string(),
             None => {
@@ -312,74 +316,19 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
     let fetch_res = execute_with_session(account, SessionKind::Search, move |session| {
         let mailbox = session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
         
-        let fetch_query = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO)])";
+        let fetch_query = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID)])";
         let results = session.uid_fetch(uid.to_string(), fetch_query).map_err(|e| format!("IMAP fetch header error: {}", e))?;
         
-        if let Some(msg) = results.iter().next() {
-            let subject = if let Some(h) = msg.header() {
-                if let Ok(parsed) = mailparse::parse_mail(h) {
-                    parsed.headers.iter().find(|hdr| hdr.get_key().to_lowercase() == "subject").map(|hdr| hdr.get_value()).unwrap_or_default()
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            };
-
-            let sender = if let Some(h) = msg.header() {
-                if let Ok(parsed) = mailparse::parse_mail(h) {
-                    parsed.headers.iter().find(|hdr| hdr.get_key().to_lowercase() == "from").map(|hdr| hdr.get_value()).unwrap_or_default()
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            };
-
-            let date = if let Some(h) = msg.header() {
-                if let Ok(parsed) = mailparse::parse_mail(h) {
-                    parsed.headers.iter().find(|hdr| hdr.get_key().to_lowercase() == "date").map(|hdr| hdr.get_value())
-                        .and_then(|d| chrono::DateTime::parse_from_rfc2822(&d).ok()).map(|dt| dt.timestamp()).unwrap_or_else(|| chrono::Utc::now().timestamp())
-                } else {
-                    chrono::Utc::now().timestamp()
-                }
-            } else {
-                chrono::Utc::now().timestamp()
-            };
-
-            let mut seen = false;
-            let mut flagged = false;
-            for flag in msg.flags() {
-                match flag {
-                    imap::types::Flag::Seen => seen = true,
-                    imap::types::Flag::Flagged => flagged = true,
-                    _ => {}
-                }
-            }
-
-            let header = MessageHeader {
-                uid,
-                uid_validity: mailbox.uid_validity.unwrap_or(1),
-                subject: if subject.is_empty() { "(No Subject)".to_string() } else { subject },
-                from: if sender.is_empty() { "Unknown".to_string() } else { sender },
-                date,
-                seen,
-                flagged,
-                snippet: Some("Search match found in mailbox history.".to_string()),
-                folder: folder_clone.clone(),
-                has_attachments: false,
-                thread_id: None,
-                to: None,
-                message_id: None,
-                tags: Vec::new(),
-            };
-            
-            return Ok(header);
-        }
-        Err("Could not retrieve message header.".to_string())
+        let validity=mailbox.uid_validity.filter(|value|*value!=0).ok_or("Mailbox did not provide UIDVALIDITY")?;
+        results.iter().filter(|msg|msg.uid==Some(uid))
+            .find_map(|msg|crate::mail::sync::parse_header_to_message(msg,validity,&folder_clone))
+            .ok_or("Could not retrieve message header.".to_string())
     }).await?;
 
-    database::insert_or_update_messages(app_handle, &account.id, &[fetch_res])?;
+    database::insert_or_update_messages(app_handle, &account.id, &[fetch_res.clone()])?;
+    if folder=="inbox" && matches!(account.provider,MailProvider::Google) {
+        crate::mail::trash::inbox_headers(app_handle,&account.id,&[fetch_res])?;
+    }
 
     Ok(MessageDetail {
         body: "Search match found in mailbox history.".to_string(),
@@ -493,6 +442,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         } else {
             use std::str::FromStr;
             let imap_mailbox_opt = match crate::mail::folder::MailFolder::from_str(&folder_bg) {
+                Ok(crate::mail::folder::MailFolder::Trash) => Some(crate::mail::trash::mailbox(&app_handle_bg,&account)),
                 Ok(mf) => match mf.to_imap_mailbox(&account.provider) {
                     Some(mb) => Some(mb.to_string()),
                     None => {
@@ -509,7 +459,12 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
 
             let search_res = if let Some(imap_mailbox) = imap_mailbox_opt {
                 let backend = get_search_backend(&account.provider);
-                let search_future = backend.search(&account, &imap_mailbox, &query_bg);
+                // Gmail's default raw-search scope omits Trash. IMAP still limits
+                // returned UIDs to the selected mailbox.
+                let provider_query = if folder_bg == "trash" && matches!(account.provider, crate::auth::account::MailProvider::Google) {
+                    format!("in:anywhere {query_bg}")
+                } else { query_bg.clone() };
+                let search_future = backend.search(&account, &imap_mailbox, &provider_query);
                 
                 tokio::select! {
                     res = tokio::time::timeout(Duration::from_secs(10), search_future) => match res {
@@ -579,7 +534,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         let existing = database::get_existing_uids(&app_handle_bg, &account.id, &folder_bg, &uids).unwrap_or_default();
         if !existing.is_empty() {
             let existing_vec: Vec<u32> = existing.iter().copied().collect();
-            if let Ok(existing_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &existing_vec) {
+            if let Ok(existing_msgs) = database::get_visible_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &existing_vec) {
                 let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                     search_id: search_id_bg.clone(),
                     query: query_bg.clone(),
@@ -652,7 +607,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
 
                 // Coalesce updates every 150ms in batches of 25
                 if batch_buffer.len() >= 25 || last_emit.elapsed() >= Duration::from_millis(150) {
-                    if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &batch_buffer) {
+                    if let Ok(new_msgs) = database::get_visible_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &batch_buffer) {
                         let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                             search_id: search_id_bg.clone(),
                             query: query_bg.clone(),
@@ -667,7 +622,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         }
 
         if !batch_buffer.is_empty() {
-            if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &batch_buffer) {
+            if let Ok(new_msgs) = database::get_visible_messages_by_uids(&app_handle_bg, &account.id, &folder_bg, &batch_buffer) {
                 let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                     search_id: search_id_bg.clone(),
                     query: query_bg.clone(),
@@ -731,6 +686,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
             if let Some(cur) = cursor {
                 use std::str::FromStr;
                 let imap_mailbox_opt = match crate::mail::folder::MailFolder::from_str(&folder) {
+                    Ok(crate::mail::folder::MailFolder::Trash) => Some(crate::mail::trash::mailbox(&app_handle_bg,&account)),
                     Ok(mf) => match mf.to_imap_mailbox(&account.provider) {
                         Some(mb) => Some(mb.to_string()),
                         None => {
@@ -747,12 +703,15 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
                 
                 if let Some(imap_mailbox) = imap_mailbox_opt {
                     let backend = get_search_backend(&account.provider);
-                    if let Ok(Ok(mut uids)) = tokio::time::timeout(Duration::from_secs(10), backend.load_more(&account, &imap_mailbox, &query, cur)).await {
+                    let provider_query = if folder == "trash" && matches!(account.provider, crate::auth::account::MailProvider::Google) {
+                        format!("in:anywhere {query}")
+                    } else { query.clone() };
+                    if let Ok(Ok(mut uids)) = tokio::time::timeout(Duration::from_secs(10), backend.load_more(&account, &imap_mailbox, &provider_query, cur)).await {
                         uids.truncate(500);
                     let existing = database::get_existing_uids(&app_handle_bg, &account.id, &folder, &uids).unwrap_or_default();
                     if !existing.is_empty() {
                         let existing_vec: Vec<u32> = existing.iter().copied().collect();
-                        if let Ok(existing_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder, &existing_vec) {
+                        if let Ok(existing_msgs) = database::get_visible_messages_by_uids(&app_handle_bg, &account.id, &folder, &existing_vec) {
                             let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                                 search_id: search_id_bg.clone(),
                                 query: query.clone(),
@@ -797,7 +756,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
                 }
 
                 if batch_buffer.len() >= 25 || last_emit.elapsed() >= Duration::from_millis(150) {
-                    if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder, &batch_buffer) {
+                    if let Ok(new_msgs) = database::get_visible_messages_by_uids(&app_handle_bg, &account.id, &folder, &batch_buffer) {
                         let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                             search_id: search_id_bg.clone(),
                             query: query.clone(),
@@ -812,7 +771,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
         }
 
         if !batch_buffer.is_empty() {
-            if let Ok(new_msgs) = database::get_messages_by_uids(&app_handle_bg, &account.id, &folder, &batch_buffer) {
+            if let Ok(new_msgs) = database::get_visible_messages_by_uids(&app_handle_bg, &account.id, &folder, &batch_buffer) {
                 let _ = app_handle_bg.emit("mail:search_incremental", SearchIncrementalPayload {
                     search_id: search_id_bg.clone(),
                     query: query.clone(),

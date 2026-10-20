@@ -129,23 +129,28 @@ pub async fn sync_mail_folder(app_handle: AppHandle, folder: String, automatic: 
 
     let mail_folder = folder.parse::<crate::mail::folder::MailFolder>().map_err(|e| e.to_string())?;
 
-    crate::mail::sync_manager::enqueue_sync_with_force(app_handle, account, mail_folder, !automatic).await;
+    let force_reconcile=!automatic||mail_folder==crate::mail::folder::MailFolder::Trash;
+    crate::mail::sync_manager::enqueue_sync_with_force(app_handle, account, mail_folder, force_reconcile).await;
     Ok(0)
 }
 
 #[command]
 pub async fn get_folder_messages(app_handle: AppHandle, folder: String, before_uid: Option<u32>, before_folder: Option<String>, limit: u32) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    // A local cache read must not wait for OAuth refresh or connectivity.
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let account = crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
     tokio::task::spawn_blocking(move || crate::mail::database::load_messages_page_with_cursor(&app_handle, &account.id, &folder, before_uid, before_folder.as_deref(), limit.min(100)))
         .await.map_err(|e| e.to_string())?
 }
 
 #[command]
-pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -> Result<crate::mail::message_body::MessageDetail, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32, local_id: Option<String>) -> Result<crate::mail::message_body::MessageDetail, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let account=crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
     
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
+    let (folder,uid,_)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
     log::info!("Frontend requested get_message_body for folder='{}', uid={}", folder, uid);
     
     // Keep the cached-open fast path independent of a network job, while
@@ -177,6 +182,10 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
     }).await.map_err(|error| format!("Message cache task failed: {error}"))?;
     if let Some(detail) = cached { return Ok(detail); }
 
+    let profile_id=account.id;
+    let account=crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if account.id!=profile_id{return Err("Account changed. Reopen the message.".into());}
+
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     // Delegate to Manager
@@ -190,11 +199,21 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32) -
     ).await;
 
     // Wait for the oneshot reply
-    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+    let result=match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
         Ok(Ok(result)) => result,
         Ok(Err(_)) => Err("Channel closed unexpectedly".to_string()),
         Err(_) => Err("Timeout waiting for message body to fetch".to_string()),
+    };
+    if result.is_err() && local_id.is_some() {
+        if crate::auth::session::get_active_profile(&app_handle).is_none_or(|active|active.id!=account.id){return Err("Account changed".into());}
+        let (current_folder,current_uid,_)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
+        if current_folder!=folder || current_uid!=uid {
+            // The first read may have queued behind a MOVE on the native
+            // session. Retry once using its now-confirmed destination.
+            return Box::pin(get_message_body(app_handle,current_folder,current_uid,None)).await;
+        }
     }
+    result
 }
 
 #[command]
@@ -210,9 +229,10 @@ pub async fn clear_local_cache(app_handle: AppHandle) -> Result<(), String> {
     let _sync = crate::mail::sync_manager::SYNC_LOCK.lock().await;
     let _mutation = crate::mail::message_actions::MUTATION_LOCK.lock().await;
     let conn = crate::mail::database::open_connection(&app_handle)?;
-    let pending: i64 = conn.query_row("SELECT (SELECT COUNT(*) FROM pending_message_actions WHERE account_id = ?1) + (SELECT COUNT(*) FROM pending_tag_edits WHERE account_id = ?1)", [&account.id], |row| row.get(0)).map_err(|e| e.to_string())?;
+    let pending: i64 = conn.query_row("SELECT (SELECT COUNT(*) FROM pending_message_actions WHERE account_id = ?1) + (SELECT COUNT(*) FROM pending_tag_edits WHERE account_id = ?1) + (SELECT COUNT(*) FROM mail_location_intents WHERE account_id=?1 AND phase<>'settled')", [&account.id], |row| row.get(0)).map_err(|e| e.to_string())?;
     if pending > 0 { return Err("Sync or resolve pending message actions before clearing cached mail.".into()); }
     crate::mail::database::clear_account_cache(&app_handle, &account.id)?;
+    crate::mail::trash::changed(&app_handle,&account.id);
     crate::mail::notifications::forget_account(&app_handle,&account.id)
 }
 

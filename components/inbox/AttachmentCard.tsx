@@ -76,7 +76,7 @@ const getTypeColor = (mime: string | undefined): string => {
 };
 
 
-export const AttachmentCard = memo(({ uid, folder, attachment }: { uid: number; folder: string; attachment: Attachment }) => {
+export const AttachmentCard = memo(({ uid, folder, attachment, localId }: { uid: number; folder: string; attachment: Attachment; localId?: string }) => {
     const [downloading, setDownloading] = useState(false);
     const busy = useRef(false);
     const { addDownload, updateDownloadStatus } = useDownloads();
@@ -89,7 +89,7 @@ export const AttachmentCard = memo(({ uid, folder, attachment }: { uid: number; 
             const savePath = await save({ defaultPath: attachment.name, title: 'Save attachment' });
             if (!savePath) return;
             downloadId = addDownload(attachment.name);
-            const resultPath = await invoke<string>('download_attachment', { folder: folder || 'inbox', uid, partId: attachment.partId, savePath });
+            const resultPath = await invoke<string>('download_attachment', { folder: folder || 'inbox', uid, partId: attachment.partId, savePath, localId });
             updateDownloadStatus(downloadId, 'completed', resultPath);
             toast.success('Attachment saved.');
         } catch (error) {

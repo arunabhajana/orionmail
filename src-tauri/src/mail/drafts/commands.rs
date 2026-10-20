@@ -117,6 +117,7 @@ pub async fn discard_draft(
 #[tauri::command]
 pub async fn sync_drafts(app_handle: AppHandle, account_id: String) -> Result<(), String> {
     authorize(&app_handle, &account_id)?;
+    super::start_worker(&app_handle);
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     if account.id != account_id {
         return Err("The active account changed".into());

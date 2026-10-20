@@ -23,6 +23,7 @@ interface EmailDetailProps {
     email?: Email | null;
     onToggleStar?: (emailId: string) => void;
     onDeleteMessage?: (emailId: string) => void;
+    onRestoreMessage?: (emailId: string) => void;
     onMarkAsRead?: (emailId: string) => void;
     onToggleRead?: (emailId: string) => void;
     onBack?: () => void;
@@ -30,7 +31,7 @@ interface EmailDetailProps {
 
 // --- Main Component ---
 
-const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onMarkAsRead, onToggleRead, onBack }) => {
+const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onRestoreMessage, onMarkAsRead, onToggleRead, onBack }) => {
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const emailIframeRef = React.useRef<HTMLIFrameElement>(null);
     const { resolvedTheme } = useTheme();
@@ -47,7 +48,8 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         email?.unread,
         email?.folder,
         emailIframeRef,
-        onMarkAsRead
+        onMarkAsRead,
+        email?.locationId
     );
 
     React.useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [email?.id, user?.id]);
@@ -249,11 +251,13 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         >
             <DetailToolbar
                 isStarred={email?.starred}
+                isTrash={(email?.displayFolder || email?.folder) === 'trash'}
+                onRestore={onRestoreMessage ? () => onRestoreMessage(email.id) : undefined}
                 isUnread={email?.unread}
                 onBack={onBack}
                 onToggleRead={onToggleRead ? () => onToggleRead(email.id) : undefined}
-                onToggleStar={() => email && onToggleStar?.(email.id)}
-                onDelete={() => email && onDeleteMessage?.(email.id)}
+                onToggleStar={onToggleStar ? () => onToggleStar(email.id) : undefined}
+                onDelete={onDeleteMessage ? () => onDeleteMessage(email.id) : undefined}
             />
 
             {/* Content Scroll Area */}
@@ -312,6 +316,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                             key={att.partId || i}
                                             uid={email.uid}
                                             folder={email.folder}
+                                            localId={email.locationId}
                                             attachment={att}
                                         />
                                     ))}
