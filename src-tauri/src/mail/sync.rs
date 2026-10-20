@@ -29,6 +29,7 @@ pub async fn sync_folder_with_options(
     force_reconcile: bool,
 ) -> Result<u32, String> {
     crate::auth::app_lock::require_unlocked(app_handle)?;
+    crate::mail::drafts::kick(app_handle);
     crate::mail::message_actions::retry_pending(app_handle, &account).await;
     crate::mail::tags::outbox::retry_pending(app_handle, &account).await;
     // Check global state for tags sync

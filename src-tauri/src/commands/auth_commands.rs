@@ -112,6 +112,13 @@ pub async fn sync_inbox(app_handle: AppHandle) -> Result<u32, String> {
 pub async fn sync_mail_folder(app_handle: AppHandle, folder: String, automatic: Option<bool>) -> Result<u32, String> {
     let automatic = automatic.unwrap_or(false);
     if automatic && crate::mail_preferences::load(&app_handle).sync_paused { return Ok(0); }
+    // Drafts has its own durable Gmail/local store, rather than an IMAP
+    // MailFolder. Keep legacy callers on that same authenticated sync path.
+    if folder.eq_ignore_ascii_case("drafts") {
+        let account_id = crate::auth::session::get_active_profile(&app_handle)
+            .ok_or_else(|| "No active account".to_string())?.id;
+        return crate::mail::drafts::commands::sync_drafts(app_handle, account_id).await.map(|()| 0);
+    }
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
 
     let app_clone = app_handle.clone();

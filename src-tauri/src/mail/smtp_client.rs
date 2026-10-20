@@ -47,6 +47,7 @@ pub async fn send_email(
     plain_body: &str,
     html_body: &str,
     attachments: Vec<crate::mail::attachments::AttachmentData>,
+    message_id: Option<String>,
 ) -> Result<String, SendError> {
     // 1. Check if token needs refreshing (buffer of 5 minutes)
     if account.expires_at < Utc::now().timestamp() + 300 {
@@ -58,7 +59,7 @@ pub async fn send_email(
     }
 
     // 2. Build the message
-    let message_id_str = format!("<{}@orionmail>", uuid::Uuid::new_v4());
+    let message_id_str = message_id.unwrap_or_else(|| format!("<{}@orionmail>", uuid::Uuid::new_v4()));
     
     let mut builder = Message::builder()
         .from(account.email.parse().map_err(|_| SendError::InvalidRecipient)?)

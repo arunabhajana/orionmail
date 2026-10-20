@@ -8,9 +8,9 @@ export interface Contact {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function useRecipientAutocomplete() {
-    const [recipients, setRecipients] = useState<string[]>([]);
-    const [inputValue, setInputValue] = useState("");
+export function useRecipientAutocomplete(initialRecipients: string[] = [], initialInput = '') {
+    const [recipients, setRecipients] = useState<string[]>(initialRecipients);
+    const [inputValue, setInputValue] = useState(initialInput);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [isOpen, setIsOpen] = useState(false);
     

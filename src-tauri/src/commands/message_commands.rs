@@ -149,6 +149,7 @@ pub async fn send_message(
         &plain_body,
         &html_body,
         attachment_data,
+        None,
     )
     .await
     .map_err(|e| e.to_string());

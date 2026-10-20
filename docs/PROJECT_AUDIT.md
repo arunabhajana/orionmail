@@ -2,7 +2,7 @@
 
 **Original source review:** 12 October 2026
 
-**Implementation status updated:** 18 October 2026
+**Implementation status updated:** 20 October 2026
 
 **App version:** `0.1.0`
 
@@ -40,11 +40,11 @@ Automatic Inbox polling remains the fallback. Sent and tag reconciliation runs w
 
 **P1:** data/security correctness before broad use. **P2:** important reliability/product behavior. **P3:** cleanup or polish. The original P1 findings above have implementations; this does not mean all possible security issues have been identified.
 
-### P2 — Compose has no durable drafts/outbox; uncertain sends can duplicate
+### P2 — Durable drafts implemented; general send-outbox work remains
 
-Compose state and temporary sent placeholders are held in React memory. SMTP may accept a message before a timeout reaches the client; retrying with a new Message-ID can send a duplicate.
+Compose now persists account-scoped, revision-checked local drafts and attachment bytes, with a background Gmail draft queue, conflict copies, shutdown recovery, skeleton loading and a virtualized Drafts list. Closing compose saves; discarding is explicit. Draft sends retain stable identity, block blind retries on uncertain outcomes, reconcile against Sent and store confirmation receipts. See [draft behavior and verification boundaries](DRAFTS.md).
 
-**Next:** account-scoped persisted drafts and an outbox with `queued / sending / uncertain / sent / failed` states. Keep stable retry identity and reconcile uncertain sends against Sent before offering another send. Design durable attachment storage together with drafts; current short-lived in-memory attachment handles are not restart persistence.
+**Remaining:** live Gmail/offline/restart/conflict validation; a general queued/scheduled send outbox if that feature is desired. Send currently requires an explicit online attempt. Gmail's check-then-write race and abrupt power-loss boundaries are documented; this is not a claim of universal conflict prevention or delivery certification.
 
 Sources: [ComposeModal](../components/ComposeModal.tsx), [pending sent messages](../hooks/usePendingSentMessages.ts), [SMTP](../src-tauri/src/mail/smtp_client.rs).
 
@@ -95,7 +95,7 @@ Sources: [native lock policy](../src-tauri/src/auth/app_lock.rs), [callback rece
 
 ## Recommended next work
 
-1. Durable drafts/outbox and uncertain-delivery recovery.
+1. Validate draft/offline/conflict/uncertain-delivery flows with Gmail; decide whether to add a general queued-send outbox.
 2. Accurate SMTP error categories and recipient-field UI.
 3. Bounded initial sync, resumable large-folder reconciliation and progress/cancellation.
 4. Provider support/claims and provider-specific integration checks.

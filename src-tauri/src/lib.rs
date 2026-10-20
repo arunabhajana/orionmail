@@ -210,6 +210,17 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+      mail::drafts::commands::list_drafts,
+      mail::drafts::commands::draft_status,
+      mail::drafts::commands::open_draft,
+      mail::drafts::commands::save_draft,
+      mail::drafts::commands::release_draft,
+      mail::drafts::commands::discard_draft,
+      mail::drafts::commands::sync_drafts,
+      mail::drafts::commands::send_draft,
+      mail::drafts::commands::resolve_draft_send,
+      mail::drafts::commands::fork_draft,
+      mail::drafts::commands::recover_draft,
       mail::notifications::consume_notification_navigation,
       mail::notifications::show_background_notification,
       mail::notifications::preview_notification,

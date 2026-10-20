@@ -48,7 +48,7 @@ export interface RichTextEditorProps {
   /** Autofocus the editor on mount */
   autoFocus?: boolean;
   /** Fired on every content change */
-  onChange: (value: RichTextEditorValue) => void;
+  onChange: (value: RichTextEditorValue, userEdit?: boolean) => void;
   /** Fired once when editor is ready — use to get a stable Editor ref */
   onReady?: (editor: Editor) => void;
   /**
@@ -192,12 +192,12 @@ export default function RichTextEditor({
     },
 
     onUpdate({ editor }) {
-      onChangeRef.current(buildValue(editor));
+      onChangeRef.current(buildValue(editor), true);
     },
 
     onCreate({ editor }) {
       // Emit initial state immediately so parent starts with correct isEmpty/html
-      onChangeRef.current(buildValue(editor));
+      onChangeRef.current(buildValue(editor), false);
       onReadyRef.current?.(editor);
     },
   });

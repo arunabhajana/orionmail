@@ -20,3 +20,4 @@ pub(crate) mod patterns;
 pub mod shutdown;
 pub mod search;
 pub mod tags;
+pub mod drafts;

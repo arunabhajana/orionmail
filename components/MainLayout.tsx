@@ -8,6 +8,8 @@ import { AlertCircle } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import ComposeModal, { type ComposeHandle } from '@/components/ComposeModal';
+import { DraftFolder } from '@/components/inbox/DraftFolder';
+import type { MailDraft } from '@/lib/drafts';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSync } from '@/components/SyncContext';
@@ -47,6 +49,7 @@ export default function MainLayout() {
     useEffect(() => { activeAccountRef.current = user?.id; }, [user?.id]);
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
     const [isComposeOpen, setIsComposeOpen] = useState(false);
+    const [composeDraft, setComposeDraft] = useState<MailDraft | undefined>();
     const composeWindowRef = useRef<ComposeHandle>(null);
     const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
     const [editingTag, setEditingTag] = useState<Tag | null>(null);
@@ -105,6 +108,7 @@ export default function MainLayout() {
         pendingMessages,
         addPendingMessage,
         updatePendingToSyncing,
+        removePendingMessage,
         reconcileWithDb
     } = usePendingSentMessages();
 
@@ -581,13 +585,15 @@ export default function MainLayout() {
         if (isBackground && preferencesRef.current.syncPaused) return Promise.resolve();
         // Read currentFolder from ref to avoid stale closure issues
         const folderAtSyncTime = currentFolderRef.current;
-        if ((!requestedFolder && isSyncing) || (!requestedFolder && (folderAtSyncTime === "drafts" || folderAtSyncTime === "trash"))) return Promise.resolve();
+        const targetFolder = requestedFolder ?? folderAtSyncTime;
+        if (targetFolder === 'drafts') return invoke('sync_drafts', { accountId: activeAccountRef.current }).then(() => {}).catch(error => { if (!isBackground) toast.error(String(error)); });
+        if (targetFolder === 'trash' || (!requestedFolder && isSyncing)) return Promise.resolve();
         setIsSyncing(true);
         setSyncError(null);
 
         // For Starred, we just need to ensure Inbox/Sent are relatively up-to-date.
         // Tags are now directly synchronized from their respective IMAP mailboxes.
-        const syncTarget = requestedFolder ?? (folderAtSyncTime === "starred" ? "inbox" : folderAtSyncTime);
+        const syncTarget = targetFolder === 'starred' ? 'inbox' : targetFolder;
 
         // NOTE: sync_mail_folder is fire-and-forget on the backend (enqueues async sync,
         // returns 0 immediately). The real results arrive via the 'mail:updated' event.
@@ -711,6 +717,11 @@ export default function MainLayout() {
 
     useEffect(() => {
         const loadCache = async () => {
+            // Dedicated/placeholder views do not participate in IMAP bootstrap.
+            if (currentFolderRef.current === 'drafts' || currentFolderRef.current === 'trash') {
+                setIsBootstrapping(false);
+                return;
+            }
             const hasCache = await fetchCache();
             const wasMinimized = await invoke<boolean>('was_launched_minimized').catch(() => false);
 
@@ -760,6 +771,12 @@ export default function MainLayout() {
         setEmails(pinned ? [pinned] : []);
         setHasMore(false);
         setIsLoadingMore(false);
+        // DraftFolder owns its local loading and Gmail synchronization. Avoid
+        // a second sync from the ordinary mailbox navigation effect.
+        if (folder === 'drafts' || folder === 'trash') {
+            setIsLoadingFolder(false);
+            return;
+        }
         void fetchCache(folder).then(hasCache => {
             if (cancelled) return;
             setIsLoadingFolder(false);
@@ -1134,6 +1151,12 @@ export default function MainLayout() {
             />
 
             <div className="mail-panes">
+            {currentFolder === 'drafts' ? <DraftFolder key={user?.id} accountId={user?.id || ''} onCompose={() => { if (isComposeOpen) composeWindowRef.current?.restore(); else { setComposeDraft(undefined); setIsComposeOpen(true); } }} onBeforeOpen={() => {
+                if (!isComposeOpen) return true;
+                composeWindowRef.current?.restore(); toast.info('Save and close your current message before opening another draft.'); return false;
+            }} onOpen={draft => {
+                setComposeDraft(draft); setIsComposeOpen(true);
+            }} /> : <>
             {/* Column 2: Message List */}
             <div className="mail-list-column flex min-h-0 flex-col">
                 <EmailList key={currentFolder}
@@ -1199,15 +1222,19 @@ export default function MainLayout() {
                 onToggleRead={toggleRead}
                 onBack={() => setSelectedEmailId(null)}
             />
+            </>}
 
             </div>
             {/* Compose Modal Overlay */}
             <AnimatePresence>
                 {isComposeOpen && (
                     <ComposeModal
+                        key={`${user?.id}:${composeDraft?.id || 'new'}`}
+                        initialDraft={composeDraft}
                         windowRef={composeWindowRef}
-                        onClose={() => setIsComposeOpen(false)} 
+                        onClose={() => { setIsComposeOpen(false); setComposeDraft(undefined); }}
                         onSendStart={addPendingMessage}
+                        onSendFailure={removePendingMessage}
                         onSendSuccess={(id, messageId) => {
                             updatePendingToSyncing(id, messageId);
                             invoke("sync_mail_folder", { folder: "sent" }).catch(console.error);

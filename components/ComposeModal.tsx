@@ -23,7 +23,6 @@ import RichTextEditor, {
   RichTextEditorValue,
   type LinkInsertContext,
 } from "@/components/compose/RichTextEditor";
-import { emailSafeCleanup, wrapEmailHtml } from "@/lib/email-safe-cleanup";
 import type { Editor } from "@tiptap/core";
 import DOMPurify from "isomorphic-dompurify";
 import { useAppPreferences } from "./AppPreferencesContext";
@@ -31,6 +30,8 @@ import { parseAddressList, plainTextHtml } from "@/lib/app-preferences";
 import { ComposeToolbar } from "./compose/ComposeToolbar";
 import { useAuth } from "./AuthContext";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { useDraftComposer } from '@/hooks/useDraftComposer';
+import { draftStatus, type DraftPayload, type MailDraft } from '@/lib/drafts';
 
 // --------------------------------------------------------------------------
 // Types
@@ -41,10 +42,12 @@ import { PendingSentMessage } from "@/hooks/usePendingSentMessages";
 export interface ComposeHandle { restore: () => void; }
 
 interface ComposeModalProps {
+  initialDraft?: MailDraft;
   windowRef?: React.Ref<ComposeHandle>;
   onClose: () => void;
   onSendStart?: (pending: PendingSentMessage) => void;
   onSendSuccess?: (id: string, messageId: string) => void;
+  onSendFailure?: (id: string) => void;
 }
 
 export interface AttachmentFile {
@@ -231,19 +234,19 @@ function LinkDialog({ open, initialUrl, isEditing, onConfirm, onCancel }: LinkDi
 export type ComposeWindowState = "normal" | "maximized" | "minimized" | "hidden";
 export type ComposeStatus = "draft" | "sending" | "sent" | "failed";
 
-export default function ComposeModal({ onClose, onSendStart, onSendSuccess, windowRef }: ComposeModalProps) {
+export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSendFailure, windowRef, initialDraft }: ComposeModalProps) {
   const { preferences } = useAppPreferences();
   const { user } = useAuth();
   const titleId = useId();
   const contactsId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closingRef = useRef(false);
-  const [cc, setCc] = useState(preferences.defaultCc);
-  const [bcc, setBcc] = useState(preferences.defaultBcc);
-  const [showCopies, setShowCopies] = useState(Boolean(preferences.defaultCc || preferences.defaultBcc));
+  const [cc, setCc] = useState(initialDraft?.payload.cc ?? preferences.defaultCc);
+  const [bcc, setBcc] = useState(initialDraft?.payload.bcc ?? preferences.defaultBcc);
+  const [showCopies, setShowCopies] = useState(Boolean(initialDraft ? initialDraft.payload.cc || initialDraft.payload.bcc : preferences.defaultCc || preferences.defaultBcc));
   const sendGuard = useRef(false);
-  const [subject, setSubject] = useState("");
-  const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
+  const [subject, setSubject] = useState(initialDraft?.payload.subject || '');
+  const [attachments, setAttachments] = useState<AttachmentFile[]>(() => initialDraft?.payload.attachments.map(file => ({ ...file, handle: '', mimeType: file.mime_type, addedAt: initialDraft.updated_at })) || []);
   const attachmentsRef = useRef(attachments);
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -260,6 +263,8 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
   }, [composeWindowState]);
 
   const [composeStatus, setComposeStatus] = useState<ComposeStatus>("draft");
+  const [bodyEdited, setBodyEdited] = useState(false);
+  const [restoreHtml] = useState(() => initialDraft ? DOMPurify.sanitize(initialDraft.payload.html) : undefined);
 
 
   const [toast, setToast] = useState<{ message: string; id: number } | null>(null);
@@ -273,11 +278,11 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
 
   // Rich text editor state
   const [editorValue, setEditorValue] = useState<RichTextEditorValue>({
-    html: "",
-    plainText: "",
+    html: restoreHtml || '',
+    plainText: initialDraft?.payload.plain || '',
     json: { type: "doc", content: [] },
     characterCount: 0,
-    isEmpty: true,
+    isEmpty: !initialDraft?.payload.plain.trim(),
   });
   const editorRef = useRef<Editor | null>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
@@ -304,7 +309,16 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
     toggleOpen,
     addRecipient,
     setInputValue,
-  } = useRecipientAutocomplete();
+  } = useRecipientAutocomplete(initialDraft?.payload.to, initialDraft?.payload.pending_to);
+
+  const hasDraftContent = Boolean(initialDraft || subject.trim() || recipients.length || inputValue.trim() || cc !== preferences.defaultCc || bcc !== preferences.defaultBcc || attachments.length || !editorValue.isEmpty && editorValue.plainText.replace(/\s/g, '') !== (`—${preferences.signature}`).replace(/\s/g, ''));
+  const draftPayload = React.useMemo<DraftPayload>(() => ({
+    to: recipients, pending_to: inputValue, cc, bcc, subject,
+    html: !bodyEdited && initialDraft ? initialDraft.payload.html : `<div style="font-family:${preferences.composeFont === 'serif' ? 'Georgia, serif' : preferences.composeFont === 'monospace' ? 'Courier New, monospace' : 'Arial, sans-serif'}">${editorValue.html}</div>`,
+    plain: !bodyEdited && initialDraft ? initialDraft.payload.plain : editorValue.plainText,
+    attachments: attachments.map(file => ({ id: file.id, name: file.name, size: file.size, mime_type: file.mimeType, ...(file.handle ? { handle: file.handle } : {}) })),
+  }), [recipients, inputValue, cc, bcc, subject, bodyEdited, initialDraft, editorValue.html, editorValue.plainText, attachments, preferences.composeFont]);
+  const draft = useDraftComposer(user?.id, initialDraft, draftPayload, hasDraftContent, composeStatus === 'sending' || composeStatus === 'sent');
 
   const validAddress = (value: string) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value.trim());
   const invalidRecipient = recipients.some(value => !validAddress(value));
@@ -375,11 +389,10 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
       return;
     }
 
-    let ccAddresses: string[], bccAddresses: string[];
     sendGuard.current = true;
     try {
-      ccAddresses = parseAddressList(cc);
-      bccAddresses = parseAddressList(bcc);
+      parseAddressList(cc);
+      parseAddressList(bcc);
       if (preferences.confirmEmptySubject && !subject.trim() && !await confirm("Send this message without a subject?", { title: "No subject", okLabel: "Send anyway", cancelLabel: "Keep editing" })) { sendGuard.current = false; return; }
       if (preferences.attachmentReminder && attachments.length === 0 && /\b(attach(?:ed|ment|ments)?|enclosed)\b/i.test(editorValue.plainText) && !await confirm("You mentioned an attachment, but no files are attached. Send anyway?", { title: "Missing attachment?", okLabel: "Send anyway", cancelLabel: "Keep editing" })) { sendGuard.current = false; return; }
     } catch (error) { showToast(error instanceof Error ? error.message : "Could not confirm sending."); sendGuard.current = false; return; }
@@ -395,24 +408,11 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
     });
 
     try {
-      // Cleanup pipeline: strip TipTap attrs → DOMPurify → wrap
-      const cleaned = emailSafeCleanup(editorValue.html);
-      const sanitized = DOMPurify.sanitize(cleaned);
-      const font = preferences.composeFont === 'serif' ? 'Georgia, serif' : preferences.composeFont === 'monospace' ? 'Courier New, monospace' : 'Arial, sans-serif';
-      const htmlBody = wrapEmailHtml(`<div style="font-family:${font}">${sanitized}</div>`);
-      const plainBody = editorValue.plainText;
+      const saved = await draft.flush();
+      if (!saved) throw new Error('Save the draft before sending.');
+      const messageId: string = await invoke('send_draft', { accountId: user?.id, id: saved.id, expectedRevision: saved.revision });
 
-      const messageId: string = await invoke("send_message", {
-        to: recipients,
-        cc: ccAddresses,
-        bcc: bccAddresses,
-        replyTo: null,
-        subject,
-        plainBody,
-        htmlBody,
-        attachments: attachments.map(a => a.handle),
-      });
-
+      draft.markSent();
       setComposeStatus("sent");
       onSendSuccess?.(tempId, messageId);
 
@@ -423,6 +423,8 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
       }, 2000);
     } catch (error) {
       console.error("Failed to send message:", error);
+      onSendFailure?.(tempId);
+      showToast(String(error));
       sendGuard.current = false;
       setComposeStatus("failed");
       setComposeWindowState(prev => prev === "hidden" ? "minimized" : prev);
@@ -473,7 +475,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
       const attachmentsWithId: AttachmentFile[] = newAttachments.map(a => ({
         ...a,
         mimeType: a.mime_type,
-        id: Math.random().toString(36).substring(7),
+        id: crypto.randomUUID(),
         addedAt: Date.now()
       }));
 
@@ -523,17 +525,17 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
 
   const handleEditorReady = useCallback((e: Editor) => {
     editorRef.current = e;
-    if (preferences.signature.trim() && e.isEmpty) e.commands.setContent(`<p></p><p>—<br>${plainTextHtml(preferences.signature)}</p>`);
+    if (!initialDraft && preferences.signature.trim() && e.isEmpty) e.commands.setContent(`<p></p><p>—<br>${plainTextHtml(preferences.signature)}</p>`);
     setTick((t) => t + 1);
 
     // Subscribe to selection updates so toolbar stays live
     e.on("selectionUpdate", () => setTick((t) => t + 1));
     e.on("transaction", () => setTick((t) => t + 1));
-  }, [preferences.signature]);
+  }, [preferences.signature, initialDraft]);
 
   const isSending = composeStatus === 'sending';
-  const editingDisabled = isSending || composeStatus === 'sent';
-  const isSendDisabled = editingDisabled || isAttaching || recipients.length === 0 || editorValue.isEmpty || invalidRecipient || pendingRecipient || copiesInvalid;
+  const editingDisabled = isSending || composeStatus === 'sent' || draft.blocked;
+  const isSendDisabled = editingDisabled || draft.unconfirmed || isAttaching || recipients.length === 0 || editorValue.isEmpty || invalidRecipient || pendingRecipient || copiesInvalid;
   const sendDisabledReason = isSending ? 'Sending message…' : composeStatus === 'sent' ? 'Message sent' : isAttaching ? 'Preparing attachments…' : invalidRecipient || copiesInvalid ? 'Check the recipient addresses' : pendingRecipient ? 'Press Enter to add the recipient' : recipients.length === 0 ? 'Add a recipient to get started' : editorValue.isEmpty ? 'Write a message before sending' : '';
   const requestClose = useCallback(async () => {
     if (closingRef.current || sendGuard.current && composeStatus !== 'sent') {
@@ -542,13 +544,20 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
     }
     closingRef.current = true;
     try {
-      const bodyChanged = !editorValue.isEmpty && editorValue.plainText.replace(/\s/g, "") !== (`—${preferences.signature}`).replace(/\s/g, "");
-      const hasDraft = Boolean(subject.trim() || recipients.length || inputValue.trim() || cc !== preferences.defaultCc || bcc !== preferences.defaultBcc || attachments.length || bodyChanged);
-      if (composeStatus !== 'sent' && hasDraft && !await confirm('This message has not been saved. Discard it?', { title: 'Discard message?', okLabel: 'Discard', cancelLabel: 'Keep editing', kind: 'warning' })) return;
+      if (composeStatus !== 'sent') { await draft.flush(); await draft.release(); }
       onClose();
-    } catch { showToast('Could not close the message. Please try again.'); }
+    } catch { showToast('Draft could not be saved. Keep this window open and retry, or save a separate copy.'); }
     finally { closingRef.current = false; }
-  }, [composeStatus, subject, recipients.length, inputValue, cc, bcc, preferences.defaultCc, preferences.defaultBcc, attachments.length, editorValue.isEmpty, editorValue.plainText, preferences.signature, onClose, showToast]);
+  }, [composeStatus, draft, onClose, showToast]);
+  const discardMessage = async () => {
+    if (editingDisabled || !await confirm('Discard this draft on this device and in Gmail?', { title: 'Discard draft', kind: 'warning', okLabel: 'Discard', cancelLabel: 'Keep editing' })) return;
+    try { await draft.discard(); onClose(); } catch (failure) { showToast(String(failure)); }
+  };
+  const resolveSend = async (delivered: boolean) => {
+    const message = delivered ? 'Have you checked Sent and confirmed this exact message was delivered? This will remove the draft.' : 'Only continue after checking Sent and confirming this message was not sent. Sending another copy could deliver it twice.';
+    if (!await confirm(message, { title: 'Resolve send status', kind: 'warning', okLabel: delivered ? 'Mark as sent' : 'Return to draft', cancelLabel: 'Cancel' })) return;
+    try { await draft.resolveSend(delivered); } catch (failure) { showToast(String(failure)); }
+  };
 
   // --------------------------------------------------------------------------
   // Character count formatting
@@ -1023,9 +1032,10 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
           {/* ---------------------------------------------------------------- */}
           <div className="compose-writing-area flex-1 overflow-y-auto px-6 py-5 flex flex-col min-h-0 relative" style={{ "--compose-font": preferences.composeFont === "serif" ? "Georgia, serif" : preferences.composeFont === "monospace" ? "Courier New, monospace" : "Arial, sans-serif" } as React.CSSProperties}>
             <RichTextEditor
+              value={restoreHtml}
               editable={!editingDisabled}
               autoFocus={false}
-              onChange={setEditorValue}
+              onChange={(value, userEdit) => { setEditorValue(value); if (userEdit) setBodyEdited(true); }}
               onReady={handleEditorReady}
               onRequestLinkInsert={openLinkDialog}
             />
@@ -1058,11 +1068,13 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, wind
           {/* Bottom Toolbar & Actions */}
           {/* ---------------------------------------------------------------- */}
           <footer className="compose-footer">
+            {draft.state === 'send_unknown' && <div className="mb-2 flex flex-wrap items-center gap-3 text-xs"><button type="button" disabled={draft.saving} onClick={() => { void resolveSend(true); }} className="font-medium text-primary">I found it in Sent</button><button type="button" disabled={draft.saving} onClick={() => { void resolveSend(false); }} className="font-medium text-primary">Not sent · return to draft</button></div>}
+            {draft.error && <div role="alert" className="mb-2 flex flex-wrap items-center gap-2 text-xs text-amber-600 dark:text-amber-300"><span className="min-w-0 flex-1 break-words">{draft.error}</span><button type="button" onClick={() => { void draft.flush().catch(() => {}); }} className="font-medium underline">Retry save</button><button type="button" onClick={() => { void draft.saveCopy().catch(error => showToast(String(error))); }} className="font-medium underline">Save separate copy</button></div>}
             <ComposeToolbar editor={editorRef.current} onLink={() => openLinkDialog()} disabled={editingDisabled} />
             <div className="compose-action-row">
               <button type="button" onClick={handleAttachFiles} disabled={editingDisabled || isAttaching} className="compose-attach-button" title="Attach files"><Paperclip className={cn('size-4', isAttaching && 'animate-pulse')} /><span className="hidden sm:inline">{isAttaching ? 'Preparing…' : 'Attach files'}</span></button>
-              <div className="min-w-0 flex-1"><p id="compose-send-help" className={cn('truncate text-[11px]', invalidRecipient || copiesInvalid ? 'text-red-500' : 'text-muted-foreground')} title={sendDisabledReason || formatCharCount(editorValue.characterCount)}>{sendDisabledReason || formatCharCount(editorValue.characterCount)}</p></div>
-              <button type="button" onClick={() => { void requestClose(); }} disabled={editingDisabled} aria-label="Discard message" title="Discard message" className="compose-tool hover:!bg-red-500/10 hover:!text-red-500"><Trash2 className="size-4" /></button>
+              <div className="min-w-0 flex-1"><p id="compose-send-help" aria-live="polite" className={cn('truncate text-[11px]', invalidRecipient || copiesInvalid ? 'text-red-500' : 'text-muted-foreground')} title={sendDisabledReason || formatCharCount(editorValue.characterCount)}>{sendDisabledReason || (draft.saving ? 'Saving…' : draft.state === 'new' ? 'Saves as you write' : draftStatus(draft.state))}</p></div>
+              <button type="button" onClick={() => { void discardMessage(); }} disabled={editingDisabled} aria-label="Discard draft" title="Discard draft" className="compose-tool hover:!bg-red-500/10 hover:!text-red-500"><Trash2 className="size-4" /></button>
               <button type="button" onClick={() => { void handleSend(); }} disabled={isSendDisabled} aria-label="Send message" aria-describedby="compose-send-help" title={sendDisabledReason || 'Send message (Ctrl+Enter)'} className="compose-send-button">{isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-3.5" />}<span>{isSending ? 'Sending…' : composeStatus === 'sent' ? 'Sent' : 'Send'}</span></button>
             </div>
           </footer>
