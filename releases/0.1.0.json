@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.0",
+  "status": "draft",
+  "sample": true,
+  "date": null,
+  "title": "A calmer everyday inbox",
+  "summary": "A first look at OrionMail: connected conversations, useful message actions, and an inbox that works at your pace.",
+  "sections": [
+    {
+      "category": "Added",
+      "items": [
+        {
+          "title": "Conversations and composing",
+          "text": "Read linked replies together. Reply, reply all, forward attachments, or start a fresh message to a sender."
+        },
+        {
+          "title": "Pins, tags and snooze",
+          "text": "Pin important messages, manage tags, and snooze Inbox conversations with preset or custom return times."
+        },
+        {
+          "title": "Notification controls",
+          "text": "Choose alert folders, Windows tones, Important-only alerts, Do not disturb, and scheduled quiet hours."
+        }
+      ]
+    },
+    {
+      "category": "Improved",
+      "items": [
+        {
+          "title": "Your workspace",
+          "text": "Preview interface themes and accent colors, customize reading preferences, and edit signatures from Settings or Compose."
+        },
+        {
+          "title": "Everyday navigation",
+          "text": "Return from Settings without rebuilding the inbox. Open email links directly in OrionMail and register it as a Windows mail app."
+        }
+      ]
+    },
+    {
+      "category": "Fixed",
+      "items": [
+        {
+          "title": "A cleaner reader",
+          "text": "Quoted reply history stays tucked away, and simple conversation messages blend into their cards in dark mode."
+        },
+        {
+          "title": "Clearer sign-in",
+          "text": "Browser sign-in explains the connection status and brings OrionMail forward after a successful connection."
+        }
+      ]
+    },
+    {
+      "category": "Known issues",
+      "items": [
+        {
+          "title": "Device-local organization",
+          "text": "Pins and snoozes are saved per account on this device. Snooze does not sync to Gmail; overdue mail returns when OrionMail next runs."
+        },
+        {
+          "title": "Preview release",
+          "text": "Automatic updates are not configured yet. Release notes and this tour are supplied by local versioned release files."
+        }
+      ]
+    }
+  ],
+  "whatsNew": [
+    {
+      "id": "conversations",
+      "eyebrow": "A clearer conversation",
+      "title": "Every reply, in its place.",
+      "text": "Follow linked replies in a tidy conversation. Reply, reply all, or forward the message you choose without losing your place.",
+      "image": {
+        "src": "/releases/0.1.0/conversations.svg",
+        "alt": "Three connected message cards with the newest reply expanded."
+      }
+    },
+    {
+      "id": "smart-actions",
+      "eyebrow": "Less copying. More doing.",
+      "title": "Useful details, ready to go.",
+      "text": "Verification codes, meeting links, and delivery details appear as Smart Actions above the message, ready when you need them.",
+      "image": {
+        "src": "/releases/0.1.0/smart-actions.svg",
+        "alt": "A Smart Actions card displaying a verification code and a copy control."
+      }
+    },
+    {
+      "id": "focus",
+      "eyebrow": "Your inbox, at your pace",
+      "title": "Make room for focus.",
+      "text": "Schedule quiet hours or snooze an Inbox conversation until later. Your mail keeps syncing while alerts take a break.",
+      "image": {
+        "src": "/releases/0.1.0/focus.svg",
+        "alt": "A quiet-hours schedule from 22:00 to 08:00 beside a snoozed message card."
+      }
+    }
+  ]
+}

@@ -45,7 +45,7 @@ const nativeEntries: [SettingsTab, string, string, string, string][] = [
     ['about', 'version', 'App version', 'Installed version of OrionMail.', 'release build'],
     ['about', 'developer', 'Developed by Arunabhajana', 'About the developer.', 'credits'],
     ['about', 'support', 'Contact and support', 'Email arunabhajana@gmail.com.', 'help feedback'],
-    ['about', 'changelog', 'Release notes', 'Browse categorized mock release notes and preview the What’s new tour.', 'updates changelog whats new preview tour'],
+    ['about', 'changelog', 'Release notes', 'Browse versioned release notes and preview the What’s new tour.', 'updates changelog whats new preview tour'],
     ['about', 'privacy', 'Privacy policy and licenses', 'Public policies and notices are not published yet.', 'legal terms third party'],
 ];
 export const SETTINGS_SEARCH_INDEX: SettingsSearchResult[] = [

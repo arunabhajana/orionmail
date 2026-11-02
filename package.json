@@ -7,7 +7,26 @@
     "build": "next build",
     "start": "next start",
     "tauri": "node scripts/tauri.js",
-    "lint": "eslint"
+    "lint": "eslint . --max-warnings=0",
+    "prebuild": "node scripts/release.mjs generate",
+    "version:bump": "node scripts/release.mjs bump",
+    "version:check": "node scripts/release.mjs versions",
+    "release:notes": "node scripts/release.mjs notes",
+    "release:generate": "node scripts/release.mjs generate",
+    "release:check": "node scripts/release.mjs release-check",
+    "release:render": "node scripts/release.mjs render",
+    "release:prepare": "node scripts/release.mjs prepare",
+    "release:push": "node scripts/release.mjs push",
+    "doctor": "node scripts/release.mjs doctor",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/check.mjs tests",
+    "test:unit": "node scripts/check.mjs unit",
+    "test:components": "vitest run",
+    "check": "node scripts/check.mjs quick",
+    "check:desktop": "node scripts/check.mjs desktop",
+    "check:all": "node scripts/check.mjs all",
+    "build:desktop": "node scripts/check.mjs build",
+    "audit:production": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.19",
@@ -41,13 +60,21 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@tauri-apps/cli": "^2.10.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
     "@types/dompurify": "^3.0.5",
-    "@types/node": "^20",
+    "@types/node": "^26.6.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "jsdom": "^30.1.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=24.0.0 <27"
   }
 }
