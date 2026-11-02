@@ -11,8 +11,13 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
+fn default_folder()->String { "inbox".into() }
 #[derive(Clone, Serialize, Deserialize)]
 struct Item {
+    #[serde(default="default_folder")]
+    folder: String,
+    #[serde(default)]
+    identity: String,
     uid: u32,
     validity: u32,
     sender: String,
@@ -199,7 +204,7 @@ fn render(app: &AppHandle, batch: &Batch, popup: bool) -> Result<(), String> {
             .map(|i| format!("{} — {}", sender(&i.sender), clip(&i.subject, 90)))
             .collect::<Vec<_>>();
         if count > 3 {
-            lines.push(format!("+{} more in Inbox", count - 3));
+            lines.push(format!("+{} more messages", count - 3));
         }
         lines.join("\n")
     };
@@ -208,7 +213,7 @@ fn render(app: &AppHandle, batch: &Batch, popup: bool) -> Result<(), String> {
         .find(|a| a.id == batch.account_id)
         .ok_or("Notification account was removed")?;
     let attribution = if prefs.hide_notification_content {
-        "Inbox".to_string()
+        "OrionMail".to_string()
     } else {
         clip(&account.email, 100)
     };
@@ -220,6 +225,7 @@ fn render(app: &AppHandle, batch: &Batch, popup: bool) -> Result<(), String> {
         &attribution,
         prefs.notification_sound && popup,
         popup,
+        &prefs.notification_tone,
     )?;
     #[cfg(not(target_os = "windows"))]
     {
@@ -233,9 +239,9 @@ fn render(app: &AppHandle, batch: &Batch, popup: bool) -> Result<(), String> {
     }
     Ok(())
 }
-static NEW_MAIL: Lazy<Mutex<std::collections::HashMap<String, HashSet<u32>>>> =
+static NEW_MAIL: Lazy<Mutex<std::collections::HashMap<String, HashSet<(String,u32)>>>> =
     Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
-pub fn show_new_emails(app: &AppHandle, account: &str, new_emails: &[(String, String, u32)]) {
+pub fn show_new_emails(app: &AppHandle, account: &str, folder: &str, new_emails: &[(String, String, u32)]) {
     let Ok(mut batches) = NEW_MAIL.lock() else {
         return;
     };
@@ -243,7 +249,7 @@ pub fn show_new_emails(app: &AppHandle, account: &str, new_emails: &[(String, St
     let pending = batches.entry(account.to_string()).or_default();
     for (_, _, uid) in new_emails {
         if pending.len() < 500 {
-            pending.insert(*uid);
+            pending.insert((folder.to_string(),*uid));
         }
     }
     if !start {
@@ -272,7 +278,7 @@ pub fn show_new_emails(app: &AppHandle, account: &str, new_emails: &[(String, St
         .await;
     });
 }
-fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[u32]) {
+fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[(String,u32)]) {
     if !permitted(app) {
         return;
     }
@@ -293,15 +299,23 @@ fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[u32]) {
         } else {
             Vec::new()
         };
-        let messages = database::get_messages_by_uids(app, account, "inbox", uids)?;
+        let prefs=crate::mail_preferences::load(app);
+        let tags=database::get_all_tags(app, account)?;
+        let important:HashSet<String>=tags.into_iter().filter(|tag| tag.tag_type == "system" && (tag.name.eq_ignore_ascii_case("important") || tag.id.eq_ignore_ascii_case("IMPORTANT"))).map(|tag|tag.id).collect();
+        let mut folders=std::collections::HashMap::<String,Vec<u32>>::new();
+        for (folder,uid) in uids { if prefs.folder_notifications_allowed(folder){folders.entry(folder.clone()).or_default().push(*uid);} }
+        let mut messages=Vec::new();
+        for (folder,uids) in folders {messages.extend(database::get_messages_by_uids(app,account,&folder,&uids)?); }
         let mut added = false;
+        messages.sort_by_key(|message|message.date);
         for message in messages
             .into_iter()
-            .filter(|m| !m.seen && m.uid_validity > 0)
+            .filter(|m| !m.seen && m.uid_validity > 0 && (!prefs.important_only || m.tags.iter().any(|id|important.contains(id))))
         {
+            let identity=message.message_id.as_ref().filter(|id|!id.is_empty()).map(|id|format!("{:?}",(id,message.date,&message.from,&message.subject))).unwrap_or_default();
             if items
                 .iter()
-                .any(|i| i.uid == message.uid && i.validity == message.uid_validity)
+                .any(|i| (!identity.is_empty() && i.identity == identity) || (i.folder == message.folder && i.uid == message.uid && i.validity == message.uid_validity))
             {
                 continue;
             }
@@ -309,6 +323,8 @@ fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[u32]) {
             items.insert(
                 0,
                 Item {
+                    folder: message.folder.clone(),
+                    identity,
                     uid: message.uid,
                     validity: message.uid_validity,
                     sender: message.from,
@@ -454,7 +470,7 @@ async fn mark_snapshot_read(app: &AppHandle, token: &str) -> Result<(), String> 
     {
         let _mutation = message_actions::MUTATION_LOCK.lock().await;
         for item in &batch.items {
-            let cached = database::get_messages_by_uids(app, &account.id, "inbox", &[item.uid])?;
+            let cached = database::get_messages_by_uids(app, &account.id, &item.folder, &[item.uid])?;
             let Some(message) = cached.first() else {
                 conflicts += 1;
                 continue;
@@ -469,8 +485,8 @@ async fn mark_snapshot_read(app: &AppHandle, token: &str) -> Result<(), String> 
             database::enqueue_message_action(
                 app,
                 &account.id,
-                "inbox",
-                "INBOX",
+                &item.folder,
+                &message_actions::resolve_mailbox(app, &account, &item.folder)?,
                 item.uid,
                 "seen",
                 Some(true),
@@ -580,12 +596,14 @@ fn preview_inner(app_handle: &AppHandle) -> Result<(), String> {
         return Err("Save your notification preferences and turn off Do Not Disturb or quiet hours before previewing.".into());
     }
     #[cfg(target_os = "windows")]
-    windows::status(
+    windows::preview(
         "Notifications are ready",
         &format!(
-            "{} will show new mail here. Incoming messages include Inbox and read actions.",
+            "{} will show new mail here. Incoming messages include Open and Mark as read actions.",
             display_name()
         ),
+        crate::mail_preferences::load(app_handle).notification_sound,
+        &crate::mail_preferences::load(app_handle).notification_tone,
     )?;
     #[cfg(not(target_os = "windows"))]
     {
@@ -614,5 +632,25 @@ pub async fn open_notification_settings(app_handle: AppHandle) -> Result<(), Str
     #[cfg(not(target_os = "windows"))]
     {
         Err("Use your operating system's notification settings.".into())
+    }
+}
+
+#[tauri::command]
+pub async fn open_notification_volume(app_handle:AppHandle)->Result<(),String>{
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    #[cfg(target_os="windows")]
+    {tauri::async_runtime::spawn_blocking(||open::that("ms-settings:apps-volume")).await.map_err(|e|e.to_string())?.map_err(|e|e.to_string())}
+    #[cfg(not(target_os="windows"))]
+    {Err("Use your operating system sound settings.".into())}
+}
+
+#[cfg(test)]
+mod folder_snapshot_tests {
+    use super::*;
+    #[test] fn legacy_notification_items_keep_inbox_scope() {
+        let item:Item=serde_json::from_str(r#"{"uid":7,"validity":9,"sender":"Alex","subject":"Hello"}"#).unwrap();
+        assert_eq!(item.folder,"inbox");assert!(item.identity.is_empty());
+        let restored:Item=serde_json::from_str(&serde_json::to_string(&Item{folder:"tag:Label_1".into(),identity:"unique".into(),..item}).unwrap()).unwrap();
+        assert_eq!(restored.folder,"tag:Label_1");assert_eq!(restored.validity,9);
     }
 }

@@ -1005,12 +1005,13 @@ export default function MainLayout() {
                     rerun = false;
                     const target = await invoke<{ account_id: string; message: Parameters<typeof formatEmailFromMessage>[0] | null } | null>('consume_notification_navigation');
                     if (disposed || !target || target.account_id !== activeAccountRef.current) continue;
-                    const current = await invoke<Parameters<typeof formatEmailFromMessage>[0][]>('get_folder_messages', { folder: 'inbox', beforeUid: null, limit: 50 });
+                    const destination = target.message?.folder || 'inbox';
+                    const current = await invoke<Parameters<typeof formatEmailFromMessage>[0][]>('get_folder_messages', { folder: destination, beforeUid: null, limit: 50 });
                     if (disposed || target.account_id !== activeAccountRef.current) continue;
-                    currentFolderRef.current = 'inbox';
+                    currentFolderRef.current = destination;
                     cacheRevisionRef.current += 1;
-                    setCurrentFolder('inbox');
-                    setFolderSearchContexts(prev => { const next = { ...prev }; delete next.inbox; return next; });
+                    setCurrentFolder(destination);
+                    setFolderSearchContexts(prev => { const next = { ...prev }; delete next[destination]; return next; });
                     const message = target.message ? formatEmailFromMessage(target.message) : null;
                     notificationTargetRef.current = message ? { accountId: target.account_id, email: message } : null;
                     setEmails(dedupeEmails([...(message ? [message] : []), ...current.map(formatEmailFromMessage)]));

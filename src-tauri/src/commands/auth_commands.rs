@@ -1,7 +1,7 @@
 use crate::auth::account::UserProfile;
 use crate::auth::oauth;
 use crate::auth::session;
-use tauri::{AppHandle, command};
+use tauri::{AppHandle, command, Manager};
 
 #[command]
 pub async fn login_google(app_handle: AppHandle) -> Result<UserProfile, String> {
@@ -17,6 +17,22 @@ pub async fn login_google(app_handle: AppHandle) -> Result<UserProfile, String> 
     
     // Start Polling
     crate::mail::poll::start_polling(app_handle.clone(), account.clone());
+
+    // Return from the browser only after credentials and the active account
+    // have been saved successfully. Window activation must run on the UI thread.
+    let return_app = app_handle.clone();
+    if let Err(error) = app_handle.run_on_main_thread(move || {
+        if let Some(window) = return_app.get_webview_window("main") {
+            for result in [window.show(), window.unminimize(), window.set_focus()] {
+                if let Err(error) = result {
+                    log::warn!("Could not activate OrionMail after sign-in: {}", error);
+                }
+            }
+            crate::window_activity::refresh(&window);
+        }
+    }) {
+        log::warn!("Could not schedule OrionMail activation after sign-in: {}", error);
+    }
     
     Ok(UserProfile::from(account))
 }

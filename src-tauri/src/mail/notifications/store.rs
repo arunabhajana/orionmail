@@ -59,28 +59,21 @@ pub fn save(app: &AppHandle, batch: &Batch) -> Result<(), String> {
 }
 pub fn unread(app: &AppHandle, account: &str, items: Vec<Item>) -> Result<Vec<Item>, String> {
     let conn = database::open_connection(app)?;
-    let mut present = std::collections::HashSet::new();
-    for chunk in items.chunks(200) {
-        let placeholders = vec!["?"; chunk.len()].join(",");
-        let query=format!("SELECT uid,uid_validity FROM messages WHERE account_id=? AND folder='inbox' AND seen=0 AND uid IN ({placeholders})");
-        let mut values = vec![rusqlite::types::Value::Text(account.to_string())];
-        values.extend(
-            chunk
-                .iter()
-                .map(|item| rusqlite::types::Value::Integer(item.uid as i64)),
-        );
-        let mut statement = conn.prepare(&query).map_err(|e| e.to_string())?;
-        let rows = statement
-            .query_map(rusqlite::params_from_iter(values), |row| {
-                Ok((row.get::<_, u32>(0)?, row.get::<_, u32>(1)?))
-            })
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            present.insert(row.map_err(|e| e.to_string())?);
+    let prefs=crate::mail_preferences::load(app);
+    let mut folders=std::collections::HashMap::<String,Vec<&Item>>::new();
+    for item in &items {if prefs.folder_notifications_allowed(&item.folder){folders.entry(item.folder.clone()).or_default().push(item);}}
+    let mut present=std::collections::HashSet::new();
+    for (folder,items) in folders {
+        for chunk in items.chunks(200) {
+            let placeholders=vec!["?";chunk.len()].join(",");
+            let importance=if prefs.important_only {" AND EXISTS(SELECT 1 FROM message_tags mt JOIN tags t ON t.account_id=mt.account_id AND t.id=mt.tag_id WHERE mt.account_id=messages.account_id AND mt.folder=messages.folder AND mt.message_uid=messages.uid AND t.type='system' AND (lower(t.name)='important' OR lower(t.id)='important'))"}else{""};
+            let sql=format!("SELECT uid,uid_validity FROM messages WHERE account_id=? AND folder=? AND seen=0 AND uid IN ({placeholders}){importance}");
+            let mut values=vec![rusqlite::types::Value::Text(account.into()),rusqlite::types::Value::Text(folder.clone())];
+            values.extend(chunk.iter().map(|item|rusqlite::types::Value::Integer(item.uid as i64)));
+            let mut stmt=conn.prepare(&sql).map_err(|e|e.to_string())?;
+            let rows=stmt.query_map(rusqlite::params_from_iter(values),|row|Ok((row.get::<_,u32>(0)?,row.get::<_,u32>(1)?))).map_err(|e|e.to_string())?;
+            for row in rows {let (uid,validity)=row.map_err(|e|e.to_string())?;present.insert((folder.clone(),uid,validity));}
         }
     }
-    Ok(items
-        .into_iter()
-        .filter(|item| present.contains(&(item.uid, item.validity)))
-        .collect())
+    Ok(items.into_iter().filter(|item|present.contains(&(item.folder.clone(),item.uid,item.validity))).collect())
 }

@@ -32,3 +32,10 @@ test('default copy recipients validate and deduplicate before saving or sending'
  assert.deepEqual(parseAddressList('a@example.com; b@example.com,a@example.com'),['a@example.com','b@example.com']);
  assert.throws(()=>parseAddressList('bad address'));
 });
+
+test('notification controls persist and unsupported tones are rejected',()=>{
+ const values={notifyInbox:false,notifySent:true,notifyLabels:true,importantOnly:true,notificationTone:'im',notificationSound:false};
+ const prefs=normalizePreferences(values);for(const [key,value] of Object.entries(values))assert.equal(prefs[key],value,key);
+ assert.equal(normalizePreferences({notificationTone:'https://untrusted/audio'}).notificationTone,'mail');
+ const defaults=normalizePreferences({});assert.equal(defaults.notifyInbox,true);assert.equal(defaults.notifySent,false);assert.equal(defaults.notifyLabels,false);assert.equal(defaults.importantOnly,false);
+});

@@ -8,6 +8,11 @@ static CACHE: once_cell::sync::OnceCell<std::sync::RwLock<MailPreferences>> = on
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct MailPreferences {
+    pub notify_inbox: bool,
+    pub notify_sent: bool,
+    pub notify_labels: bool,
+    pub important_only: bool,
+    pub notification_tone: String,
     pub download_folder: String,
     pub cache_retention: String,
     pub cache_budget: String,
@@ -24,7 +29,7 @@ pub struct MailPreferences {
     pub prefetch_bodies: bool,
 }
 impl Default for MailPreferences {
-    fn default() -> Self { Self { download_folder:String::new(),cache_retention:"30".into(),cache_budget:"512".into(),taskbar_badge:true,dnd_enabled: false, desktop_notifications: true, notification_sound: true,
+    fn default() -> Self { Self { notify_inbox:true,notify_sent:false,notify_labels:false,important_only:false,notification_tone:"mail".into(),download_folder:String::new(),cache_retention:"30".into(),cache_budget:"512".into(),taskbar_badge:true,dnd_enabled: false, desktop_notifications: true, notification_sound: true,
         hide_notification_content: false, quiet_hours: false, quiet_start: "22:00".into(), quiet_end: "08:00".into(),
         sync_paused: false, poll_interval: "180".into(), prefetch_bodies: true } }
 }
@@ -46,7 +51,11 @@ impl MailPreferences {
         let quiet = if start < end { current >= start && current < end } else { current >= start || current < end };
         !quiet
     }
+    pub fn folder_notifications_allowed(&self, folder:&str)->bool {
+        match folder { "inbox"=>self.notify_inbox,"sent"=>self.notify_sent, value if value.starts_with("tag:")=>self.notify_labels,_=>false }
+    }
     fn validate(&self) -> Result<(), String> {
+        if !["mail","default","im","reminder"].contains(&self.notification_tone.as_str()){return Err("Invalid notification tone".into());}
         if !["0","7","30","90"].contains(&self.cache_retention.as_str()) || !["0","256","512","1024"].contains(&self.cache_budget.as_str()) { return Err("Invalid cache policy".into()); }
         if !self.download_folder.is_empty() {
             let directory=std::path::Path::new(&self.download_folder);
@@ -110,6 +119,15 @@ mod tests{
         prefs.quiet_end=prefs.quiet_start.clone();assert!(!prefs.notifications_allowed_at(12*60));
         prefs.quiet_hours=false;prefs.dnd_enabled=true;assert!(!prefs.notifications_allowed_at(12*60));
         prefs.dnd_enabled=false;prefs.desktop_notifications=false;assert!(!prefs.notifications_allowed_at(12*60));
+    }
+    #[test]fn notification_folders_and_tones_are_bounded(){
+        let mut prefs=MailPreferences::default();
+        assert!(prefs.folder_notifications_allowed("inbox"));assert!(!prefs.folder_notifications_allowed("sent"));
+        prefs.notify_sent=true;prefs.notify_labels=true;
+        assert!(prefs.folder_notifications_allowed("sent"));assert!(prefs.folder_notifications_allowed("tag:abc"));
+        assert!(!prefs.folder_notifications_allowed("trash"));assert!(!prefs.folder_notifications_allowed("starred"));
+        prefs.notification_tone="im".into();assert!(prefs.validate().is_ok());
+        prefs.notification_tone="file://untrusted".into();assert!(prefs.validate().is_err());
     }
     #[test]fn legacy_preferences_keep_values_and_gain_cache_defaults(){
         let prefs:MailPreferences=serde_json::from_str(r#"{"desktopNotifications":false,"pollInterval":"300"}"#).unwrap();

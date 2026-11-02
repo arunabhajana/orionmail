@@ -5,7 +5,7 @@ import { AppPreferences, defaultPreferences, normalizePreferences } from "@/lib/
 export type { AppPreferences } from "@/lib/app-preferences";
 interface PreferencesContext { preferences: AppPreferences; updatePreferences: (updates: Partial<AppPreferences>) => Promise<void>; }
 const Context = createContext<PreferencesContext | null>(null);
-const nativeKeys: (keyof AppPreferences)[] = ["downloadFolder","cacheRetention","cacheBudget","taskbarBadge","dndEnabled", "desktopNotifications", "notificationSound", "hideNotificationContent", "quietHours", "quietStart", "quietEnd", "syncPaused", "pollInterval", "prefetchBodies"];
+const nativeKeys: (keyof AppPreferences)[] = ["notifyInbox","notifySent","notifyLabels","importantOnly","notificationTone","downloadFolder","cacheRetention","cacheBudget","taskbarBadge","dndEnabled", "desktopNotifications", "notificationSound", "hideNotificationContent", "quietHours", "quietStart", "quietEnd", "syncPaused", "pollInterval", "prefetchBodies"];
 export function AppPreferencesProvider({ children }: { children: React.ReactNode }) {
     const [preferences, setPreferences] = useState(defaultPreferences);
     const current = useRef(preferences);

@@ -1,108 +1,38 @@
 "use client";
 
-import React, { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Settings2, Lock, ShieldCheck } from "lucide-react";
-import gsap from "gsap";
-import LoadingOrion from "./LoadingOrion";
+import { useRef, useState } from "react";
+import Image from "next/image";
+import { AlertCircle, ArrowRight, Loader2 } from "lucide-react";
 import { useAuth } from "./AuthContext";
+import packageInfo from "@/package.json";
 
-const LoginPage = () => {
-    const router = useRouter();
-    const [isLoading, setIsLoading] = useState(false);
-    const containerRef = useRef<HTMLDivElement>(null);
-    const cardRef = useRef<HTMLDivElement>(null);
-
+export default function LoginPage() {
     const { loginWithGoogle } = useAuth();
-
-    const handleGoogleLogin = () => {
-        const tl = gsap.timeline();
-
-        // 1. Exit Animation for Card
-        tl.to(cardRef.current, {
-            scale: 0.8,
-            opacity: 0,
-            filter: "blur(20px)",
-            duration: 0.6,
-            ease: "power3.inOut"
-        });
-
-        // 2. Warp Background
-        const decorationElements = containerRef.current?.querySelectorAll(".bg-decoration");
-        if (decorationElements && decorationElements.length > 0) {
-            tl.to(decorationElements, {
-                scale: 5,
-                opacity: 0,
-                duration: 1,
-                stagger: 0.1,
-                ease: "power2.in",
-                onComplete: () => {
-                    setIsLoading(true);
-                    loginWithGoogle().catch(() => setIsLoading(false));
-                }
-            }, "-=0.4");
-        } else {
-            // Fallback if decorations missing
-            setIsLoading(true);
-            loginWithGoogle().catch(() => setIsLoading(false));
-        }
+    const guard = useRef(false);
+    const [pending, setPending] = useState(false);
+    const [error, setError] = useState('');
+    const [legal, setLegal] = useState<'privacy' | 'terms' | null>(null);
+    const handleGoogleLogin = async () => {
+        if (guard.current) return;
+        guard.current = true; setPending(true); setError('');
+        try { await loginWithGoogle(); }
+        catch (failure) {
+            const message = String(failure);
+            setError(/cancelled|denied|access_denied/i.test(message) ? 'Sign-in was cancelled. You can try again whenever you’re ready.' : /timed out|timeout/i.test(message) ? 'Sign-in took too long. Please try again and complete the steps in your browser.' : 'Could not connect to Google. Check your connection and try again.');
+        } finally { guard.current = false; setPending(false); }
     };
-
-    return (
-        <>
-            {isLoading && <LoadingOrion />}
-            <div ref={containerRef} className="bg-mesh dark:bg-[#111111] h-full w-full flex items-center justify-center p-6 antialiased relative overflow-hidden transition-colors">
-                {/* Top Navigation Bar */}
-                <nav className="fixed top-[30px] left-0 w-full px-6 py-4 flex justify-between items-center z-40">
-                    <div className="flex items-center gap-3">
-                        <div className="relative">
-                            <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <defs>
-                                    <linearGradient id="space-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                                        <stop offset="0%" stopColor="#2563eb" />
-                                        <stop offset="50%" stopColor="#7c3aed" />
-                                        <stop offset="100%" stopColor="#db2777" />
-                                    </linearGradient>
-                                </defs>
-                                {/* Gmail-inspired 'M' shape but with space themed colors */}
-                                <path
-                                    d="M3 7.5L12 13L21 7.5V16.5C21 17.3284 20.3284 18 19.5 18H4.5C3.67157 18 3 17.3284 3 16.5V7.5Z"
-                                    fill="url(#space-grad)"
-                                />
-                                <path
-                                    d="M3 7.5L12 13L21 7.5L12 2L3 7.5Z"
-                                    fill="url(#space-grad)"
-                                    opacity="0.8"
-                                />
-                            </svg>
-                        </div>
-                        <span className="text-slate-900 dark:text-white/90 font-bold text-xl tracking-tight">OrionMail</span>
-                    </div>
-                    <button className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-white/60 hover:text-primary transition-colors">
-                        Help Center
-                    </button>
-                </nav>
-
-                {/* Main Glassmorphic Login Card */}
-                <main ref={cardRef} className="w-full max-w-[440px] z-10 transition-all">
-                    <div className="glass-card dark:bg-[#1C1C21]/70 dark:backdrop-blur-2xl rounded-xl p-8 md:p-10 flex flex-col items-center border border-white/40 dark:border-white/10 shadow-2xl transition-colors">
-                        {/* Branding Header */}
-                        <div className="text-center mb-8">
-                            <h1 className="text-slate-900 dark:text-white/90 text-3xl font-bold tracking-tight mb-2">OrionMail</h1>
-                            <p className="text-slate-600 dark:text-white/60 font-medium">Your unified inbox, reimagined.</p>
-                        </div>
-                        {/* Login Section */}
-                        <div className="w-full space-y-4">
-                            <div className="mb-6 text-center">
-                                <h2 className="text-slate-900 dark:text-white/90 text-lg font-semibold mb-1">Connect Email</h2>
-                                <p className="text-slate-500 dark:text-white/50 text-sm">Select your provider to get started</p>
-                            </div>
-                            {/* Google Sign In */}
-                            <button
-                                onClick={handleGoogleLogin}
-                                className="w-full h-12 flex items-center justify-center gap-3 px-4 bg-white dark:bg-white/5 hover:bg-slate-50 dark:hover:bg-white/10 border border-slate-200/60 dark:border-white/10 rounded-lg shadow-sm transition-all duration-200 group cursor-pointer"
-                            >
-                                <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    return <main className="relative flex h-full w-full flex-col items-center overflow-y-auto bg-[#f6f7f8] px-6 py-10 text-foreground dark:bg-[#111216]">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_20%_0%,rgba(39,123,241,0.07),transparent_55%),radial-gradient(ellipse_at_100%_100%,rgba(169,112,255,0.05),transparent_50%)]" />
+        <div className="relative my-auto w-full max-w-[420px] shrink-0">
+            <div className="mb-8 flex items-center justify-center gap-3">
+                <Image src="/logo-transparent.svg" alt="" width={44} height={40} unoptimized className="-translate-y-1 brightness-0 dark:brightness-100" />
+                <span className="text-[24px] font-semibold tracking-tight">OrionMail</span>
+            </div>
+            <section aria-labelledby="login-title" aria-busy={pending} className="rounded-[22px] border border-black/[0.07] bg-white p-7 shadow-[0_16px_60px_rgba(0,0,0,0.04)] sm:p-9 dark:border-white/[0.08] dark:bg-[#191b21]">
+                <h1 id="login-title" className="text-2xl font-semibold tracking-tight">A quieter space for your inbox.</h1>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">Connect your Google account to get started.</p>
+                <button type="button" disabled={pending} onClick={() => { void handleGoogleLogin(); }} aria-describedby="login-status" className="mt-7 flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-medium transition-colors hover:bg-black/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60 dark:border-white/15 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] dark:focus-visible:ring-offset-[#191b21]">
+                    {pending ? <Loader2 aria-hidden="true" className="size-5 shrink-0 animate-spin motion-reduce:animate-none" /> : <svg className="size-5 shrink-0" aria-hidden="true" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                     <path
                                         d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
                                         fill="#4285F4"
@@ -119,74 +49,21 @@ const LoginPage = () => {
                                         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                                         fill="#EA4335"
                                     ></path>
-                                </svg>
-                                <span className="text-slate-700 dark:text-white/90 font-semibold text-[15px]">Continue with Google</span>
-                            </button>
-                            {/* Outlook Sign In */}
-                            <button className="w-full h-12 flex items-center justify-center gap-3 px-4 bg-white dark:bg-white/5 hover:bg-slate-50 dark:hover:bg-white/10 border border-slate-200/60 dark:border-white/10 rounded-lg shadow-sm transition-all duration-200 group">
-                                <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M22.3 8.5L12 3L1.7 8.5V15.5L12 21L22.3 15.5V8.5Z" fill="#0078D4"></path>
-                                    <path d="M12 3V21L22.3 15.5V8.5L12 3Z" fill="#106EBE"></path>
-                                    <path d="M12 3L1.7 8.5V15.5L12 12.3V3Z" fill="#28A8EA"></path>
-                                </svg>
-                                <span className="text-slate-700 dark:text-white/90 font-semibold text-[15px]">Continue with Outlook</span>
-                            </button>
-                            <div className="relative py-4">
-                                <div aria-hidden="true" className="absolute inset-0 flex items-center">
-                                    <div className="w-full border-t border-slate-300/40 dark:border-white/10"></div>
-                                </div>
-                                <div className="relative flex justify-center text-xs uppercase">
-                                    <span className="bg-transparent px-2 text-slate-500 dark:text-white/40 font-medium whitespace-nowrap">or manual setup</span>
-                                </div>
-                            </div>
-                            {/* IMAP Sign In */}
-                            <button className="w-full h-12 flex items-center justify-center gap-3 px-4 bg-primary text-white hover:bg-primary/90 rounded-lg shadow-lg shadow-primary/20 transition-all duration-200">
-                                <Settings2 size={20} />
-                                <span className="font-semibold text-[15px]">Configure IMAP/SMTP</span>
-                            </button>
-                        </div>
-                        {/* Footer Section */}
-                        <div className="mt-10 text-center">
-                            <p className="text-slate-500 dark:text-white/50 text-xs leading-relaxed">
-                                By signing in, you agree to our <br />
-                                <a className="text-primary hover:underline font-medium" href="#">
-                                    Terms of Service
-                                </a>{" "}
-                                and{" "}
-                                <a className="text-primary hover:underline font-medium" href="#">
-                                    Privacy Policy
-                                </a>
-                                .
-                            </p>
-                        </div>
-                    </div>
-                    {/* Decorative elements around the card */}
-                    <div className="mt-8 flex justify-center gap-6 opacity-60">
-                        <div className="flex items-center gap-1.5 text-slate-500 dark:text-white/50 text-xs font-medium">
-                            <Lock size={16} />
-                            End-to-end Encrypted
-                        </div>
-                        <div className="flex items-center gap-1.5 text-slate-500 dark:text-white/50 text-xs font-medium">
-                            <ShieldCheck size={16} />
-                            Privacy Focused
-                        </div>
-                    </div>
-                </main>
-
-                {/* Background Decoration */}
-                <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
-                    {/* Light Mode Blobs */}
-                    <div className="bg-decoration absolute dark:hidden -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[120px]"></div>
-                    <div className="bg-decoration absolute dark:hidden -bottom-[10%] -right-[10%] w-[40%] h-[40%] rounded-full bg-purple-500/10 blur-[120px]"></div>
-                    <div className="bg-decoration absolute dark:hidden top-[20%] right-[15%] w-[100px] h-[100px] bg-blue-400/20 blur-[60px]"></div>
-
-                    {/* Dark Mode Mesh */}
-                    <div className="bg-decoration absolute hidden dark:block top-[-20%] left-[-10%] w-[70%] h-[70%] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-purple-900/40 via-violet-900/10 to-transparent blur-[120px] rounded-full mix-blend-screen opacity-50" />
-                    <div className="bg-decoration absolute hidden dark:block bottom-[-20%] right-[-10%] w-[70%] h-[70%] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-fuchsia-900/30 via-purple-900/10 to-transparent blur-[120px] rounded-full mix-blend-screen opacity-50" />
+                                </svg>}
+                    <span>{pending ? 'Waiting for Google…' : 'Continue with Google'}</span>
+                    {!pending && <ArrowRight aria-hidden="true" className="size-4 text-muted-foreground" />}
+                </button>
+                <p id="login-status" role="status" className="mt-3 text-center text-xs leading-relaxed text-muted-foreground">{pending ? 'Finish signing in in your browser, then return here.' : 'Sign-in opens securely in your browser.'}</p>
+                {error && <div role="alert" className="mt-4 flex items-start gap-2 rounded-xl border border-red-500/15 bg-red-500/[0.05] p-3 text-xs leading-relaxed text-red-600 dark:text-red-300"><AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" /><span>{error}</span></div>}
+            </section>
+            <footer className="mt-6 text-center text-[11px] text-muted-foreground">
+                <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                    <button type="button" aria-expanded={legal === 'privacy'} aria-controls="login-legal" onClick={() => setLegal(value => value === 'privacy' ? null : 'privacy')} className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Privacy Policy <span className="opacity-60">· Soon</span></button>
+                    <button type="button" aria-expanded={legal === 'terms'} aria-controls="login-legal" onClick={() => setLegal(value => value === 'terms' ? null : 'terms')} className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Terms of Service <span className="opacity-60">· Soon</span></button>
                 </div>
-            </div>
-        </>
-    );
-};
-
-export default LoginPage;
+                <div id="login-legal" hidden={!legal} className="mt-4 rounded-xl border border-black/[0.06] bg-white/60 px-4 py-3 text-left leading-relaxed dark:border-white/[0.06] dark:bg-white/[0.025]" role="status">{legal && <><p className="font-medium text-foreground">{legal === 'privacy' ? 'Privacy Policy' : 'Terms of Service'}</p><p className="mt-1">This document has not been published yet. This is a placeholder; the full {legal === 'privacy' ? 'privacy policy' : 'terms of service'} will be available here in a future release.</p></>}</div>
+                <p className="mt-4 tabular-nums">Version {packageInfo.version} <span aria-hidden="true">·</span> Preview</p>
+            </footer>
+        </div>
+    </main>;
+}

@@ -229,6 +229,7 @@ pub fn run() {
       mail::notifications::show_background_notification,
       mail::notifications::preview_notification,
       mail::notifications::open_notification_settings,
+      mail::notifications::open_notification_volume,
       get_boot_error,
         get_cache_summary,
         mail_preferences::get_mail_preferences,

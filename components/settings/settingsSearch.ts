@@ -18,6 +18,7 @@ export const SETTINGS_TABS = [
 export interface SettingsSearchResult { id: string; title: string; section: SettingsTab; description: string; keywords: string; }
 const nativeEntries: [SettingsTab, string, string, string, string][] = [
     ['notifications', 'preview', 'Preview notification', 'Check the OrionMail name, icon, and Windows notification delivery.', 'test banner toast dev'],
+    ['notifications', 'volume', 'Notification volume', 'Adjust notification loudness in the Windows volume mixer.', 'audio sound mixer loud quiet'],
     ['notifications', 'system', 'Windows notification settings', 'Manage banners, sounds, and lock screen previews in Windows.', 'permissions action center system'],
     ['account', 'alias', 'Alias', 'Your display name in OrionMail.', 'profile nickname display name'],
     ['account', 'email', 'Email address', 'Your connected Google email address.', 'gmail account'],

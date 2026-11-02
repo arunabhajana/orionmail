@@ -36,14 +36,18 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
         item("taskbarBadge", "Taskbar unread badge", "Show the current account’s unread message count (excluding Trash) on the Windows taskbar icon, up to 99+. The badge clears when there are no unread messages. Save changes to apply."),
     ] }],
     notifications: [
-        { title: "Incoming mail", description: "Desktop alerts currently cover Inbox. Windows notification permissions also apply.", items: [
-            item("desktopNotifications", "Desktop notifications", "Show native desktop alerts for new Inbox mail."),
-            item("notificationSound", "Notification sound", "Play the system’s default notification tone."),
+        { title: "Incoming mail", description: "Choose which new messages can interrupt you. Windows notification permissions also apply.", items: [
+            item("desktopNotifications", "Desktop notifications", "Show native desktop alerts for newly synced mail."),
+            item("notificationSound", "Notification sound", "Play your selected Windows tone for new mail."),
             item("hideNotificationContent", "Hide message previews", "Use a generic alert without sender names or subjects."),
             item("showUnreadCount", "Unread badges", "Show unread counts next to mailbox folders."),
-            later("folders", "Per-folder notifications", "Alerts for Sent and custom folders are not supported yet."),
-            later("important", "Important mail only", "Inbox alerts currently cover all incoming mail."),
-            later("tone", "Custom tone and volume", "Use Windows notification settings for sound customization."),
+            item("notificationTone", "Notification tone", "Choose a Windows notification sound. Windows controls playback volume.", "select", [["mail","Mail"],["default","Default"],["im","Instant message"],["reminder","Reminder"]]),
+            item("importantOnly", "Important mail only", "Only alert for messages marked Important by Gmail. Requires synced Gmail importance metadata; other messages are skipped."),
+        ] },
+        { title: "Folder notifications", description: "Applies to new arrivals after a folder’s first sync. Tag alerts follow folders you sync; this does not add background sync jobs.", items: [
+            item("notifyInbox", "Inbox", "Notify for new Inbox messages."),
+            item("notifySent", "Sent", "Notify for newly synced sent messages."),
+            item("notifyLabels", "Tags", "Notify for new messages in synced tag folders. Trash and Starred never trigger alerts."),
         ] },
         { title: "Time to focus", items: [
             item("dndEnabled", "Do not disturb", "Silence mail alerts and sounds until you turn this off. The bell in the titlebar controls the same setting. Scheduled quiet hours still apply when this is off."),

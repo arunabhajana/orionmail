@@ -41,7 +41,7 @@ export function PreferencesSection({ section }: { section: string }) {
     const set = (key: keyof AppPreferences, value: string | boolean) => setDraft(prev => ({ ...prev, [key]: value }));
     return <div className="space-y-5">{section === 'notifications' && <NotificationFocusStatus />}{groups.map(group => <SettingGroup key={group.title} title={group.title} description={group.description}>{group.items.map(item => {
         const key = item.key;
-        const disabled = (key?.startsWith("smartActions") && key !== "smartActionsGlobal" && !draft.smartActionsGlobal) || ((key === "quietStart" || key === "quietEnd") && !draft.quietHours);
+        const disabled = (key === "notificationTone" && !draft.notificationSound) || (key?.startsWith("smartActions") && key !== "smartActionsGlobal" && !draft.smartActionsGlobal) || ((key === "quietStart" || key === "quietEnd") && !draft.quietHours);
         return <SettingRow key={item.id} id={`${section}.${item.id}`} title={item.title} description={item.description} unavailable={item.type === "unavailable"}>
             {key && item.type === "toggle" && <SettingToggle label={item.title} checked={Boolean(draft[key])} onChange={value => set(key, value)} disabled={disabled} />}
             {key && item.type === "select" && <SettingSelect label={item.title} value={String(draft[key])} options={item.options || []} disabled={disabled} onChange={value => set(key, value)} />}

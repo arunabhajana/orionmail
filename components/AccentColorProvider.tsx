@@ -10,7 +10,7 @@ interface AccentColorContextType {
     setAccentColor: (color: AccentColorName) => void;
 }
 
-const colorMap: Record<AccentColorName, { light: string; dark: string }> = {
+export const colorMap: Record<AccentColorName, { light: string; dark: string }> = {
     blue: { light: '#277bf1', dark: '#3b82f6' },
     purple: { light: '#9333ea', dark: '#a855f7' },
     rose: { light: '#e11d48', dark: '#f43f5e' },

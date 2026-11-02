@@ -246,7 +246,7 @@ pub async fn sync_folder_with_options(
                 }
 
                 if batch_count > 0 {
-                    if !is_bootstrap && folder_clone == MailFolder::Inbox {
+                    if !is_bootstrap && crate::mail_preferences::load(&app_handle_clone).folder_notifications_allowed(&folder_clone.to_string()) {
                         let mut notif_batch = Vec::new();
                         for msg in messages.iter().filter(|msg| msg.uid > sync_state.last_uid) {
                             notif_batch.push((msg.from.clone(), msg.subject.clone(), msg.uid));
@@ -254,6 +254,7 @@ pub async fn sync_folder_with_options(
                         if !notif_batch.is_empty() { notifications::show_new_emails(
                             &app_handle_clone,
                             &account_id,
+                            &folder_clone.to_string(),
                             &notif_batch,
                         ); }
                     }

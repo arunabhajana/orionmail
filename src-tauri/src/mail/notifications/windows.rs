@@ -365,6 +365,7 @@ pub fn show(
     attribution: &str,
     sound: bool,
     popup: bool,
+    tone: &str,
 ) -> Result<(), String> {
     if !popup && !present(&batch.display_tag)? {
         return Ok(());
@@ -374,18 +375,14 @@ pub fn show(
     let open_label = if batch.items.len() == 1 {
         "Open email"
     } else {
-        "Open Inbox"
+        "Open OrionMail"
     };
     let read_label = if batch.items.len() == 1 {
         "Mark as read"
     } else {
         "Mark all as read"
     };
-    let audio = if sound {
-        "<audio src=\"ms-winsoundevent:Notification.Mail\"/>"
-    } else {
-        "<audio silent=\"true\"/>"
-    };
+    let audio = notification_audio(sound,tone);
     show_xml(&format!("<toast launch=\"{open}\" activationType=\"foreground\"><visual><binding template=\"ToastGeneric\"><image placement=\"appLogoOverride\" src=\"{}\"/><text>{}</text><text hint-maxLines=\"4\">{}</text><text placement=\"attribution\">{}</text></binding></visual><actions><action content=\"{open_label}\" arguments=\"{open}\" activationType=\"foreground\"/><action content=\"{read_label}\" arguments=\"{read}\" activationType=\"background\" afterActivationBehavior=\"pendingUpdate\"/></actions>{audio}</toast>",xml(&icon_uri()?),xml(title),xml(body),xml(attribution)),&batch.display_tag,popup)
 }
 pub fn status(title: &str, body: &str) -> Result<(), String> {
@@ -432,4 +429,15 @@ fn present_inner(tag: &str) -> Result<bool, String> {
         }
     }
     Ok(false)
+}
+
+fn notification_audio(sound:bool,tone:&str)->&'static str {
+     if sound {
+        match tone { "default"=>"<audio src=\"ms-winsoundevent:Notification.Default\"/>", "im"=>"<audio src=\"ms-winsoundevent:Notification.IM\"/>", "reminder"=>"<audio src=\"ms-winsoundevent:Notification.Reminder\"/>", _=>"<audio src=\"ms-winsoundevent:Notification.Mail\"/>" }
+    } else {
+        "<audio silent=\"true\"/>"
+    }
+}
+pub fn preview(title:&str,body:&str,sound:bool,tone:&str)->Result<(),String>{
+    show_xml(&format!("<toast launch=\"app:open\"><visual><binding template=\"ToastGeneric\"><image placement=\"appLogoOverride\" src=\"{}\"/><text>{}</text><text>{}</text></binding></visual>{}</toast>",xml(&icon_uri()?),xml(title),xml(body),notification_audio(sound,tone)),"preview",true)
 }

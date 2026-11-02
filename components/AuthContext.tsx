@@ -204,7 +204,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
      * Initiates the Google OAuth login flow via Tauri.
      */
     const loginWithGoogle = async () => {
-        setLoading(true);
+        // Interactive sign-in owns its pending UI. Global loading is reserved
+        // for session boot, so a failed attempt does not unmount the login page.
         try {
             const profile = await invoke<User>("login_google");
             setUser(profile);
@@ -239,8 +240,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         } catch (error) {
             console.error("Auth: Google login failed", error);
             throw error;
-        } finally {
-            setLoading(false);
         }
     };
 
