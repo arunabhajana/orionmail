@@ -32,7 +32,7 @@ interface MessageDetail {
     extractedData?: ExtractedData;
 }
 
-export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, iframeRef: RefObject<HTMLIFrameElement | null>, onMarkAsRead?: (id: string) => void, localId?: string) {
+export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, iframeRef: RefObject<HTMLIFrameElement | null>, onMarkAsRead?: (id: string) => void, localId?: string, uidValidity?: number) {
     const { preferences } = useAppPreferences();
     const { user } = useAuth();
     const [bodyContent, setBodyContent] = useState<string>("");
@@ -49,7 +49,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     useEffect(() => {
         let active = true;
         let inFlight = false;
-        const key = `${user?.id}:${emailId}`;
+        const key = `${user?.id}:${folder}:${emailUid}:${uidValidity}:${emailId}`;
         const dbFolder = folder
             ? (folder.toLowerCase().startsWith('tag:') ? folder : folder.toLowerCase())
             : "inbox";
@@ -63,7 +63,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             try {
                 // This command already waits for an in-progress backend prefetch.
                 // Re-fetching on body_cached used to duplicate IPC and reset the reader.
-                const detail = await invoke<MessageDetail>('get_message_body', { folder: dbFolder, uid: emailUid, localId });
+                const detail = await invoke<MessageDetail>('get_message_body', { folder: dbFolder, uid: emailUid, localId, accountId: user.id, expectedUidValidity: uidValidity });
                 if (!active) return;
                 loadedKey.current = key;
                 setBodyContent(detail.body || "<p>Message has no content.</p>");
@@ -121,7 +121,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             void unlistenExtracted.then(unlisten => unlisten()).catch(console.error);
             window.removeEventListener("orion:simulate_error", handleSimulateError);
         };
-    }, [emailId, emailUid, folder, user?.id, localId]);
+    }, [emailId, emailUid, folder, user?.id, localId, uidValidity]);
 
     const readCallback = useRef(onMarkAsRead);
     const unreadRef = useRef(emailUnread);
@@ -133,7 +133,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         const delay = preferences.markRead === 'immediate' ? 0 : Number(preferences.markRead) * 1000;
         const timer = setTimeout(() => { if (unreadRef.current) readCallback.current?.(emailId); }, delay);
         return () => clearTimeout(timer);
-    }, [emailId, folder, preferences.markRead]);
+    }, [emailId, emailUid, folder, user?.id, uidValidity, preferences.markRead]);
 
     // Handle iframe messages sent from the injected srcDoc script
     useEffect(() => {

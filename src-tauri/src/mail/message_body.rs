@@ -16,18 +16,6 @@ use std::collections::HashSet;
 use std::fs;
 use crate::mail::patterns::regex as cached_regex;
 
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::OnceLock;
-
-static SESSION_DIR_NAME: OnceLock<String> = OnceLock::new();
-
-fn get_session_dir_name() -> &'static str {
-    SESSION_DIR_NAME.get_or_init(|| {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        format!("session_{}_{}", now, std::process::id())
-    })
-}
-
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -124,7 +112,7 @@ impl MimeParts {
 
 fn rewrite_cid_images(
     app_handle: &AppHandle, 
-    uid: u32, 
+    scope: &str,
     mut html: String, 
     parts: &MimeParts
 ) -> String {
@@ -148,12 +136,14 @@ fn rewrite_cid_images(
     }
 
     let Ok(cache_dir) = app_handle.path().app_cache_dir() else { return html };
-    let inline_dir = cache_dir.join("orbitmail_inline").join(get_session_dir_name());
+    let inline_dir = cache_dir.join("orbitmail_inline_v2");
     let _ = fs::create_dir_all(&inline_dir);
     
     for candidate in &parts.cid_candidates {
         if referenced_cids.contains(&candidate.cid) {
-            let safe_cid = candidate.cid.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+            let raw_bytes = &parts.all_parts[candidate.part_index];
+            if raw_bytes.len() > 5 * 1024 * 1024 { continue; }
+            let safe_cid = inline_asset_key(scope, &candidate.cid, raw_bytes);
             let ext = match candidate.mime.as_str() {
                 "image/png" => "png",
                 "image/jpeg" | "image/jpg" => "jpg",
@@ -161,16 +151,11 @@ fn rewrite_cid_images(
                 "image/webp" => "webp",
                 _ => "bin",
             };
-            let file_name = format!("uid_{}_cid_{}.{}", uid, safe_cid, ext);
+            let file_name = format!("{}.{}", safe_cid, ext);
             let filepath = inline_dir.join(&file_name);
 
             // Write if missing and under 5MB
-            if !filepath.exists() {
-                let raw_bytes = &parts.all_parts[candidate.part_index];
-                if raw_bytes.len() <= 5 * 1024 * 1024 {
-                    let _ = fs::write(&filepath, raw_bytes);
-                }
-            }
+            if !filepath.exists() && fs::write(&filepath, raw_bytes).is_err() { continue; }
 
             // Tauri asset replacement string
             let asset_url = format!("asset://localhost/{}", filepath.to_string_lossy().replace('\\', "/"));
@@ -184,7 +169,7 @@ fn rewrite_cid_images(
     html
 }
 
-fn extract_displayable_body(app_handle: &AppHandle, uid: u32, raw_email: &[u8]) -> Result<String, String> {
+fn extract_displayable_body(app_handle: &AppHandle, scope: &str, raw_email: &[u8]) -> Result<String, String> {
     // If it's a full email or section with MIME prepended, parse_mail works.
     let parsed_res = parse_mail(raw_email);
     
@@ -202,7 +187,7 @@ fn extract_displayable_body(app_handle: &AppHandle, uid: u32, raw_email: &[u8]) 
             let escaped = fallback.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
             format!("<pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>", escaped)
         };
-        rewrite_cid_images(app_handle, uid, html_content, &parts)
+        rewrite_cid_images(app_handle, scope, html_content, &parts)
     } else {
         String::from_utf8_lossy(raw_email).to_string()
     };
@@ -372,6 +357,10 @@ fn generate_preview(html: &str) -> String {
 }
 
 pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32) -> Result<MessageDetail, String> {
+    fetch_and_cache_body_with_session(app_handle, account, folder, uid, imap_session::SessionKind::Prefetch, None).await
+}
+
+pub async fn fetch_and_cache_body_with_session(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32, kind: imap_session::SessionKind, expected_validity: Option<u32>) -> Result<MessageDetail, String> {
     let app_handle_cache = app_handle.clone();
     let folder_cache = folder.to_string();
     let account_id = account.id.clone();
@@ -379,9 +368,10 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     
     // 1. Check caches in a blocking task
     let cache_result = tokio::task::spawn_blocking(move || {
-        let stored_validity = database::get_mailbox_validity(&app_handle_cache, &account_id_cache, &folder_cache)
-            .unwrap_or_default()
-            .unwrap_or(1);
+        let stored_validity = database::message_uid_validity(&app_handle_cache, &account_id_cache, &folder_cache, uid)?;
+        if expected_validity.is_some_and(|expected| expected != stored_validity) {
+            return Err("Mailbox identity changed before body loading. Reopen the message.".into());
+        }
 
         if let Ok(Some((cached_body, attachments_json, extracted_data_json))) = database::get_message_body_cache(&app_handle_cache, &account_id_cache, &folder_cache, uid) {
             let attachments = if let Some(json) = attachments_json {
@@ -416,7 +406,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     .await
     .map_err(|e| format!("Task failed: {}", e))??;
 
-    let (cached_opt, _stored_validity, needs_reextract, _was_missing) = cache_result;
+    let (cached_opt, stored_validity, needs_reextract, _was_missing) = cache_result;
     if let Some(mut detail) = cached_opt {
         if needs_reextract {
             let app_clone = app_handle.clone();
@@ -447,6 +437,9 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     let _fetched_attachments: Vec<MessageAttachment> = Vec::new();
 
     // -- SEMAPHORE ACQUIRE (NETWORK BOUNDARY) --
+    // A queued viewport job may outlive an OAuth token or account removal.
+    // Resolve its owner again only on the network path; cached opens stay local.
+    let account = crate::auth::bootstrap::ensure_account(app_handle, &account.id).await?;
     let _permit = CONCURRENT_FETCH_LIMIT.clone().acquire_owned().await.map_err(|e| e.to_string())?;
     log::debug!("IMAP fetch start: uid={}, active_permits={}", uid, 3 - CONCURRENT_FETCH_LIMIT.available_permits());
     
@@ -455,14 +448,14 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
 
     use std::str::FromStr;
     let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
-        Ok(crate::mail::folder::MailFolder::Trash) => crate::mail::trash::mailbox(app_handle,account),
+        Ok(crate::mail::folder::MailFolder::Trash) => crate::mail::trash::mailbox(app_handle,&account),
         Ok(mf) => match mf.to_imap_mailbox(&provider_clone) {
             Some(mb) => mb.to_string(),
             None => {
                 if let crate::mail::folder::MailFolder::Tag(ref tag_id) = mf {
                     let tags = database::get_all_tags(&app_handle, &account.id).unwrap_or_default();
                     if let Some(tag) = tags.iter().find(|t| &t.id == tag_id) {
-                        tag.name.clone()
+                        crate::mail::tags::assignment::encode_mailbox_name(&tag.name)?
                     } else {
                         return Err(format!("Tag ID {} not found", tag_id));
                     }
@@ -476,9 +469,12 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     
     log::info!("Connecting to IMAP mailbox '{}' to fetch UID {}", imap_mailbox, uid);
 
-    let imap_result = imap_session::execute_with_session(&account, imap_session::SessionKind::Prefetch, move |session| {
+    let imap_result = imap_session::execute_with_session(&account, kind, move |session| {
 
-        session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
+        let selected = session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
+        if selected.uid_validity != Some(stored_validity) {
+            return Err("Mailbox identity changed. Refresh the folder and reopen the message.".into());
+        }
 
         let mut target_part = String::new();
         let mut full_payload: Vec<u8> = Vec::new();
@@ -561,7 +557,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
     tokio::task::spawn_blocking(move || {
         let _work = crate::performance::WorkSpan::new("message body processing");
         let parsed_body = if !fetched_full_payload.is_empty() {
-            match extract_displayable_body(&app_handle, uid, &fetched_full_payload) {
+            match extract_displayable_body(&app_handle, &serde_json::json!([account_id,folder,stored_validity,uid]).to_string(), &fetched_full_payload) {
                 Ok(parsed) => parsed,
                 Err(_) => {
                     let fallback = String::from_utf8_lossy(&fetched_full_payload).to_string();
@@ -601,7 +597,7 @@ pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Acc
         let extracted = extraction::run_with_context(&parsed_body, &text, subject, sender);
         let extracted_json = serde_json::to_string(&extracted).ok();
     
-        database::update_message_body(&app_handle, &account_id, &folder, uid, &parsed_body, &preview, attachments_json, extracted_json.clone())?;
+        database::update_message_body_if_current(&app_handle, &account_id, &folder, uid, stored_validity, &parsed_body, &preview, attachments_json, extracted_json.clone())?;
     
         Ok(MessageDetail {
             body: parsed_body,
@@ -615,31 +611,20 @@ pub async fn get_message_body(app_handle: &AppHandle, account: Account, folder: 
     fetch_and_cache_body_internal(app_handle, &account, folder, uid).await
 }
 
-pub async fn fetch_attachment_part(account: &Account, folder: &str, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {
+pub async fn fetch_attachment_part(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {
     let part_id_clone = part_id.to_string();
-    let folder_clone = folder.to_string();
-    let provider_clone = account.provider.clone();
-    let account_copy=account.clone();
-    
+    let mailbox = crate::mail::message_actions::resolve_mailbox(app_handle, account, folder)?;
+    let validity = database::message_uid_validity(app_handle, &account.id, folder, uid)?;
+    if part_id.is_empty() || !part_id.split('.').all(|part| part.parse::<u32>().is_ok_and(|part| part > 0)) {
+        return Err("Invalid attachment part".into());
+    }
+
     // -- SEMAPHORE ACQUIRE --
     let _permit = CONCURRENT_FETCH_LIMIT.clone().acquire_owned().await.map_err(|e| e.to_string())?;
     
     let imap_result = imap_session::execute_with_session(account, imap_session::SessionKind::Primary, move |session| {
-        use std::str::FromStr;
-        let imap_mailbox = match crate::mail::folder::MailFolder::from_str(&folder_clone) {
-            Ok(crate::mail::folder::MailFolder::Trash) => {
-                let folders=session.list(Some(""),Some("*")).map_err(|e|e.to_string())?;
-                folders.iter().find(|name|name.attributes().iter().any(|attribute|matches!(attribute,imap::types::NameAttribute::Custom(value) if value.eq_ignore_ascii_case("\\Trash"))))
-                    .map(|name|name.name().to_string()).unwrap_or_else(||crate::mail::folder::MailFolder::Trash.to_imap_mailbox(&account_copy.provider).unwrap_or("Trash").into())
-            },
-            Ok(mf) => match mf.to_imap_mailbox(&provider_clone) {
-                Some(mb) => mb.to_string(),
-                None => return Err("Cannot fetch from virtual folder".to_string()),
-            },
-            Err(_) => return Err(format!("Unknown folder: {}", folder_clone)),
-        };
-
-        session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
+        let selected = session.select(&mailbox).map_err(|e| format!("IMAP Select Error: {e}"))?;
+        if selected.uid_validity != Some(validity) { return Err("Mailbox identity changed. Reopen the message.".into()); }
 
         let mime_query = format!("BODY.PEEK[{}.MIME]", part_id_clone);
         let body_query = format!("BODY.PEEK[{}]", part_id_clone);
@@ -649,7 +634,7 @@ pub async fn fetch_attachment_part(account: &Account, folder: &str, uid: u32, pa
         let fetch_results = session.uid_fetch(uid.to_string(), &fetch_query)
             .map_err(|e| format!("IMAP fetch attachment error: {}", e))?;
 
-        if let Some(msg) = fetch_results.iter().next() {
+        if let Some(msg) = fetch_results.iter().find(|message| message.uid == Some(uid)) {
             let mut full_part = Vec::new();
             
             let parts: Vec<u32> = part_id_clone.split('.').filter_map(|s| s.parse().ok()).collect();
@@ -671,4 +656,32 @@ pub async fn fetch_attachment_part(account: &Account, folder: &str, uid: u32, pa
     }).await;
 
     imap_result
+}
+
+fn inline_asset_key(scope: &str, cid: &str, bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update((scope.len() as u64).to_be_bytes());
+    digest.update(scope.as_bytes());
+    digest.update((cid.len() as u64).to_be_bytes());
+    digest.update(cid.as_bytes());
+    digest.update(bytes);
+    format!("{:x}", digest.finalize())
+}
+
+#[cfg(test)]
+mod inline_asset_tests {
+    use super::*;
+    #[test]
+    fn inline_images_do_not_collide_across_accounts_locations_or_cid_spellings() {
+        let key = inline_asset_key("account-a/inbox/9/42","a-b",b"image");
+        for (scope,cid,bytes) in [
+            ("account-b/inbox/9/42","a-b",b"image".as_slice()),
+            ("account-a/tag/9/42","a-b",b"image".as_slice()),
+            ("account-a/inbox/10/42","a-b",b"image".as_slice()),
+            ("account-a/inbox/9/42","a_b",b"image".as_slice()),
+            ("account-a/inbox/9/42","a-b",b"changed".as_slice()),
+        ] { assert_ne!(key,inline_asset_key(scope,cid,bytes)); }
+        assert!(key.chars().all(|ch|ch.is_ascii_hexdigit()));
+    }
 }

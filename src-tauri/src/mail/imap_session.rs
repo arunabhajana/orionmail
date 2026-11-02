@@ -12,6 +12,7 @@ pub enum SessionKind {
     Primary,
     Sync,
     Prefetch,
+    Body,
     Idle,
     Search,
     Labels,
@@ -29,6 +30,10 @@ pub struct ManagedSession {
 
 pub static SESSION_MANAGER: Lazy<StdMutex<HashMap<(String, SessionKind), Arc<ManagedSession>>>> = 
     Lazy::new(|| StdMutex::new(HashMap::new()));
+
+pub fn remove_account(account_id: &str) {
+    SESSION_MANAGER.lock().unwrap().retain(|(id, _), _| id != account_id);
+}
 
 pub fn create_session(account: &Account, kind: SessionKind) -> Result<ImapSession, String> {
     let mut session = connect_and_authenticate(account, kind)?;
@@ -50,6 +55,10 @@ pub fn connect_and_authenticate(
     account: &Account,
     kind: SessionKind,
 ) -> Result<imap::Session<native_tls::TlsStream<std::net::TcpStream>>, String> {
+    connect_with_transport(account, kind).map(|(session, _)|session)
+}
+
+pub(crate) fn connect_with_transport(account: &Account, kind: SessionKind) -> Result<(imap::Session<native_tls::TlsStream<std::net::TcpStream>>, std::net::TcpStream), String> {
     log::info!("Creating new IMAP session {:?}", kind);
     let imap_config = account.provider.imap_config();
     let domain = imap_config.host;
@@ -76,6 +85,7 @@ pub fn connect_and_authenticate(
     let stream = connected.ok_or_else(|| format!("IMAP Connection Error: {:?}", last_error))?;
     stream.set_read_timeout(Some(Duration::from_secs(30))).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(Duration::from_secs(30))).map_err(|e| e.to_string())?;
+    let transport = stream.try_clone().map_err(|e|e.to_string())?;
     let stream = tls.connect(domain.as_str(), stream)
         .map_err(|e| format!("IMAP TLS Error: {e}"))?;
     let mut client = imap::Client::new(stream);
@@ -102,7 +112,7 @@ pub fn connect_and_authenticate(
         .authenticate("XOAUTH2", &auth)
         .map_err(|(e, _)| format!("IMAP Authentication Failed: {}", e))?;
 
-    Ok(session)
+    Ok((session, transport))
 }
 
 pub async fn execute_with_session<F, R>(account: &Account, kind: SessionKind, mut f: F) -> Result<R, String>
@@ -113,7 +123,7 @@ where
     // 1. Get or create the ManagedSession for this Account+Kind
     let session_arc = {
         let mut pools = SESSION_MANAGER.lock().unwrap();
-        let key = (account.email.clone(), kind);
+        let key = (account.id.clone(), kind);
         let managed = pools.entry(key).or_insert_with(|| Arc::new(ManagedSession {
             session: Arc::new(AsyncMutex::new(None)),
         }));
@@ -161,6 +171,13 @@ where
         // 4. Execute the closure
         let result = f(&mut imap_session_wrapper.session);
 
+        if result.as_ref().err().is_some_and(|error| terminal_session_error(error)) {
+            // A reconnect cannot fix a reused UID or a queued-action conflict.
+            // Preserve the healthy connection and return the refresh instruction.
+            imap_session_wrapper.last_used = Instant::now();
+            return result;
+        }
+
         if result.is_err() {
             log::warn!("[SessionStats] Session operation failed for {:?}. Attempting auto-recovery...", kind);
             let _ = imap_session_wrapper.session.logout(); // poison
@@ -188,4 +205,21 @@ where
         
         // owned_guard drops here, releasing the tokio async mutex naturally!
     }).await.map_err(|e| format!("Spawn blocking error: {}", e))?
+}
+
+fn terminal_session_error(error: &str) -> bool {
+    ["CONFLICT:", "Mailbox identity changed", "Mailbox changed", "Message is no longer"]
+        .iter().any(|prefix| error.starts_with(prefix))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn identity_conflicts_do_not_reconnect_but_network_failures_still_retry() {
+        assert!(terminal_session_error("Mailbox identity changed. Reopen the message."));
+        assert!(terminal_session_error("CONFLICT: UID is no longer safe"));
+        assert!(!terminal_session_error("IMAP fetch payload error: Connection Lost"));
+        assert!(!terminal_session_error("IMAP Select Error: connection reset by peer"));
+    }
 }

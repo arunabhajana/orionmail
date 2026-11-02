@@ -139,7 +139,7 @@ const EmailList: React.FC<EmailListProps> = ({
 
     const prefetchRequests = visibleRows
         .slice(0, 12).map(item => displayedEmails[item.index]).filter(Boolean)
-        .map(email => ({ folder: email.folder, uid: email.uid }));
+        .map(email => ({ account_id: user?.id, folder: email.folder, uid: email.uid, uid_validity: email.uidValidity }));
     const prefetchSignature = JSON.stringify(prefetchRequests);
     const lastPrefetch = React.useRef('');
     React.useEffect(() => {

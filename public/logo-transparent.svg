@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="60 40 440 360" fill="none">
+  <defs>
+    <mask id="envelope">
+      <rect x="90" y="160" width="332" height="220" rx="40" fill="white"/>
+      <g stroke="black" stroke-width="24" stroke-linecap="round">
+        <path d="M70 140C180 320 332 320 442 140"/>
+        <path d="M70 410L210 280M442 410L302 280"/>
+      </g>
+    </mask>
+  </defs>
+  <g fill="#A970FF">
+    <path d="M410 50Q410 100 360 100Q410 100 410 150Q410 100 460 100Q410 100 410 50Z"/>
+    <path d="M470 160Q470 180 450 180Q470 180 470 200Q470 180 490 180Q470 180 470 160Z"/>
+    <path d="M320 120Q320 140 300 140Q320 140 320 160Q320 140 340 140Q320 140 320 120Z"/>
+  </g>
+  <rect x="90" y="160" width="332" height="220" fill="#FFFFFF" mask="url(#envelope)"/>
+</svg>

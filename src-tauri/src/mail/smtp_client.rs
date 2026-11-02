@@ -55,7 +55,7 @@ pub async fn send_email(
             return Err(SendError::Other(format!("Failed to refresh token: {}", e)));
         }
         // Save the updated account
-        let _ = save_account(app_handle, account.clone(), true);
+        let _ = save_account(app_handle, account.clone(), false);
     }
 
     // 2. Build the message

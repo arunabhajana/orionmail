@@ -12,7 +12,7 @@ use tauri::AppHandle;
 pub(crate) static LABEL_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 // Gmail IMAP labels use modified UTF-7. Only database-resolved names reach here.
-pub(super) fn quote_label(name: &str) -> Result<String, String> {
+pub(crate) fn encode_mailbox_name(name: &str) -> Result<String, String> {
     if name.is_empty() || name.len() > 1024 || name.chars().any(char::is_control) {
         return Err("Invalid label name".into());
     }
@@ -46,6 +46,11 @@ pub(super) fn quote_label(name: &str) -> Result<String, String> {
         }
     }
     flush(&mut bytes, &mut output);
+    Ok(output)
+}
+
+pub(super) fn quote_label(name: &str) -> Result<String, String> {
+    let output = encode_mailbox_name(name)?;
     Ok(format!(
         "\"{}\"",
         output.replace('\\', "\\\\").replace('"', "\\\"")
@@ -401,6 +406,7 @@ mod tests {
     }
     #[test]
     fn label_names_are_encoded_and_cannot_inject_commands() {
+        assert_eq!(encode_mailbox_name("台北/Bank & Bills").unwrap(), "&U,BTFw-/Bank &- Bills");
         assert_eq!(quote_label("A&B").unwrap(), "\"A&-B\"");
         assert_eq!(quote_label("台北").unwrap(), "\"&U,BTFw-\"");
         assert_eq!(quote_label("a\"b\\c").unwrap(), "\"a\\\"b\\\\c\"");

@@ -12,13 +12,23 @@ pub struct BootstrapResult {
 }
 
 pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth::account::Account, String> {
+    let id = session::get_active_profile(app_handle).ok_or("No active account")?.id;
+    ensure_account(app_handle, &id).await
+}
+
+static REFRESH_LOCKS: once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>> = once_cell::sync::Lazy::new(Default::default);
+
+/// Background work always resolves its owning account, independent of the UI.
+pub async fn ensure_account(app_handle: &AppHandle, account_id: &str) -> Result<crate::auth::account::Account, String> {
     crate::auth::app_lock::require_unlocked(app_handle)?;
-    let mut account = session::get_active_account(app_handle)
-        .ok_or_else(|| "No active account".to_string())?;
+    let lock = REFRESH_LOCKS.lock().map_err(|_| "Account refresh unavailable")?
+        .entry(account_id.to_string()).or_default().clone();
+    let _refresh = lock.lock().await;
+    let mut account = session::get_account(app_handle, account_id)
+        .ok_or("Account is no longer available")?;
 
     if account.needs_reauth {
-        use tauri::Emitter;
-        let _ = app_handle.emit("auth:session_expired", ());
+        emit_expired(app_handle, account_id);
         return Err("NEEDS_REAUTH".to_string());
     }
 
@@ -26,13 +36,13 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
     
     // Proactively refresh the token 5 minutes before it actually expires to prevent
     // mid-flight authentication failures on long-running IMAP connections.
-    if account.expires_at <= current_time + 300 && !account.refresh_token.is_empty() {
+    if matches!(account.provider, crate::auth::account::MailProvider::Google) && account.expires_at <= current_time + 300 && !account.refresh_token.is_empty() {
         let client_id = std::env::var("GOOGLE_CLIENT_ID")
             .unwrap_or_else(|_| option_env!("GOOGLE_CLIENT_ID").unwrap_or("").to_string());
         let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
             .unwrap_or_else(|_| option_env!("GOOGLE_CLIENT_SECRET").unwrap_or("").to_string());
         
-        let http_client = Client::new();
+        let http_client = Client::builder().timeout(std::time::Duration::from_secs(20)).build().map_err(|e| e.to_string())?;
         let payload = format!(
             "client_id={}&client_secret={}&refresh_token={}&grant_type=refresh_token",
             url::form_urlencoded::byte_serialize(client_id.as_bytes()).collect::<String>(),
@@ -49,7 +59,7 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
         let mut session_expired = false;
         match res {
             Ok(response) => {
-                if response.status().is_client_error() {
+                if response.status().is_client_error() && response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
                     log::error!("Token refresh rejected by Google (Session Expired)");
                     session_expired = true;
                 } else if let Ok(json) = response.json::<Value>().await {
@@ -64,9 +74,9 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
                             account.needs_reauth = false;
                         }
 
-                        let _ = session::save_account(app_handle, account.clone(), true);
+                        session::save_account(app_handle, account.clone(), false)?;
                     } else {
-                        log::error!("Token refresh failed missing access_token: {}", json);
+                        log::error!("Token refresh response did not contain an access token");
                     }
                 }
             }
@@ -76,10 +86,10 @@ pub async fn ensure_active_account(app_handle: &AppHandle) -> Result<crate::auth
         }
 
         if session_expired {
-            use tauri::Emitter;
-            let _ = app_handle.emit("auth:session_expired", ());
+            emit_expired(app_handle, account_id);
             return Err("SESSION_EXPIRED".to_string());
         }
+        if account.expires_at <= Utc::now().timestamp() { return Err("TOKEN_REFRESH_FAILED".into()); }
     }
 
     Ok(account)
@@ -100,3 +110,12 @@ pub async fn bootstrap_accounts(app_handle: &AppHandle) -> BootstrapResult {
     }
 }
 
+
+fn emit_expired(app: &AppHandle, account_id: &str) {
+    use tauri::Emitter;
+    if session::get_active_profile(app).is_some_and(|profile| profile.id == account_id) {
+        let _ = app.emit("auth:session_expired", ());
+    } else {
+        let _ = app.emit("auth:account_expired", serde_json::json!({"account_id":account_id}));
+    }
+}

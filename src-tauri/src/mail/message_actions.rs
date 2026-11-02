@@ -22,7 +22,7 @@ pub(crate) fn resolve_mailbox(app: &AppHandle, account: &Account, folder: &str) 
             }) {
                 return Err("Tag belongs to a different provider".to_string());
             }
-            Ok(tag.name.clone())
+            crate::mail::tags::assignment::encode_mailbox_name(&tag.name)
         }
         Ok(MailFolder::Starred) => Err("Starred is a virtual folder; use the message's source folder".to_string()),
         Err(_) => {
@@ -170,7 +170,7 @@ fn notify_action_applied(app: &AppHandle, item: &database::PendingMessageAction)
     // Also notify for queued replays: a merge-only list refresh cannot remove a
     // previously rolled-back delete or update an older loaded search result.
     let _ = app.emit("mail:reconciled", serde_json::json!({"account_id":item.account_id,"folder":item.folder,"updated_flags":flags,"removed_uids":removed}));
-    let _ = app.emit("mail:updated", &item.folder);
+    let _ = app.emit("mail:updated", serde_json::json!({"account_id":item.account_id,"folder":item.folder}));
     let _ = app.emit("mail:labels_changed", &item.account_id);
     crate::tray_state::refresh_unread_count_from_db(app);
 }

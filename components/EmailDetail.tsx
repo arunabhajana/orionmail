@@ -49,7 +49,8 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         email?.folder,
         emailIframeRef,
         onMarkAsRead,
-        email?.locationId
+        email?.locationId,
+        email?.uidValidity
     );
 
     React.useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [email?.id, user?.id]);
@@ -315,6 +316,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                         <AttachmentCard
                                             key={att.partId || i}
                                             uid={email.uid}
+                                            uidValidity={email.uidValidity}
                                             folder={email.folder}
                                             localId={email.locationId}
                                             attachment={att}

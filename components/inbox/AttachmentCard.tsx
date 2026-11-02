@@ -6,6 +6,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { Attachment } from '@/lib/types';
 import { useDownloads } from '@/components/DownloadContext';
 import { toast } from 'sonner';
+import { useAuth } from '@/components/AuthContext';
 const getFileIcon = (mime: string | undefined) => {
     if (!mime) return <File className="w-5 h-5" />;
     const m = mime.toLowerCase();
@@ -76,7 +77,8 @@ const getTypeColor = (mime: string | undefined): string => {
 };
 
 
-export const AttachmentCard = memo(({ uid, folder, attachment, localId }: { uid: number; folder: string; attachment: Attachment; localId?: string }) => {
+export const AttachmentCard = memo(({ uid, folder, attachment, localId, uidValidity }: { uid: number; folder: string; attachment: Attachment; localId?: string; uidValidity?: number }) => {
+    const { user } = useAuth();
     const [downloading, setDownloading] = useState(false);
     const busy = useRef(false);
     const { addDownload, updateDownloadStatus } = useDownloads();
@@ -89,7 +91,7 @@ export const AttachmentCard = memo(({ uid, folder, attachment, localId }: { uid:
             const savePath = await save({ defaultPath: attachment.name, title: 'Save attachment' });
             if (!savePath) return;
             downloadId = addDownload(attachment.name);
-            const resultPath = await invoke<string>('download_attachment', { folder: folder || 'inbox', uid, partId: attachment.partId, savePath, localId });
+            const resultPath = await invoke<string>('download_attachment', { folder: folder || 'inbox', uid, partId: attachment.partId, savePath, localId, accountId: user?.id, expectedUidValidity: uidValidity });
             updateDownloadStatus(downloadId, 'completed', resultPath);
             toast.success('Attachment saved.');
         } catch (error) {

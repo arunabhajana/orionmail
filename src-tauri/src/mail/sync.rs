@@ -15,6 +15,7 @@ pub async fn sync_folder_with_options(
     history_pass: bool,
 ) -> Result<u32, String> {
     crate::auth::app_lock::require_unlocked(app_handle)?;
+    let account = crate::auth::bootstrap::ensure_account(app_handle, &account.id).await?;
     if !history_pass {
         crate::mail::drafts::kick(app_handle);
         crate::mail::trash::retry_pending(app_handle, &account).await;
@@ -42,7 +43,7 @@ pub async fn sync_folder_with_options(
                 let tags = crate::mail::database::get_all_tags(app_handle, &account.id)
                     .unwrap_or_default();
                 if let Some(tag) = tags.iter().find(|t| &t.id == tag_id) {
-                    tag.name.clone()
+                    crate::mail::tags::assignment::encode_mailbox_name(&tag.name)?
                 } else {
                     log::warn!(
                         "Tag ID {} not found in database. Skipping IMAP sync.",
@@ -218,7 +219,7 @@ pub async fn sync_folder_with_options(
                 // enrichment finishes. Do not make the list wait on it.
                 if batch_count > 0 {
                     use tauri::Emitter;
-                    if let Err(e) = app_handle_clone.emit("mail:updated", &folder_name_clone) {
+                    if let Err(e) = app_handle_clone.emit("mail:updated", serde_json::json!({"account_id":account_id,"folder":folder_name_clone})) {
                         log::error!("Failed to emit mail:updated event: {}", e);
                     }
                 }
@@ -286,7 +287,7 @@ pub async fn sync_folder_with_options(
                 if changes.updated > 0 || changes.removed > 0 {
                     changed = true;
                     use tauri::Emitter;
-                    let _ = app_handle_clone.emit("mail:updated", &folder_name_clone);
+                    let _ = app_handle_clone.emit("mail:updated", serde_json::json!({"account_id":account_id,"folder":folder_name_clone}));
                 }
             }
 

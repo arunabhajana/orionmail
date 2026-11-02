@@ -27,7 +27,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$CACHE/orbitmail_inline/**"
+          "$CACHE/orbitmail_inline/**",
+          "$CACHE/orbitmail_inline_v2/**"
         ]
       },
       "capabilities": [

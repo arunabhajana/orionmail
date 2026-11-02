@@ -16,6 +16,12 @@ static SYNC_QUEUE: Lazy<Mutex<HashMap<(String, MailFolder), Request>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 pub static SYNC_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+pub async fn remove_account(account_id: &str) {
+    SYNC_QUEUE.lock().await.retain(|(id, _), request| {
+        if id == account_id { request.wake.notify_one(); false } else { true }
+    });
+}
+
 fn should_skip_for_interval(elapsed: i64, minimum: i64, previous_error: bool, force: bool) -> bool {
     !force && !previous_error && elapsed < minimum
 }
@@ -100,13 +106,28 @@ pub async fn enqueue_sync_with_force(
                 MailFolder::Tag(_) => 60,
             };
             let now = chrono::Utc::now().timestamp();
+            // Coalescing must delay a change notification, not discard it.
+            // Otherwise mail arriving just after a sync waits until polling.
+            if should_skip_for_interval(now - state.last_synced_at, minimum, state.last_error.is_some(), force || follow_up) {
+                let delay = Duration::from_secs((minimum - (now - state.last_synced_at)).clamp(1, minimum.max(1)) as u64);
+                drop(guard);
+                tokio::select! {
+                    _ = wake.notified() => {},
+                    _ = tokio::time::sleep(delay) => {},
+                    _ = crate::mail::shutdown::APP_TOKEN.cancelled() => {
+                        SYNC_QUEUE.lock().await.remove(&key);
+                        return;
+                    }
+                }
+                continue;
+            }
             if !should_skip_for_interval(
                 now - state.last_synced_at,
                 minimum,
                 state.last_error.is_some(),
                 force || follow_up,
             ) {
-                let _ = app.emit("mail:sync_started", folder.to_string());
+                let _ = app.emit("mail:sync_started", serde_json::json!({"account_id":account.id,"folder":folder.to_string()}));
                 let started = std::time::Instant::now();
                 let result =
                     std::panic::AssertUnwindSafe(crate::mail::sync::sync_folder_with_options(
@@ -136,10 +157,10 @@ pub async fn enqueue_sync_with_force(
                     );
                     let _ = app.emit(
                         "mail:sync_error",
-                        serde_json::json!({"folder":folder.to_string(),"error":error}),
+                        serde_json::json!({"account_id":account.id,"folder":folder.to_string(),"error":error}),
                     );
                 }
-                let _ = app.emit("mail:sync_finished", folder.to_string());
+                let _ = app.emit("mail:sync_finished", serde_json::json!({"account_id":account.id,"folder":folder.to_string()}));
             }
             let rerun = {
                 let mut queue = SYNC_QUEUE.lock().await;

@@ -1,129 +1,92 @@
 use crate::auth::account::Account;
 use tauri::AppHandle;
-
-use std::sync::Mutex;
-use std::time::Duration;
+use std::{sync::Mutex, time::Duration, collections::HashMap};
 use once_cell::sync::Lazy;
+use tokio::{task::JoinHandle, sync::mpsc};
+use tokio_util::sync::CancellationToken;
 
-use tokio::task::JoinHandle;
-use tokio::sync::mpsc;
+struct IdleTasks {
+    listener: JoinHandle<()>,
+    coordinator: JoinHandle<()>,
+    cancel: CancellationToken,
+}
+static TASKS: Lazy<Mutex<HashMap<String, IdleTasks>>> = Lazy::new(Default::default);
 
-
-
-static IDLE_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> =
-    Lazy::new(|| Mutex::new(None));
-
-static COORDINATOR_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> =
-    Lazy::new(|| Mutex::new(None));
-
-pub fn start_idle_listener(app_handle: AppHandle, account: Account) {
-    let mut idle_lock = IDLE_TASK.lock().unwrap();
-
-    if idle_lock.is_some() {
-        log::info!("IMAP IDLE: Listener already running.");
-        return;
-    }
-
-    let (tx, mut rx) = mpsc::channel::<u32>(32);
-
-    let app_clone = app_handle.clone();
-    let account_clone = account.clone();
-
-    // ==========================================
-    // COORDINATOR TASK
-    // ==========================================
+pub fn start_idle_listener(app: AppHandle, account: Account) {
+    let mut tasks = TASKS.lock().unwrap();
+    if tasks.get(&account.id).is_some_and(|tasks| !tasks.listener.is_finished()) { return; }
+    if let Some(old) = tasks.remove(&account.id) { old.cancel.cancel(); old.coordinator.abort(); }
+    let cancel = crate::mail::shutdown::IDLE_TOKEN.child_token();
+    let (tx, mut rx) = mpsc::channel::<u32>(1);
+    let coordinator_app = app.clone();
+    let coordinator_account = account.clone();
+    let coordinator_cancel = cancel.clone();
     let coordinator = tokio::spawn(async move {
-        log::info!("IMAP IDLE: Coordinator started.");
-
-        while let Some(_) = rx.recv().await {
-            // Collapse rapid-fire EXISTS signals
-            while rx.try_recv().is_ok() {}
-
-            if crate::mail::shutdown::IDLE_TOKEN.is_cancelled() {
-                break;
-            }
-            log::info!("IMAP IDLE: Queuing auto-sync...");
-            crate::mail::sync_manager::enqueue_sync(app_clone.clone(), account_clone.clone(), crate::mail::folder::MailFolder::Inbox).await;
-            let _ = crate::mail::database::update_global_idle_time(&app_clone, &account_clone.id, chrono::Utc::now().timestamp());
-        }
-
-        log::info!("IMAP IDLE: Coordinator exiting.");
-    });
-
-    *COORDINATOR_TASK.lock().unwrap() = Some(coordinator);
-
-    // ==========================================
-    // IDLE LISTENER TASK
-    // ==========================================
-    let app_idle = app_handle.clone();
-    let account_idle = account.clone();
-
-    let idle_handle = tokio::spawn(async move {
-        log::info!("IMAP IDLE: Listener spawned.");
-
-        let mut last_exists: u32 = 0;
-        let mut backoff: u64 = 2;
-
         loop {
             tokio::select! {
-                res = run_idle_loop(&app_idle, &account_idle, tx.clone(), last_exists) => {
-                    match res {
-                        Ok(updated_count) => {
-                            last_exists = updated_count;
-                            backoff = 2;
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "IMAP IDLE error: {}. Reconnecting in {} seconds...",
-                                e,
-                                backoff
-                            );
-
-                            tokio::select! {
-                                _ = tokio::time::sleep(Duration::from_secs(backoff)) => {
-                                    backoff = (backoff * 2).min(60);
-                                }
-                                _ = crate::mail::shutdown::IDLE_TOKEN.cancelled() => {
-                                    log::info!("IMAP IDLE: Shutdown received during backoff.");
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                value = rx.recv() => {
+                    if value.is_none() { break; }
+                    while rx.try_recv().is_ok() {}
+                    crate::mail::sync_manager::enqueue_sync(coordinator_app.clone(), coordinator_account.clone(), crate::mail::folder::MailFolder::Inbox).await;
+                    let _ = crate::mail::database::update_global_idle_time(&coordinator_app, &coordinator_account.id, chrono::Utc::now().timestamp());
                 }
-                _ = crate::mail::shutdown::IDLE_TOKEN.cancelled() => {
-                    log::info!("IMAP IDLE: Shutdown received, aborting idle connection.");
-                    break;
+                _ = coordinator_cancel.cancelled() => break,
+            }
+        }
+    });
+    let id = account.id.clone();
+    let listener_cancel = cancel.clone();
+    let listener = tokio::spawn(async move {
+        let mut last_exists = 0;
+        let mut backoff = 2;
+        while !listener_cancel.is_cancelled() {
+            match run_idle_loop(&app, &account, tx.clone(), last_exists, listener_cancel.clone()).await {
+                Ok(count) => { last_exists = count; backoff = 2; }
+                Err(error) => {
+                    if listener_cancel.is_cancelled() { break; }
+                    log::warn!("IMAP IDLE failed; reconnecting in {}s: {}", backoff, error);
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(backoff)) => { backoff = (backoff * 2).min(60); }
+                        _ = listener_cancel.cancelled() => break,
+                    }
                 }
             }
         }
     });
+    tasks.insert(id, IdleTasks { listener, coordinator, cancel });
+}
 
-    *idle_lock = Some(idle_handle);
+pub fn stop_account(account_id: &str) {
+    if let Some(tasks) = TASKS.lock().unwrap().remove(account_id) {
+        tasks.cancel.cancel();
+        tasks.coordinator.abort();
+        // Listener owns and joins its blocking network worker after closing TCP.
+    }
 }
 
 async fn run_idle_loop(
     app_handle: &AppHandle,
-    _account: &Account,
+    account: &Account,
     tx: mpsc::Sender<u32>,
     mut last_exists: u32,
+    cancel: CancellationToken,
 ) -> Result<u32, String> {
 
-    let current_account = crate::auth::bootstrap::ensure_active_account(app_handle).await
+    let current_account = crate::auth::bootstrap::ensure_account(app_handle, &account.id).await
         .map_err(|_| "No active account found or token refresh failed")?;
 
     let current_account_clone = current_account.clone();
 
-    tokio::task::spawn_blocking(move || {
+    let worker_cancel = cancel.clone();
+    let (socket_tx, socket_rx) = tokio::sync::oneshot::channel();
+    let worker = tokio::task::spawn_blocking(move || {
 
         // ===============================
         // Connect
         // ===============================
-        let session_wrapper = match crate::mail::imap_session::create_session(&current_account_clone, crate::mail::imap_session::SessionKind::Idle) {
-            Ok(s) => s,
-            Err(e) => return Err(format!("IMAP Connection Error: {}", e)),
-        };
-        let mut session = session_wrapper.session;
+        let (mut session, transport) = crate::mail::imap_session::connect_with_transport(&current_account_clone, crate::mail::imap_session::SessionKind::Idle)?;
+        let _ = socket_tx.send(transport);
+        if worker_cancel.is_cancelled() { return Ok(last_exists); }
 
         let mailbox = session
             .select("INBOX")
@@ -143,7 +106,7 @@ async fn run_idle_loop(
         // IDLE Loop
         // ===============================
         loop {
-            if crate::mail::shutdown::IDLE_TOKEN.is_cancelled() {
+            if worker_cancel.is_cancelled() {
                 log::info!("IMAP IDLE: Shutdown requested, exiting idle loop.");
                 let _ = session.logout();
                 return Ok(last_exists);
@@ -197,7 +160,7 @@ async fn run_idle_loop(
                     // Always notify coordinator of a change just to be safe.
                     // The coordinator limits rapid-fire syncs and delegates to `sync_inbox`.
                     log::info!("IMAP IDLE: Signalling UI/Backend sync.");
-                    let _ = tx.blocking_send(last_exists);
+                    let _ = tx.try_send(last_exists);
                 }
 
                 imap::extensions::idle::WaitOutcome::TimedOut => {
@@ -205,9 +168,42 @@ async fn run_idle_loop(
                 }
             }
         }
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    });
+    match socket_rx.await {
+        Ok(socket) => finish_idle_worker(worker, socket, cancel).await,
+        Err(_) => worker.await.map_err(|e|e.to_string())?,
+    }
+}
+
+async fn finish_idle_worker(mut worker: JoinHandle<Result<u32,String>>, socket: std::net::TcpStream, cancel: CancellationToken) -> Result<u32,String> {
+    tokio::select! {
+            result = &mut worker => result.map_err(|e| e.to_string())?,
+            _ = cancel.cancelled() => {
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+                worker.await.map_err(|e| e.to_string())?
+            }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn cancel_interrupts_blocking_idle_and_joins_worker() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut socket = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (_peer,_) = listener.accept().unwrap();
+        let transport = socket.try_clone().unwrap();
+        let worker = tokio::task::spawn_blocking(move || {
+            let _ = socket.read(&mut [0]);
+            Ok(42)
+        });
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(3),finish_idle_worker(worker,transport,cancel)).await.unwrap();
+        assert_eq!(result.unwrap(),42);
+    }
 }
 
 pub fn stop_idle_listener() {

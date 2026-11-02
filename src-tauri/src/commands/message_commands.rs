@@ -73,9 +73,11 @@ pub async fn prefetch_messages(
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     
     // Clear old background queue before queueing the new viewport items
-    crate::mail::body_prefetch_manager::PREFETCH_MANAGER.clear_background_queue().await;
+    crate::mail::body_prefetch_manager::PREFETCH_MANAGER.clear_background_queue(&account.id).await;
 
     for request in requests.into_iter().take(12) {
+        if !request.account_id.is_empty() && request.account_id != account.id { continue; }
+        if request.uid_validity > 0 && database::message_uid_validity(&app_handle,&account.id,&request.folder,request.uid).ok() != Some(request.uid_validity) { continue; }
         crate::mail::body_prefetch_manager::PREFETCH_MANAGER.enqueue(
             app_handle.clone(),
             account.clone(),
@@ -97,22 +99,27 @@ pub async fn download_attachment(
     part_id: String,
     save_path: String,
     local_id: Option<String>,
+    account_id: Option<String>,
+    expected_uid_validity: Option<u32>,
 ) -> Result<String, String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    if account_id.as_ref().is_some_and(|id|id!=&account.id) { return Err("Account changed. Reopen the message.".into()); }
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
     let (folder,uid,_)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
+    if local_id.is_none() && expected_uid_validity.is_some_and(|expected| database::message_uid_validity(&app_handle,&account.id,&folder,uid).ok()!=Some(expected)) { return Err("Mailbox changed. Reopen the message.".into()); }
     
-    let first=crate::mail::message_body::fetch_attachment_part(&account, &folder, uid, &part_id).await;
+    let first=crate::mail::message_body::fetch_attachment_part(&app_handle, &account, &folder, uid, &part_id).await;
     let bytes=match first {
         Ok(bytes)=>bytes,
         Err(error)=>{
             if crate::auth::session::get_active_profile(&app_handle).is_none_or(|active|active.id!=account.id){return Err("Account changed".into());}
             let (current_folder,current_uid,_)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
             if local_id.is_none() || (current_folder==folder && current_uid==uid){return Err(error);}
-            crate::mail::message_body::fetch_attachment_part(&account,&current_folder,current_uid,&part_id).await?
+            crate::mail::message_body::fetch_attachment_part(&app_handle, &account,&current_folder,current_uid,&part_id).await?
         }
     };
     
+    if crate::auth::session::get_active_profile(&app_handle).is_none_or(|active|active.id!=account.id) { return Err("Account changed before attachment completed".into()); }
     std::fs::write(&save_path, bytes).map_err(|e| e.to_string())?;
     Ok(save_path)
 }

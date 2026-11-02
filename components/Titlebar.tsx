@@ -45,8 +45,8 @@ const WindowControl = memo(({
 }: WindowControlProps) => (
     <button
         className={cn(
-            "w-[36px] h-[26px] flex items-center justify-center rounded-md transition-colors",
-            "bg-transparent hover:bg-black/5 text-foreground/70",
+            "w-[36px] h-[26px] flex items-center justify-center rounded-md transition-colors duration-150 motion-reduce:transition-none",
+            "bg-transparent hover:bg-foreground/15 hover:text-foreground text-foreground/70",
             className
         )}
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
@@ -228,6 +228,7 @@ function SyncIndicator() {
  * Developer Tools Popover
  */
 function DevToolsPopover() {
+    const { user } = useAuth();
     const { startTask, endTask } = useBackgroundTasks();
     const [isOpen, setIsOpen] = useState(false);
     const [enabled, setEnabled] = useState(false);
@@ -274,7 +275,7 @@ function DevToolsPopover() {
                 emit("auth:session_expired");
                 break;
             case 'sync':
-                emit("mail:sync_error", { folder: "inbox", error: "Simulated SQLite database connection drop or network failure during IMAP sync." });
+                emit("mail:sync_error", { account_id: user?.id, folder: "inbox", error: "Simulated SQLite database connection drop or network failure during IMAP sync." });
                 break;
             case 'body':
                 toast.error("Body Fetch Error", { description: "Failed to download email body content. Connection reset by peer." });

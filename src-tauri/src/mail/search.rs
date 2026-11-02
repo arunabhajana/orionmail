@@ -301,7 +301,7 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
                 if let crate::mail::folder::MailFolder::Tag(ref tag_id) = mf {
                     let tags = crate::mail::database::get_all_tags(app_handle, &account.id).unwrap_or_default();
                     if let Some(tag) = tags.iter().find(|t| &t.id == tag_id) {
-                        tag.name.clone()
+                        crate::mail::tags::assignment::encode_mailbox_name(&tag.name)?
                     } else {
                         return Err(format!("Tag ID {} not found", tag_id));
                     }

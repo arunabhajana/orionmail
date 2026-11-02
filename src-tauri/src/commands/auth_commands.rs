@@ -57,11 +57,19 @@ pub fn list_accounts(app_handle: AppHandle) -> Result<Vec<UserProfile>, String> 
 #[command]
 pub async fn logout_user(app_handle: AppHandle, account_id: String) -> Result<(), String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    tauri::async_runtime::spawn_blocking(move||{
-    session::remove_account(&app_handle, account_id.clone())?;
-    if let Err(e)=crate::mail::notifications::forget_account(&app_handle,&account_id){log::warn!("Could not remove signed-out account's notifications: {}",e);}
+    let cleanup_app = app_handle.clone();
+    let cleanup_id = account_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        session::remove_account(&cleanup_app, cleanup_id.clone())?;
+        if let Err(error) = crate::mail::notifications::forget_account(&cleanup_app, &cleanup_id) { log::warn!("Could not remove signed-out notifications: {}", error); }
+        Ok::<_,String>(())
+    }).await.map_err(|e|e.to_string())??;
+    crate::mail::idle::stop_account(&account_id);
+    crate::mail::poll::stop_account(&account_id);
+    crate::mail::sync_manager::remove_account(&account_id).await;
+    crate::mail::body_prefetch_manager::PREFETCH_MANAGER.remove_account(&account_id).await;
+    crate::mail::imap_session::remove_account(&account_id);
     Ok(())
-    }).await.map_err(|e|e.to_string())?
 }
 
 #[command]
@@ -143,12 +151,15 @@ pub async fn get_folder_messages(app_handle: AppHandle, folder: String, before_u
 }
 
 #[command]
-pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32, local_id: Option<String>) -> Result<crate::mail::message_body::MessageDetail, String> {
+pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32, local_id: Option<String>, account_id: Option<String>, expected_uid_validity: Option<u32>) -> Result<crate::mail::message_body::MessageDetail, String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
     let account=crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
+    if account_id.as_ref().is_some_and(|id| id != &account.id) { return Err("Account changed. Reopen the message.".into()); }
     
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
-    let (folder,uid,_)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
+    let (folder,uid,validity)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
+    let validity = match validity { Some(value) => value, None => crate::mail::database::message_uid_validity(&app_handle,&account.id,&folder,uid)? };
+    if local_id.is_none() && expected_uid_validity.is_some_and(|expected| expected != validity) { return Err("Mailbox changed. Refresh the folder and reopen the message.".into()); }
     log::info!("Frontend requested get_message_body for folder='{}', uid={}", folder, uid);
     
     // Keep the cached-open fast path independent of a network job, while
@@ -178,7 +189,10 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32, l
         }
         None
     }).await.map_err(|error| format!("Message cache task failed: {error}"))?;
-    if let Some(detail) = cached { return Ok(detail); }
+    if let Some(detail) = cached {
+        validate_body_target(&app_handle, &account.id, &folder, uid, validity)?;
+        return Ok(detail);
+    }
 
     let profile_id=account.id;
     let account=crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
@@ -208,10 +222,21 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32, l
         if current_folder!=folder || current_uid!=uid {
             // The first read may have queued behind a MOVE on the native
             // session. Retry once using its now-confirmed destination.
-            return Box::pin(get_message_body(app_handle,current_folder,current_uid,None)).await;
+            return Box::pin(get_message_body(app_handle,current_folder,current_uid,None,Some(account.id),None)).await;
         }
     }
+    validate_body_target(&app_handle, &account.id, &folder, uid, validity)?;
     result
+}
+
+fn validate_body_target(app: &AppHandle, account: &str, folder: &str, uid: u32, validity: u32) -> Result<(), String> {
+    if crate::auth::session::get_active_profile(app).is_none_or(|active|active.id!=account) {
+        return Err("Account changed. Reopen the message.".into());
+    }
+    if crate::mail::database::message_uid_validity(app,account,folder,uid)? != validity {
+        return Err("Mailbox changed while loading. Reopen the message.".into());
+    }
+    Ok(())
 }
 
 #[command]

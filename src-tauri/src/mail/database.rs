@@ -1118,9 +1118,65 @@ pub fn get_message_body_cache(app_handle: &AppHandle, account_id: &str, folder: 
         .map_err(|e| format!("Failed to prepare get_message_body_cache statement: {}", e))?;
     let result = stmt.query_row(rusqlite::params![account_id, folder, uid], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))
-    }).ok();
+    }).optional().map_err(|e|e.to_string())?;
 
-    Ok(result)
+    if let Some(value) = result {
+        return Ok(usable_body_cache(value));
+    }
+    // Inbox and tag UIDs are different locations of the same message. Reuse
+    // only a content-matching copy owned by this account; never transplant UID.
+    conn.query_row(BODY_ALIAS_SQL, rusqlite::params![account_id,folder,uid], |row| {
+        Ok((row.get(0)?,row.get(1)?,row.get(2)?))
+    }).optional().map(|value|value.and_then(usable_body_cache)).map_err(|e|e.to_string())
+}
+
+fn usable_body_cache(value: (String, Option<String>, Option<String>)) -> Option<(String, Option<String>, Option<String>)> {
+    // Old session assets were removed on every startup. Refetch affected mail
+    // once, instead of returning cached HTML with permanently broken images.
+    if value.0.contains("asset://localhost/") && value.0.contains("/orbitmail_inline/") { None } else { Some(value) }
+}
+
+const BODY_ALIAS_SQL: &str = "SELECT b.processed_html,b.attachments_json,b.extracted_data FROM messages t JOIN messages b ON b.account_id=t.account_id AND b.message_id=t.message_id AND b.date=t.date AND b.sender=t.sender AND b.subject=t.subject WHERE t.account_id=?1 AND t.folder=?2 AND t.uid=?3 AND NULLIF(t.message_id,'') IS NOT NULL AND b.body_fetched=1 AND b.processed_html IS NOT NULL LIMIT 1";
+
+#[cfg(test)]
+mod body_identity_tests {
+    use super::*;
+    #[test]
+    fn legacy_inline_image_references_are_refetched_but_persistent_assets_are_kept() {
+        let entry = |path: &str| (format!("<img src='asset://localhost/cache/{path}/image.png'>"),None,None);
+        assert!(usable_body_cache(entry("orbitmail_inline/session_old")).is_none());
+        assert!(usable_body_cache(entry("orbitmail_inline_v2")).is_some());
+        assert!(usable_body_cache(("<p>ordinary cached mail</p>".into(),None,None)).is_some());
+    }
+    fn fixture() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE messages(account_id TEXT,folder TEXT,uid INTEGER,uid_validity INTEGER,subject TEXT DEFAULT 'subject',sender TEXT DEFAULT 'sender',date INTEGER DEFAULT 100,message_id TEXT DEFAULT 'same',processed_html TEXT,snippet TEXT,attachments_json TEXT,extracted_data TEXT,body_fetched INTEGER DEFAULT 0,PRIMARY KEY(account_id,folder,uid));
+            INSERT INTO messages(account_id,folder,uid,uid_validity,processed_html,body_fetched) VALUES ('a','inbox',42,9,'cached body',1),('a','tag:bank',7,10,NULL,0),('b','inbox',42,9,'other account',1);").unwrap();
+        conn
+    }
+    #[test]
+    fn aliases_reuse_content_without_crossing_accounts_or_transplanting_uids() {
+        let conn = fixture();
+        let body = || conn.query_row(BODY_ALIAS_SQL, rusqlite::params!["a","tag:bank",7], |r|r.get::<_,String>(0)).optional().unwrap();
+        assert_eq!(body().as_deref(), Some("cached body"));
+        conn.execute("UPDATE messages SET subject='different' WHERE account_id='a' AND folder='tag:bank'", []).unwrap();
+        assert_eq!(body(), None);
+        conn.execute("UPDATE messages SET subject='subject' WHERE account_id='a' AND folder='tag:bank'", []).unwrap();
+        conn.execute("DELETE FROM messages WHERE account_id='a' AND folder='inbox'", []).unwrap();
+        assert_eq!(body(), None); // Other account's otherwise identical row cannot match.
+        assert_eq!(conn.query_row("SELECT uid FROM messages WHERE account_id='a'", [], |r|r.get::<_,u32>(0)).unwrap(), 7);
+    }
+    #[test]
+    fn in_flight_body_cannot_overwrite_reused_or_deleted_uid() {
+        let conn = fixture();
+        conn.execute("UPDATE messages SET uid_validity=11 WHERE account_id='a' AND folder='inbox'", []).unwrap();
+        assert!(commit_body(&conn,"a","inbox",42,9,"stale","",None,None).is_err());
+        assert_eq!(conn.query_row("SELECT processed_html FROM messages WHERE account_id='a' AND folder='inbox'", [], |r|r.get::<_,String>(0)).unwrap(),"cached body");
+        commit_body(&conn,"a","inbox",42,11,"fresh","preview",None,None).unwrap();
+        conn.execute("DELETE FROM messages WHERE account_id='a'", []).unwrap();
+        assert!(commit_body(&conn,"a","inbox",42,11,"resurrected","",None,None).is_err());
+        assert_eq!(conn.query_row("SELECT processed_html FROM messages WHERE account_id='b'", [], |r|r.get::<_,String>(0)).unwrap(),"other account");
+    }
 }
 
 pub fn update_message_body(app_handle: &AppHandle, account_id: &str, folder: &str, uid: u32, body: &str, snippet: &str, attachments_json: Option<String>, extracted_data: Option<String>) -> Result<(), String> {
@@ -1131,6 +1187,20 @@ pub fn update_message_body(app_handle: &AppHandle, account_id: &str, folder: &st
         rusqlite::params![body, snippet, attachments_json, extracted_data, account_id, folder, uid],
     ).map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+pub fn update_message_body_if_current(app: &AppHandle, account: &str, folder: &str, uid: u32, validity: u32, body: &str, snippet: &str, attachments: Option<String>, extracted: Option<String>) -> Result<(), String> {
+    let conn = open_connection(app)?;
+    commit_body(&conn, account, folder, uid, validity, body, snippet, attachments, extracted)
+}
+
+fn commit_body(conn: &Connection, account: &str, folder: &str, uid: u32, validity: u32, body: &str, snippet: &str, attachments: Option<String>, extracted: Option<String>) -> Result<(), String> {
+    let count = conn.execute(
+        "UPDATE messages SET processed_html=?1,snippet=?2,attachments_json=?3,extracted_data=?4,body_fetched=1 WHERE account_id=?5 AND folder=?6 AND uid=?7 AND uid_validity=?8 AND ?8>0",
+        rusqlite::params![body,snippet,attachments,extracted,account,folder,uid,validity],
+    ).map_err(|e|e.to_string())?;
+    if count != 1 { return Err("Message changed while loading. Refresh the folder and reopen it.".into()); }
     Ok(())
 }
 

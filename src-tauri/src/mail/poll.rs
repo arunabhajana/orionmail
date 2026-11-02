@@ -5,15 +5,16 @@ use std::time::Duration;
 use tauri::AppHandle;
 use tokio::task::JoinHandle;
 
-static POLL_HANDLE: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
+static POLL_HANDLE: Lazy<Mutex<std::collections::HashMap<String, JoinHandle<()>>>> = Lazy::new(Default::default);
 
 pub fn start_polling(app_handle: AppHandle, account: Account) {
     let mut lock = POLL_HANDLE.lock().unwrap();
-    if lock.is_some() {
+    if lock.get(&account.id).is_some_and(|handle| !handle.is_finished()) {
         log::info!("[POLL] Already running");
         return;
     }
 
+    let account_id = account.id.clone();
     let handle = tokio::spawn(async move {
         log::info!("[POLL] Starting fallback poll loop...");
         loop {
@@ -31,7 +32,11 @@ pub fn start_polling(app_handle: AppHandle, account: Account) {
         }
     });
 
-    *lock = Some(handle);
+    lock.insert(account_id, handle);
+}
+
+pub fn stop_account(account_id: &str) {
+    if let Some(handle) = POLL_HANDLE.lock().unwrap().remove(account_id) { handle.abort(); }
 }
 
 pub fn stop_polling() {

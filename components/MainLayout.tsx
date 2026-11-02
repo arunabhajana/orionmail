@@ -919,8 +919,9 @@ export default function MainLayout() {
                 if (event.payload.account_id !== activeAccountRef.current) return;
                 toast.error('A queued message action needs attention', { description: event.payload.error });
             });
-            unlistenUpdated = await listen<string>('mail:updated', (event) => {
-                const syncedFolder = event.payload;
+            unlistenUpdated = await listen<{ account_id: string; folder: string }>('mail:updated', (event) => {
+                if (event.payload.account_id !== activeAccountRef.current) return;
+                const syncedFolder = event.payload.folder;
                 const activeFolder = currentFolderRef.current;
 
                 const isRelevant = 
@@ -932,8 +933,9 @@ export default function MainLayout() {
                 scheduleMailRefresh();
             });
 
-            unlistenStarted = await listen<string>('mail:sync_started', (event) => {
-                const folder = event.payload;
+            unlistenStarted = await listen<{ account_id: string; folder: string }>('mail:sync_started', (event) => {
+                if (event.payload.account_id !== activeAccountRef.current) return;
+                const folder = event.payload.folder;
                 setSyncingFolders(prev => new Set(prev).add(folder));
                 setSyncErrors(prev => {
                     const next = { ...prev };
@@ -942,10 +944,11 @@ export default function MainLayout() {
                 });
             });
 
-            unlistenFinished = await listen<string>('mail:sync_finished', (event) => {
+            unlistenFinished = await listen<{ account_id: string; folder: string }>('mail:sync_finished', (event) => {
+                if (event.payload.account_id !== activeAccountRef.current) return;
                 setSyncingFolders(prev => {
                     const next = new Set(prev);
-                    next.delete(event.payload);
+                    next.delete(event.payload.folder);
                     return next;
                 });
                 
@@ -953,7 +956,8 @@ export default function MainLayout() {
                 // not query the list/counts again or reset a paginated view.
             });
             
-            unlistenError = await listen<{ folder: string; error: string }>('mail:sync_error', (event) => {
+            unlistenError = await listen<{ account_id: string; folder: string; error: string }>('mail:sync_error', (event) => {
+                if (event.payload.account_id !== activeAccountRef.current) return;
                 // Recoverable sync errors already have a retry banner. Keep
                 // Next.js's development error overlay out of that flow.
                 console.warn(`Sync failed for ${event.payload.folder}:`, event.payload.error);
