@@ -38,7 +38,6 @@ const nativeEntries: [SettingsTab, string, string, string, string][] = [
     ['system', 'autostart', 'Launch at startup', 'Start when you sign in to Windows.', 'boot login'],
     ['system', 'hidden', 'Start in the tray', 'Start quietly in the background.', 'minimized hidden'],
     ['system', 'tray', 'Keep running when closed', 'Hide to the system tray instead of quitting.', 'close background minimize'],
-    ['system', 'badge', 'Taskbar unread badge', 'Taskbar integration is not available yet.', 'windows count'],
     ['shortcuts', 'save', 'Save settings', 'Press Ctrl+S to save pending changes.', 'keyboard'],
     ['shortcuts', 'search', 'Search settings', 'Press Ctrl+K to find a setting.', 'keyboard'],
     ['about', 'version', 'App version', 'Installed version of OrionMail.', 'release build'],

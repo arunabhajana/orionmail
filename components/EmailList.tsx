@@ -19,6 +19,7 @@ import { useAppPreferences } from './AppPreferencesContext';
 import { listen } from '@tauri-apps/api/event';
 import {useVisibleMailLabels} from '@/hooks/useVisibleMailLabels';
 import {useAuth} from './AuthContext';
+import {groupConversations} from '@/lib/conversations';
 
 // Global cache states removed as predictive prefetch happens in Rust backend now
 
@@ -108,12 +109,15 @@ const EmailList: React.FC<EmailListProps> = ({
     }, []);
 
     const displayedEmails = React.useMemo(() => {
+        const grouped = preferences.conversationView ? groupConversations(emails) : emails;
+        const unread = new Set(emails.filter(item=>item.unread).map(item=>item.id));
+        const starred = new Set(emails.filter(item=>item.starred).map(item=>item.id));
         switch (currentFilter) {
-            case 'unread': return emails.filter(e => e.unread);
-            case 'flagged': return emails.filter(e => e.starred);
-            default: return emails;
+            case 'unread': return grouped.filter(e => (e.conversationIds || [e.id]).some(id=>unread.has(id)));
+            case 'flagged': return grouped.filter(e => (e.conversationIds || [e.id]).some(id=>starred.has(id)));
+            default: return grouped;
         }
-    }, [emails, currentFilter]);
+    }, [emails, currentFilter, preferences.conversationView]);
 
     const getItemKey = React.useCallback((index: number) => displayedEmails[index]?.id || index, [displayedEmails]);
     const { parentRef, rowVirtualizer, virtualItems } = useVirtualEmailList({
@@ -376,7 +380,7 @@ const EmailList: React.FC<EmailListProps> = ({
                                 >
                                     <EmailListItem
                                         email={email}
-                                        isSelected={selectedEmailId === email.id}
+                                        isSelected={selectedEmailId === email.id || Boolean(selectedEmailId && email.conversationIds?.includes(selectedEmailId))}
                                         onSelect={selectItem}
                                         onToggleStar={starItem}
                                         onContextMenu={itemContextMenu}

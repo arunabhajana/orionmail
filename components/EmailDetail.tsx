@@ -15,10 +15,16 @@ import { SmartActionsEngine, SmartActionKind } from '@/lib/smart-actions';
 import { SmartActionCard } from './inbox/SmartActionCard';
 import { useAuth } from './AuthContext';
 import { useAppPreferences } from '@/components/AppPreferencesContext';
+import {ConversationMessageRow} from './inbox/ConversationMessageRow';
+import {MessagesSquare} from 'lucide-react';
+import {replyDisplay} from '@/lib/reply-display';
 
 // --- Types ---
 
 interface EmailDetailProps {
+    conversation?: Email[];
+    onSelectConversation?: (id:string)=>void;
+    conversationNotice?: string;
     className?: string;
     email?: Email | null;
     onToggleStar?: (emailId: string) => void;
@@ -31,14 +37,16 @@ interface EmailDetailProps {
 
 // --- Main Component ---
 
-const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onRestoreMessage, onMarkAsRead, onToggleRead, onBack }) => {
+const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onRestoreMessage, onMarkAsRead, onToggleRead, onBack, conversation=[],onSelectConversation,conversationNotice }) => {
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const emailIframeRef = React.useRef<HTMLIFrameElement>(null);
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === 'dark';
     const { preferences } = useAppPreferences();
     const { user } = useAuth();
+    const [conversationCollapsed,setConversationCollapsed] = React.useState(false);
     const remoteMessageKey = `${user?.id}:${email?.id}`;
+    const [showQuoted,setShowQuoted] = React.useState(false);
     const [allowedRemoteMessage, setAllowedRemoteMessage] = React.useState<string | null>(null);
     const remoteAllowed = !preferences.blockRemoteImages || allowedRemoteMessage === remoteMessageKey;
 
@@ -52,8 +60,13 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         email?.locationId,
         email?.uidValidity
     );
+    const cleanReply = React.useMemo(()=>replyDisplay(bodyContent),[bodyContent]);
 
-    React.useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [email?.id, user?.id]);
+    React.useEffect(() => {
+        setConversationCollapsed(false);
+        setShowQuoted(false);
+        scrollRef.current?.scrollTo({ top: 0 });
+    }, [email?.id, user?.id, conversation.length>1]);
 
     const detectedActions = React.useMemo(() => {
         if (!preferences.smartActionsGlobal || !extractedData || isLoadingBody) return [];
@@ -89,7 +102,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     // Height, flags, sync and toolbar updates must not reparse the entire
     // message or allocate another srcDoc string on every reader render.
     const sanitizedBody = React.useMemo(() => DOMPurify.sanitize(
-        sanitizeHtml(bodyContent, {
+        sanitizeHtml(showQuoted?bodyContent:cleanReply.html, {
             allowedTags: sanitizeHtml.defaults.allowedTags.concat([
                 "img", "table", "tbody", "tr", "td", "th", "style", "head", "meta", "html", "body"
             ]),
@@ -101,7 +114,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
             }
         }),
         { FORBID_TAGS: ['script', 'iframe', 'object', 'embed'] }
-    ), [bodyContent]);
+    ), [bodyContent,cleanReply.html,showQuoted]);
     const messageDocument = React.useMemo(() => `
                                 <!DOCTYPE html>
                                 <html>
@@ -120,11 +133,13 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                         pre { white-space: pre-wrap; overflow-wrap: anywhere; }
                                         a { color: #2563eb; }
                                         #email-content-wrapper { display: block; overflow: hidden; }
+                                        #email-content-wrapper > :first-child { margin-top: 0 !important; }
+                                        #email-content-wrapper > :last-child { margin-bottom: 0 !important; }
                                         
                                         /* Smart Invert for Dark Mode */
                                         html.dark-mode {
                                             filter: invert(1) hue-rotate(180deg) brightness(1.05);
-                                            background-color: #EEEEEE; /* Inverts to ~ #111111 matching the outer pane */
+                                            background-color: ${conversation.length>1?'#e7e7e7':'#EEEEEE'};
                                         }
                                         html.dark-mode img, 
                                         html.dark-mode video, 
@@ -223,7 +238,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                     </script>
                                 </body>
                                 </html>
-                            `, [sanitizedBody, remoteAllowed, isDark, email?.id, preferences.readingFontSize]);
+                            `, [sanitizedBody, remoteAllowed, isDark, email?.id, preferences.readingFontSize, conversation.length>1]);
 
     if (!email) {
         return (
@@ -266,6 +281,17 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                     <div key={remoteMessageKey} className="mail-reading-sheet">
                         <MessageHeader email={email} />
 
+                        {conversationNotice&&<p role="status" className="mb-4 text-xs text-muted-foreground">{conversationNotice}</p>}
+                        {conversation.length>1&&<div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"><MessagesSquare aria-hidden="true" className="size-3.5"/>Conversation · {conversation.length} messages</span>
+                            <span className="text-[11px] text-muted-foreground">Oldest first · select a message to read</span>
+                        </div>}
+                        <div className={conversation.length>1?'mail-conversation-timeline':undefined}>
+                        {conversation.slice(0,Math.max(0,conversation.findIndex(item=>item.id===email.id))).map((item,index)=><ConversationMessageRow key={item.id} email={item} index={index} onSelect={()=>onSelectConversation?.(item.id)}/>)}
+                        <div className={conversation.length>1?'mail-conversation-open':undefined} data-conversation-active={conversation.length>1||undefined}>
+                        {conversation.length>1&&<ConversationMessageRow email={email} index={Math.max(0,conversation.findIndex(item=>item.id===email.id))} expanded={!conversationCollapsed} onSelect={()=>setConversationCollapsed(value=>!value)}/>}
+                        <div hidden={conversation.length>1&&conversationCollapsed} className={conversation.length>1?'mail-conversation-body':undefined}>
+
                         {smartActions.length > 0 && <section aria-label="Email highlights" className="mb-4 space-y-2.5">
                             <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Highlights</h2>
                             {smartActions.map(action => <SmartActionCard key={action.id} action={action} />)}
@@ -300,7 +326,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                             <iframe
                                 ref={emailIframeRef}
                                 title="Email Content"
-                                className="w-full border-0 email-content-iframe bg-white dark:bg-[#111111]"
+                                className="block w-full border-0 email-content-iframe bg-white dark:bg-[#111111]"
                                 sandbox="allow-scripts"
                                 scrolling="no"
                                 style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}
@@ -308,6 +334,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                             />
                         )}
 
+                        {cleanReply.hasQuoted&&!isLoadingBody&&!error&&<button type="button" aria-expanded={showQuoted} onClick={()=>setShowQuoted(value=>!value)} className="mt-2 rounded-md px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">{showQuoted?'Hide quoted history':'Show quoted history'}</button>}
                         {attachments.length > 0 && (
                             <div className="mt-8 border-t border-black/[0.06] pt-5 dark:border-white/[0.07]">
                                 <h2 className="mb-3 text-xs font-medium text-muted-foreground">Attachments <span className="ml-1 tabular-nums">{attachments.length}</span></h2>
@@ -325,6 +352,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                 </div>
                             </div>
                         )}
+                        </div>
+                        </div>
+                        {conversation.slice(conversation.findIndex(item=>item.id===email.id)+1).map((item,index)=><ConversationMessageRow key={item.id} email={item} index={conversation.findIndex(member=>member.id===email.id)+1+index} onSelect={()=>onSelectConversation?.(item.id)}/>)}
+                        </div>
                     </div>
             </div>
         </section>

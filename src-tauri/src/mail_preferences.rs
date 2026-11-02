@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tauri::Manager;
 use std::sync::Mutex;
 use chrono::Timelike;
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
@@ -7,6 +8,10 @@ static CACHE: once_cell::sync::OnceCell<std::sync::RwLock<MailPreferences>> = on
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct MailPreferences {
+    pub download_folder: String,
+    pub cache_retention: String,
+    pub cache_budget: String,
+    pub taskbar_badge: bool,
     pub dnd_enabled: bool,
     pub desktop_notifications: bool,
     pub notification_sound: bool,
@@ -19,7 +24,7 @@ pub struct MailPreferences {
     pub prefetch_bodies: bool,
 }
 impl Default for MailPreferences {
-    fn default() -> Self { Self { dnd_enabled: false, desktop_notifications: true, notification_sound: true,
+    fn default() -> Self { Self { download_folder:String::new(),cache_retention:"30".into(),cache_budget:"512".into(),taskbar_badge:true,dnd_enabled: false, desktop_notifications: true, notification_sound: true,
         hide_notification_content: false, quiet_hours: false, quiet_start: "22:00".into(), quiet_end: "08:00".into(),
         sync_paused: false, poll_interval: "180".into(), prefetch_bodies: true } }
 }
@@ -40,6 +45,11 @@ impl MailPreferences {
         !quiet
     }
     fn validate(&self) -> Result<(), String> {
+        if !["0","7","30","90"].contains(&self.cache_retention.as_str()) || !["0","256","512","1024"].contains(&self.cache_budget.as_str()) { return Err("Invalid cache policy".into()); }
+        if !self.download_folder.is_empty() {
+            let directory=std::path::Path::new(&self.download_folder);
+            if self.download_folder.len()>1000 || !directory.is_absolute() { return Err("Choose an absolute download folder".into()); }
+        }
         if minutes(&self.quiet_start).is_none() || minutes(&self.quiet_end).is_none() { return Err("Invalid quiet hours".into()); }
         if !["60", "180", "300", "900"].contains(&self.poll_interval.as_str()) { return Err("Invalid sync interval".into()); }
         Ok(())
@@ -60,6 +70,7 @@ pub fn get_mail_preferences(app_handle: AppHandle) -> MailPreferences { load(&ap
 pub fn set_mail_preferences(app_handle: AppHandle, preferences: MailPreferences) -> Result<(), String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
     preferences.validate()?;
+    if !preferences.download_folder.is_empty() && preferences.download_folder!=load(&app_handle).download_folder && !std::path::Path::new(&preferences.download_folder).is_dir(){return Err("Choose an existing download folder".into());}
     let _guard = WRITE_LOCK.lock().map_err(|_| "Preferences unavailable")?;
     let path = path(&app_handle);
     if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
@@ -72,5 +83,24 @@ pub fn set_mail_preferences(app_handle: AppHandle, preferences: MailPreferences)
     let cache = CACHE.get_or_init(|| std::sync::RwLock::new(preferences.clone()));
     *cache.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = preferences;
     crate::mail::notifications::refresh_policy(&app_handle);
+    crate::tray_state::update_tray_now(&app_handle);
+    crate::cache_preferences::kick(&app_handle,true);
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_download_folder(app_handle:AppHandle)->Result<String,String>{
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let chosen=load(&app_handle).download_folder;
+    if !chosen.is_empty()&&std::path::Path::new(&chosen).is_dir(){return Ok(chosen);}
+    app_handle.path().download_dir().map(|path|path.to_string_lossy().into_owned()).map_err(|e|e.to_string())
+}
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]fn legacy_preferences_keep_values_and_gain_cache_defaults(){
+        let prefs:MailPreferences=serde_json::from_str(r#"{"desktopNotifications":false,"pollInterval":"300"}"#).unwrap();
+        assert!(!prefs.desktop_notifications);assert_eq!(prefs.poll_interval,"300");assert_eq!(prefs.cache_retention,"30");assert!(prefs.taskbar_badge);assert!(prefs.download_folder.is_empty());assert!(prefs.validate().is_ok());
+    }
 }

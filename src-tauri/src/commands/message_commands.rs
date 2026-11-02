@@ -417,7 +417,8 @@ pub async fn get_cached_message_headers(app_handle:tauri::AppHandle,requests:Vec
 /// Logical cached content sizes for the active account; excludes database indexes and free pages.
 #[tauri::command]
 pub async fn get_cache_summary(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let account = crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
     tokio::task::spawn_blocking(move || {
         let conn = crate::mail::database::open_connection(&app_handle)?;
         let (messages, bodies, headers): (i64, i64, i64) = conn.query_row(

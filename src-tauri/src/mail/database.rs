@@ -727,6 +727,11 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_message_actions_account ON pending_message_actions(account_id, id)", ())
         .map_err(|e| e.to_string())?;
     migrate_reconciliation_identity(&conn)?;
+    crate::cache_preferences::init(&conn)?;
+    conn.execute("CREATE TABLE IF NOT EXISTS conversation_schema(version INTEGER PRIMARY KEY)", []).map_err(|e|e.to_string())?;
+    if conn.execute("INSERT OR IGNORE INTO conversation_schema(version) VALUES(1)", []).map_err(|e|e.to_string())? > 0 {
+        conn.execute("UPDATE folder_sync_state SET history_before_uid=NULL", []).map_err(|e|e.to_string())?;
+    }
     crate::mail::trash::init(&conn)?;
 
     conn.execute_batch("CREATE TABLE IF NOT EXISTS pending_tag_edits (
@@ -833,8 +838,8 @@ fn upsert_message_headers(conn: &mut Connection, account_id: &str, messages: &[M
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO messages (account_id, folder, uid, uid_validity, subject, sender, recipient, date, seen, flagged, snippet, message_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "INSERT INTO messages (account_id, folder, uid, uid_validity, subject, sender, recipient, date, seen, flagged, snippet, message_id, thread_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT(account_id, folder, uid) DO UPDATE SET
                 subject = excluded.subject,
                 sender = excluded.sender,
@@ -843,7 +848,8 @@ fn upsert_message_headers(conn: &mut Connection, account_id: &str, messages: &[M
                 seen = excluded.seen,
                 flagged = excluded.flagged,
                 snippet = CASE WHEN messages.body_fetched=1 THEN messages.snippet ELSE excluded.snippet END,
-                message_id = excluded.message_id
+                message_id = excluded.message_id,
+                thread_id = COALESCE(excluded.thread_id,messages.thread_id)
              WHERE messages.subject IS NOT excluded.subject
                 OR messages.sender IS NOT excluded.sender
                 OR messages.recipient IS NOT excluded.recipient
@@ -851,7 +857,8 @@ fn upsert_message_headers(conn: &mut Connection, account_id: &str, messages: &[M
                 OR messages.seen IS NOT excluded.seen
                 OR messages.flagged IS NOT excluded.flagged
                 OR (messages.body_fetched<>1 AND messages.snippet IS NOT excluded.snippet)
-                OR messages.message_id IS NOT excluded.message_id"
+                OR messages.message_id IS NOT excluded.message_id
+                OR (excluded.thread_id IS NOT NULL AND messages.thread_id IS NOT excluded.thread_id)"
         ).map_err(|e| e.to_string())?;
 
         for msg in messages {
@@ -868,7 +875,15 @@ fn upsert_message_headers(conn: &mut Connection, account_id: &str, messages: &[M
                 if msg.flagged { 1 } else { 0 },
                 msg.snippet.as_deref().unwrap_or(""),
                 &msg.message_id,
+                &msg.thread_id,
             ]).map_err(|e| e.to_string())?;
+        }
+    }
+    for msg in messages {
+        if let (Some(id),Some(root)) = (&msg.message_id,&msg.thread_id) {
+            let resolved: Option<String> = tx.query_row("SELECT thread_id FROM messages WHERE account_id=?1 AND message_id=?2 AND thread_id IS NOT NULL LIMIT 1", rusqlite::params![account_id,root], |r|r.get(0)).optional().map_err(|e|e.to_string())?;
+            let root = resolved.as_ref().unwrap_or(root);
+            tx.execute("UPDATE messages SET thread_id=?3 WHERE account_id=?1 AND (message_id=?2 OR thread_id=?2) AND thread_id IS NOT ?3",rusqlite::params![account_id,id,root]).map_err(|e|e.to_string())?;
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
@@ -883,7 +898,7 @@ mod header_write_tests {
     #[test]
     fn replayed_headers_do_not_write_and_flag_updates_keep_cached_bodies() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE messages(account_id TEXT, folder TEXT, uid INTEGER, uid_validity INTEGER, subject TEXT, sender TEXT, recipient TEXT, date INTEGER, seen INTEGER, flagged INTEGER, snippet TEXT, message_id TEXT, body_fetched INTEGER DEFAULT 0, body TEXT, PRIMARY KEY(account_id,folder,uid));").unwrap();
+        conn.execute_batch("CREATE TABLE messages(account_id TEXT, folder TEXT, uid INTEGER, uid_validity INTEGER, subject TEXT, sender TEXT, recipient TEXT, date INTEGER, seen INTEGER, flagged INTEGER, snippet TEXT, message_id TEXT, body_fetched INTEGER DEFAULT 0, body TEXT, thread_id TEXT, PRIMARY KEY(account_id,folder,uid));").unwrap();
         let messages: Vec<_> = (1..=200).map(|uid| MessageHeader {
             folder: "inbox".into(), uid, uid_validity: 9,
             subject: "Subject".into(), from: "test@example.com".into(),
@@ -902,6 +917,16 @@ mod header_write_tests {
         assert_eq!(conn.total_changes() - before, 1);
         let row: (String, String, bool) = conn.query_row("SELECT body,snippet,flagged FROM messages WHERE uid=1", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
         assert_eq!(row, ("cached body".into(), "body preview".into(), true));
+        // Initial sync is newest-first: a child can arrive before its parent.
+        let mut child = messages[0].clone();
+        child.message_id=Some("<child>".into());child.thread_id=Some("<parent>".into());
+        upsert_message_headers(&mut conn,"a",&[child.clone()]).unwrap();
+        let mut parent = messages[1].clone();
+        parent.message_id=Some("<parent>".into());parent.thread_id=Some("<root>".into());
+        upsert_message_headers(&mut conn,"b",&[child]).unwrap();
+        upsert_message_headers(&mut conn,"a",&[parent]).unwrap();
+        assert_eq!(conn.query_row("SELECT thread_id FROM messages WHERE account_id='a' AND uid=1",[],|r|r.get::<_,String>(0)).unwrap(),"<root>");
+        assert_eq!(conn.query_row("SELECT thread_id FROM messages WHERE account_id='b' AND uid=1",[],|r|r.get::<_,String>(0)).unwrap(),"<parent>");
     }
 }
 
@@ -1150,7 +1175,7 @@ mod body_identity_tests {
     }
     fn fixture() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE messages(account_id TEXT,folder TEXT,uid INTEGER,uid_validity INTEGER,subject TEXT DEFAULT 'subject',sender TEXT DEFAULT 'sender',date INTEGER DEFAULT 100,message_id TEXT DEFAULT 'same',processed_html TEXT,snippet TEXT,attachments_json TEXT,extracted_data TEXT,body_fetched INTEGER DEFAULT 0,PRIMARY KEY(account_id,folder,uid));
+        conn.execute_batch("CREATE TABLE messages(account_id TEXT,folder TEXT,uid INTEGER,uid_validity INTEGER,subject TEXT DEFAULT 'subject',sender TEXT DEFAULT 'sender',date INTEGER DEFAULT 100,message_id TEXT DEFAULT 'same',processed_html TEXT,snippet TEXT,attachments_json TEXT,extracted_data TEXT,body_fetched INTEGER DEFAULT 0,body_cached_at INTEGER,PRIMARY KEY(account_id,folder,uid));
             INSERT INTO messages(account_id,folder,uid,uid_validity,processed_html,body_fetched) VALUES ('a','inbox',42,9,'cached body',1),('a','tag:bank',7,10,NULL,0),('b','inbox',42,9,'other account',1);").unwrap();
         conn
     }
@@ -1183,7 +1208,7 @@ pub fn update_message_body(app_handle: &AppHandle, account_id: &str, folder: &st
     let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "UPDATE messages SET processed_html = ?1, snippet = ?2, attachments_json = ?3, extracted_data = ?4, body_fetched = 1 WHERE account_id = ?5 AND folder = ?6 AND uid = ?7",
+        "UPDATE messages SET processed_html = ?1, snippet = ?2, attachments_json = ?3, extracted_data = ?4, body_fetched = 1, body_cached_at=strftime('%s','now') WHERE account_id = ?5 AND folder = ?6 AND uid = ?7",
         rusqlite::params![body, snippet, attachments_json, extracted_data, account_id, folder, uid],
     ).map_err(|e| e.to_string())?;
 
@@ -1197,7 +1222,7 @@ pub fn update_message_body_if_current(app: &AppHandle, account: &str, folder: &s
 
 fn commit_body(conn: &Connection, account: &str, folder: &str, uid: u32, validity: u32, body: &str, snippet: &str, attachments: Option<String>, extracted: Option<String>) -> Result<(), String> {
     let count = conn.execute(
-        "UPDATE messages SET processed_html=?1,snippet=?2,attachments_json=?3,extracted_data=?4,body_fetched=1 WHERE account_id=?5 AND folder=?6 AND uid=?7 AND uid_validity=?8 AND ?8>0",
+        "UPDATE messages SET processed_html=?1,snippet=?2,attachments_json=?3,extracted_data=?4,body_fetched=1,body_cached_at=strftime('%s','now') WHERE account_id=?5 AND folder=?6 AND uid=?7 AND uid_validity=?8 AND ?8>0",
         rusqlite::params![body,snippet,attachments,extracted,account,folder,uid,validity],
     ).map_err(|e|e.to_string())?;
     if count != 1 { return Err("Message changed while loading. Refresh the folder and reopen it.".into()); }

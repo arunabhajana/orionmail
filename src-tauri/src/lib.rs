@@ -4,6 +4,7 @@ mod mail;
 mod contacts;
 mod config;
 mod mail_preferences;
+mod cache_preferences;
 mod window_activity;
 mod performance;
 pub mod tray_state;
@@ -189,6 +190,7 @@ pub fn run() {
           ready_tx.send_replace(Some(result));
           log::info!("Mail database initialization finished in {} ms",started.elapsed().as_millis());
           if failed{return;}
+          crate::cache_preferences::kick(&handle,false);
           if let Err(error)=mail::notifications::initialize(&handle){
               log::error!("Native notifications could not initialize: {}",error);
               if mail::notifications::is_activation_launch(){
@@ -231,6 +233,9 @@ pub fn run() {
         get_cache_summary,
         mail_preferences::get_mail_preferences,
         mail_preferences::set_mail_preferences,
+        mail_preferences::get_download_folder,
+        cache_preferences::clear_body_cache,
+        cache_preferences::clear_inline_cache,
       login_google,
       get_current_user,
       update_display_name,
@@ -244,6 +249,7 @@ pub fn run() {
       sync_mail_folder,
       get_folder_messages,
       get_message_body,
+      get_conversation_messages,
       get_messages_page,
       mark_as_read,
       prefetch_messages,

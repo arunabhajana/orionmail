@@ -1,5 +1,5 @@
 import type { AppPreferences } from "@/lib/app-preferences";
-export interface PreferenceDefinition { key?: keyof AppPreferences; id: string; title: string; description: string; type: "toggle" | "select" | "text" | "textarea" | "time" | "unavailable"; options?: readonly (readonly [string, string])[]; }
+export interface PreferenceDefinition { key?: keyof AppPreferences; id: string; title: string; description: string; type: "toggle" | "select" | "text" | "textarea" | "time" | "unavailable" | "folder"; options?: readonly (readonly [string, string])[]; }
 export interface PreferenceGroup { title: string; description?: string; items: PreferenceDefinition[]; }
 const item = (key: keyof AppPreferences, title: string, description: string, type: PreferenceDefinition["type"] = "toggle", options?: PreferenceDefinition["options"]): PreferenceDefinition => ({ key, id: key, title, description, type, options });
 const later = (id: string, title: string, description: string): PreferenceDefinition => ({ id, title, description, type: "unavailable" });
@@ -29,9 +29,12 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
             item("showAvatars", "Sender initials", "Show a small initials avatar beside each sender."),
             item("dateFormat", "Date format", "Choose relative times or calendar dates.", "select", [["relative", "Relative"], ["absolute", "Calendar date"]]),
             item("defaultFolder", "Start in", "The folder to open when you return to your mailbox.", "select", [["inbox", "Inbox"], ["starred", "Starred"], ["sent", "Sent"]]),
-            later("conversations", "Conversation grouping", "Messages currently appear individually. Conversation view is not available yet."),
+            item("conversationView", "Conversation grouping", "Group linked replies into conversations. Separate OTP and notification messages stay independent. Enabled by default."),
         ] },
     ],
+    system: [{ title: "Taskbar", items: [
+        item("taskbarBadge", "Taskbar unread badge", "Show the current account’s unread message count (excluding Trash) on the Windows taskbar icon, up to 99+. The badge clears when there are no unread messages. Save changes to apply."),
+    ] }],
     notifications: [
         { title: "Incoming mail", description: "Desktop alerts currently cover Inbox. Windows notification permissions also apply.", items: [
             item("desktopNotifications", "Desktop notifications", "Show native desktop alerts for new Inbox mail."),
@@ -73,15 +76,15 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
         ] },
         { title: "Offline mail", items: [
             later("history", "Sync history range", "Mail history currently syncs in full. Date-limited sync is not available yet."),
-            later("prefetchLimit", "Prefetch storage limit", "Background preloading does not have a configurable storage budget yet."),
+
             later("attachments", "Automatic attachment downloads", "Attachments currently download only when you request them."),
         ] },
     ],
     storage: [
         { title: "Cache preferences", items: [
-            later("retention", "Automatic cache retention", "Time-based eviction is not available yet. Clear cached mail manually below."),
-            later("attachments", "Clear attachment cache separately", "Mail and attachment cache management is not yet separated."),
-            later("downloadFolder", "Default download folder", "Choose where to save each attachment using the native Save dialog."),
+            item("cacheRetention", "Keep downloaded bodies", "Automatically expire downloaded bodies after this time. Headers stay available; opening mail downloads its body again.", "select", [["7","7 days"],["30","30 days"],["90","90 days"],["0","Until cleared manually"]]),
+            item("cacheBudget", "Body cache budget per account", "Periodically remove the oldest downloaded bodies above this target. Headers, inline images and saved attachments are excluded.", "select", [["256","256 MB"],["512","512 MB"],["1024","1 GB"],["0","Unlimited"]]),
+            item("downloadFolder", "Default download folder", "Attachment Save dialogs start here. Empty uses your system Downloads folder.", "folder"),
         ] },
     ],
     shortcuts: [

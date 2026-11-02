@@ -21,7 +21,7 @@ import { useAuth } from '@/components/AuthContext';
 import LogoSpinner from '@/components/LogoSpinner';
 import Sidebar from '@/components/Sidebar';
 import EmailList from '@/components/EmailList';
-import EmailDetail from '@/components/EmailDetail';
+import ConversationReader from '@/components/ConversationReader';
 import { usePendingSentMessages } from '@/hooks/usePendingSentMessages';
 import { SearchProgressData } from '@/components/inbox/EmailListHeader';
 import { CreateTagModal } from '@/components/tags/CreateTagModal';
@@ -193,6 +193,7 @@ export default function MainLayout() {
         }));
         return { filteredEmails, visibleEmails: filteredEmails };
     }, [emails, pendingTagAdds, pendingFlags, locationChoices, pendingTrash, user?.id, currentFolder, activeSearchState.searchQuery, activeSearchState.searchResults]);
+    const conversationTargetRef = useRef<Email | null>(null);
     const selectedEmail = visibleEmails.find(e => e.id === selectedEmailId);
 
 
@@ -260,7 +261,7 @@ export default function MainLayout() {
     };
 
     const toggleStar = async (emailId: string) => {
-        const target = filteredEmails.find(e => e.id === emailId);
+        const target = (conversationTargetRef.current?.id === emailId ? conversationTargetRef.current : undefined) || filteredEmails.find(e => e.id === emailId);
         if (!target) return;
 
         const newStarredState = !target.starred;
@@ -299,7 +300,7 @@ export default function MainLayout() {
     };
 
     const toggleRead = async (emailId: string) => {
-        const target = filteredEmails.find(e => e.id === emailId);
+        const target = (conversationTargetRef.current?.id === emailId ? conversationTargetRef.current : undefined) || filteredEmails.find(e => e.id === emailId);
         if (!target) return;
 
         const newReadState = Boolean(target.unread);
@@ -334,7 +335,7 @@ export default function MainLayout() {
     };
 
     const markAsRead = async (emailId: string) => {
-        const target = filteredEmails.find(e => e.id === emailId);
+        const target = (conversationTargetRef.current?.id === emailId ? conversationTargetRef.current : undefined) || filteredEmails.find(e => e.id === emailId);
         if (!target || !target.unread) return;
         const edit=beginFlagEdit(target,'unread',false);
 
@@ -366,13 +367,13 @@ export default function MainLayout() {
     };
 
     const deleteMessage = async (emailId: string) => {
-        const target = visibleEmails.find(email => email.id === emailId);
+        const target = (conversationTargetRef.current?.id === emailId ? conversationTargetRef.current : undefined) || visibleEmails.find(email => email.id === emailId);
         if (target) await performTrashAction(emailId, (target.displayFolder || target.folder) === 'trash' ? 'purge' : 'move');
     };
 
     const dedupeEmails = dedupeMail;
     const performTrashAction = async (emailId: string, action: 'move' | 'restore' | 'purge') => {
-        const target = visibleEmails.find(email => email.id === emailId);
+        const target = (conversationTargetRef.current?.id === emailId ? conversationTargetRef.current : undefined) || visibleEmails.find(email => email.id === emailId);
         const accountId = user?.id;
         if (!target || !accountId) return;
         const identity = mailIdentity(target);
@@ -446,6 +447,7 @@ export default function MainLayout() {
             uid: msg.uid,
             uidValidity:msg.uid_validity,
             messageId: msg.message_id,
+            threadId: msg.thread_id,
             sender: senderName,
             senderEmail: msg.from,
             to: msg.to || undefined,
@@ -1316,14 +1318,18 @@ export default function MainLayout() {
             </div>
 
             {/* Column 3: Reading Pane */}
-            <EmailDetail
+            <ConversationReader
                 className="mail-detail-pane min-h-0 min-w-0 flex-1 flex flex-col"
                 email={selectedEmail}
-                onToggleStar={toggleStar}
-                onDeleteMessage={deleteMessage}
-                onRestoreMessage={id => { void performTrashAction(id, 'restore'); }}
-                onMarkAsRead={markAsRead}
-                onToggleRead={toggleRead}
+                onAction={(message,action)=>{
+                    conversationTargetRef.current=message;
+                    if(action==='star')void toggleStar(message.id);
+                    else if(action==='read')void toggleRead(message.id);
+                    else if(action==='markRead')void markAsRead(message.id);
+                    else if(action==='delete')void deleteMessage(message.id);
+                    else void performTrashAction(message.id,'restore');
+                    conversationTargetRef.current=null;
+                }}
                 onBack={() => setSelectedEmailId(null)}
             />
             </>}

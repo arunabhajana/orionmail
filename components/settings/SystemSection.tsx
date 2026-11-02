@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { enable, isEnabled, disable } from '@tauri-apps/plugin-autostart';
 import { useSettings } from './SettingsContext';
+import { PreferencesSection } from './PreferencesSection';
 import { deepEqual } from '@/lib/deepEqual';
 import { SettingGroup, SettingRow, SettingToggle } from './SettingsControls';
 
@@ -61,7 +62,7 @@ export function SystemSection() {
         const isDirty = !isLoading && !loadError && !deepEqual(originalSettings, settings);
         
         registerSection({
-            id: 'system',
+            id: 'desktop-window',
             isDirty,
             save: async () => {
                 if (isLoading || loadError) throw new Error('Desktop settings unavailable.');
@@ -85,11 +86,11 @@ export function SystemSection() {
             }
         });
 
-        return () => unregisterSection('system');
+        return () => unregisterSection('desktop-window');
     }, [originalSettings, settings, isLoading, loadError, registerSection, unregisterSection]);
 
     useEffect(() => {
-        markDirty('system', !deepEqual(originalSettings, settings));
+        markDirty('desktop-window', !deepEqual(originalSettings, settings));
     }, [settings, originalSettings, markDirty]);
 
     const toggleMinimizeToTray = () => {
@@ -116,7 +117,7 @@ export function SystemSection() {
         </SettingGroup>
         <SettingGroup title="Window behavior">
             <SettingRow id="system.tray" title="Keep running when closed" description="The close button hides the window in the system tray. Mail keeps syncing."><SettingToggle label="Keep running when closed" checked={settings.minimize_to_tray} onChange={toggleMinimizeToTray} /></SettingRow>
-            <SettingRow id="system.badge" title="Taskbar unread badge" description="Taskbar badge integration is not available yet. Folder badges are in Notifications." unavailable />
         </SettingGroup>
+        <PreferencesSection section="system" />
     </div>;
 }

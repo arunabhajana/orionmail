@@ -144,7 +144,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             if (event.data.type === "resize") {
                 const height = event.data.height;
                 if (typeof height === "number" && Number.isFinite(height) && height >= 0 && height <= 20000) {
-                    setIframeHeight(height + 30);
+                    setIframeHeight(height + 8);
                 }
             } else if (event.data.type === "open_url" && typeof event.data.url === "string" && isAllowedExternalUrl(event.data.url)) {
                 const url = event.data.url;

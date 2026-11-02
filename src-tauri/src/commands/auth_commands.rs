@@ -6,7 +6,7 @@ use tauri::{AppHandle, command};
 #[command]
 pub async fn login_google(app_handle: AppHandle) -> Result<UserProfile, String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    let account = oauth::start_google_login().await?;
+    let account = oauth::start_google_login(app_handle.clone()).await?;
     session::save_account(&app_handle, account.clone(), true)?;
     
     // Initial sync
@@ -69,6 +69,7 @@ pub async fn logout_user(app_handle: AppHandle, account_id: String) -> Result<()
     crate::mail::sync_manager::remove_account(&account_id).await;
     crate::mail::body_prefetch_manager::PREFETCH_MANAGER.remove_account(&account_id).await;
     crate::mail::imap_session::remove_account(&account_id);
+    crate::tray_state::refresh_unread_count_from_db(&app_handle);
     Ok(())
 }
 
@@ -243,6 +244,22 @@ fn validate_body_target(app: &AppHandle, account: &str, folder: &str, uid: u32, 
 pub async fn get_cached_messages(app_handle: AppHandle) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
     let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     crate::mail::database::load_cached_messages(&app_handle, &account.id, 25)
+}
+
+#[command]
+pub async fn get_conversation_messages(app_handle: AppHandle, account_id: String, folder: String, uid: u32) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    if session::get_active_profile(&app_handle).is_none_or(|profile|profile.id!=account_id) { return Err("Account changed".into()); }
+    tokio::task::spawn_blocking(move || {
+        let conn = crate::mail::database::open_connection(&app_handle)?;
+        let mut stmt = conn.prepare("SELECT m.folder,m.uid FROM messages m JOIN messages anchor ON anchor.account_id=m.account_id AND anchor.folder=?2 AND anchor.uid=?3 WHERE m.account_id=?1 AND (m.folder<>'trash' OR ?2='trash') AND (m.thread_id=COALESCE(anchor.thread_id,anchor.message_id) OR m.message_id=COALESCE(anchor.thread_id,anchor.message_id) OR (m.folder=?2 AND m.uid=?3)) ORDER BY m.date DESC,m.uid DESC LIMIT 200").map_err(|e|e.to_string())?;
+        let locations = stmt.query_map(rusqlite::params![account_id,folder,uid], |row|Ok((row.get::<_,String>(0)?,row.get::<_,u32>(1)?))).map_err(|e|e.to_string())?.collect::<rusqlite::Result<Vec<_>>>().map_err(|e|e.to_string())?;
+        let mut groups = std::collections::BTreeMap::<String,Vec<u32>>::new();
+        for (folder,uid) in locations { groups.entry(folder).or_default().push(uid); }
+        let mut messages = Vec::new();
+        for (folder,uids) in groups { messages.extend(crate::mail::database::get_messages_by_uids(&app_handle,&account_id,&folder,&uids)?); }
+        Ok(messages)
+    }).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]

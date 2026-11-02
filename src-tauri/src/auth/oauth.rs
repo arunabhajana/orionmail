@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 /// 3. Opens the system browser for user authentication.
 /// 4. Exchanges the received code for access/refresh tokens.
 /// 5. Fetches the user profile from Google's UserInfo API.
-pub async fn start_google_login() -> Result<Account, String> {
+pub async fn start_google_login(app: tauri::AppHandle) -> Result<Account, String> {
     crate::auth::token_store::health_check()?;
     
     dotenvy::dotenv().ok();
@@ -67,7 +67,7 @@ pub async fn start_google_login() -> Result<Account, String> {
     let expected_state = csrf_state.secret().to_owned();
     let deadline = Instant::now() + Duration::from_secs(180);
     let code = tokio::task::spawn_blocking(move ||
-        super::oauth_callback::receive_code(listener, expected_state, deadline)
+        super::oauth_callback::receive_code(listener, expected_state, deadline, Some(app))
     ).await.map_err(|_| "OAuth callback task failed")??;
 
     let token_result = tokio::time::timeout(Duration::from_secs(30), client

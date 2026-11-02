@@ -316,7 +316,7 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
     let fetch_res = execute_with_session(account, SessionKind::Search, move |session| {
         let mailbox = session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
         
-        let fetch_query = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID)])";
+        let fetch_query = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID REFERENCES IN-REPLY-TO)])";
         let results = session.uid_fetch(uid.to_string(), fetch_query).map_err(|e| format!("IMAP fetch header error: {}", e))?;
         
         let validity=mailbox.uid_validity.filter(|value|*value!=0).ok_or("Mailbox did not provide UIDVALIDITY")?;

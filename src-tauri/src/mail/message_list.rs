@@ -47,7 +47,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
             }
 
             let uids_str = recent_uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-            let fetches = session.uid_fetch(uids_str, "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE MESSAGE-ID)])")
+            let fetches = session.uid_fetch(uids_str, "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])")
                 .map_err(|e| format!("IMAP UID Fetch Error: {}", e))?;
 
             let mut messages = Vec::new();
@@ -118,7 +118,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                         seen,
                         flagged,
                         has_attachments: false,
-                        thread_id: None,
+                        thread_id: parse_mail(body).ok().and_then(|mail| crate::mail::sync::conversation_root(&mail)),
                         snippet,
                         to: to_opt,
                         message_id,

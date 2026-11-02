@@ -7,6 +7,7 @@ import { Attachment } from '@/lib/types';
 import { useDownloads } from '@/components/DownloadContext';
 import { toast } from 'sonner';
 import { useAuth } from '@/components/AuthContext';
+import {join} from '@tauri-apps/api/path';
 const getFileIcon = (mime: string | undefined) => {
     if (!mime) return <File className="w-5 h-5" />;
     const m = mime.toLowerCase();
@@ -88,7 +89,9 @@ export const AttachmentCard = memo(({ uid, folder, attachment, localId, uidValid
         setDownloading(true);
         let downloadId: string | undefined;
         try {
-            const savePath = await save({ defaultPath: attachment.name, title: 'Save attachment' });
+            const filename=attachment.name.split(/[\\/]/).pop()||'attachment';
+            const defaultPath=await join(await invoke<string>('get_download_folder'),filename);
+            const savePath = await save({ defaultPath, title: 'Save attachment' });
             if (!savePath) return;
             downloadId = addDownload(attachment.name);
             const resultPath = await invoke<string>('download_attachment', { folder: folder || 'inbox', uid, partId: attachment.partId, savePath, localId, accountId: user?.id, expectedUidValidity: uidValidity });

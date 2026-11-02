@@ -23,6 +23,7 @@ pub fn start_polling(app_handle: AppHandle, account: Account) {
                 _ = tokio::time::sleep(Duration::from_secs(seconds)) => {}
                 _ = crate::mail::shutdown::POLL_TOKEN.cancelled() => { break; }
             }
+            crate::cache_preferences::kick(&app_handle,false);
             log::info!("[POLL] Tick: Attempting fallback sync...");
 
             let app_clone = app_handle.clone();

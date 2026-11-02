@@ -13,6 +13,10 @@ export interface Email {
     uid: number;
     uidValidity?: number;
     messageId?: string;
+    threadId?: string;
+    conversationCount?: number;
+    conversationUnread?: boolean;
+    conversationIds?: string[];
     sender: string;
     senderEmail: string;
     to?: string;

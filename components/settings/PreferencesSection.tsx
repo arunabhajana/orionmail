@@ -1,13 +1,15 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import {open} from '@tauri-apps/plugin-dialog';
+import {toast} from 'sonner';
 import { NotificationSystemControls } from "./NotificationSystemControls";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { useAppPreferences } from "@/components/AppPreferencesContext";
 import { AppPreferences, parseAddressList } from "@/lib/app-preferences";
 import { useSettings } from "./SettingsContext";
 import { preferenceGroups } from "./preferenceDefinitions";
-import { SettingGroup, SettingRow, SettingSelect, SettingToggle } from "./SettingsControls";
+import { SettingGroup, SettingRow, SettingSelect, SettingToggle, settingButton } from "./SettingsControls";
 export function PreferencesSection({ section }: { section: string }) {
     const { preferences, updatePreferences } = useAppPreferences();
     const [draft, setDraft] = useState(preferences);
@@ -32,7 +34,8 @@ export function PreferencesSection({ section }: { section: string }) {
         const disabled = (key?.startsWith("smartActions") && key !== "smartActionsGlobal" && !draft.smartActionsGlobal) || ((key === "quietStart" || key === "quietEnd") && !draft.quietHours);
         return <SettingRow key={item.id} id={`${section}.${item.id}`} title={item.title} description={item.description} unavailable={item.type === "unavailable"}>
             {key && item.type === "toggle" && <SettingToggle label={item.title} checked={Boolean(draft[key])} onChange={value => set(key, value)} disabled={disabled} />}
-            {key && item.type === "select" && <SettingSelect label={item.title} value={String(draft[key])} options={item.options || []} onChange={value => set(key, value)} />}
+            {key && item.type === "select" && <SettingSelect label={item.title} value={String(draft[key])} options={item.options || []} disabled={disabled} onChange={value => set(key, value)} />}
+            {key && item.type === 'folder' && <div className="flex w-full max-w-sm flex-wrap items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={String(draft[key])}>{String(draft[key])||'System Downloads folder'}</span><button className={settingButton} onClick={()=>{void open({directory:true,multiple:false,title:'Choose download folder',defaultPath:String(draft[key])||undefined}).then(path=>{if(typeof path==='string')set(key,path);}).catch(error=>toast.error('Could not choose folder',{description:String(error)}));}}>Choose…</button><button className={settingButton} disabled={!draft[key]} onClick={()=>set(key,'')}>Reset</button></div>}
             {key && (item.type === "text" || item.type === "time") && <input aria-label={item.title} type={item.type} value={String(draft[key])} disabled={disabled} onChange={event => set(key, event.target.value)} maxLength={1000} className={`settings-input ${item.type === "text" ? "w-full sm:w-64" : "w-32"}`} />}
             {key && item.type === "textarea" && <textarea aria-label={item.title} rows={4} maxLength={4000} value={String(draft[key])} placeholder="Your name, role, and contact details…" onChange={event => set(key, event.target.value)} className="settings-input w-full resize-y min-h-24" />}
         </SettingRow>;

@@ -174,7 +174,7 @@ pub async fn sync_folder_with_options(
                 let fetch_results = session
                     .uid_fetch(
                         &batch_range,
-                        "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID)])",
+                        "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID REFERENCES IN-REPLY-TO)])",
                     )
                     .map_err(|e| format!("IMAP Fetch Error: {}", e))?;
 
@@ -381,6 +381,7 @@ pub async fn sync_folder_with_options(
         }).await.map_err(|e|e.to_string())??;
         use tauri::Emitter;let _=app_handle.emit("mail:labels_changed",&account.id);crate::tray_state::refresh_unread_count_from_db(app_handle);
     }
+    crate::cache_preferences::kick(app_handle,false);
     Ok(new_messages_count)
 }
 
@@ -455,7 +456,7 @@ pub(crate) fn parse_header_to_message(
         seen,
         flagged,
         has_attachments: false,
-        thread_id: None,
+        thread_id: conversation_root(&parsed),
         snippet,
         to: to_opt,
         message_id,
@@ -472,6 +473,21 @@ pub(crate) fn message_timestamp(date: &str, internal_date: Option<i64>) -> i64 {
 }
 
 const HEADER_BATCH_SIZE: usize = 200;
+
+pub(crate) fn conversation_root(mail: &mailparse::ParsedMail<'_>) -> Option<String> {
+    use mailparse::MailHeaderMap;
+    for name in ["References", "In-Reply-To", "Message-ID"] {
+        if let Some(value) = mail.headers.get_first_value(name) {
+            if let Some(start) = value.find('<') {
+                if let Some(end) = value[start..].find('>') {
+                    let id = &value[start..=start+end];
+                    if id.len() <= 998 && !id.chars().any(char::is_control) { return Some(id.to_string()); }
+                }
+            }
+        }
+    }
+    None
+}
 const UID_SEARCH_WINDOW: u32 = 8192;
 
 fn pending_uid_criteria(last_uid: u32, end: u32, history: u32) -> Option<String> {
@@ -522,6 +538,14 @@ fn history_batch<T: std::io::Read + std::io::Write>(
 mod tests {
     use super::*;
     use std::io::{Cursor, Read, Write};
+
+    #[test]
+    fn conversations_use_reply_headers_instead_of_subjects() {
+        let root = |header: &str| conversation_root(&mailparse::parse_mail(header.as_bytes()).unwrap());
+        assert_eq!(root("Message-ID: <child>\r\nReferences: <root> <parent>\r\nIn-Reply-To: <parent>\r\n\r\n"),Some("<root>".into()));
+        assert_eq!(root("Message-ID: <child>\r\nIn-Reply-To: <parent>\r\n\r\n"),Some("<parent>".into()));
+        assert_eq!(root("Subject: Monthly statement\r\n\r\n"),None);
+    }
 
     struct Wire(Cursor<Vec<u8>>);
     impl Read for Wire {

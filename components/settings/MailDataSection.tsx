@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import {confirm} from '@tauri-apps/plugin-dialog';
 import { useAuth } from "@/components/AuthContext";
 import { PreferencesSection } from "./PreferencesSection";
 import { SettingGroup, SettingRow, settingButton } from "./SettingsControls";
@@ -33,6 +34,16 @@ export function MailDataSection({ section }: { section: "sync" | "storage" }) {
             <SettingGroup title="Mail on this device" description="Cached content for the current account. These estimates exclude database indexes, free space, and downloaded attachment files."><SettingRow id="storage.usage" title={cache ? `${cache.messages.toLocaleString()} cached messages` : "Cached messages"} description={error ? "Storage usage is unavailable." : cache ? `Headers and previews: ${formatBytes(cache.headerBytes)} · Message bodies: ${formatBytes(cache.bodyBytes)}` : "Calculating local content…"} /></SettingGroup>
         </>}
         <PreferencesSection section={section} />
+        {section==='storage'&&<SettingGroup title="Clear downloaded content" description="Your mailbox, message headers and saved attachment files are kept.">{[
+            ['clear_body_cache','Downloaded message bodies','Clear bodies for this account. Messages download again when opened.'],
+            ['clear_inline_cache','Inline image cache','Clear cached email images on this device for all accounts. Messages with these images download again when opened.'],
+        ].map(([command,title,description])=><SettingRow key={command} id={`storage.${command}`} title={title} description={description}><button disabled={busy} className={settingButton} onClick={()=>{void(async()=>{
+            if(!await confirm(description,{title:`Clear ${title.toLowerCase()}?`,kind:'warning',okLabel:'Clear',cancelLabel:'Cancel'}))return;
+            setBusy(true);
+            try{await invoke(command);setCache(await invoke<CacheSummary>('get_cache_summary'));toast.success('Cache cleared.');}
+            catch(error){toast.error('Could not clear cache',{description:String(error)});}
+            finally{setBusy(false);}
+        })();}}>Clear</button></SettingRow>)}</SettingGroup>}
         {section === "storage" && <SettingGroup title="Manage local mail"><SettingRow id="storage.clear" title="Clear cached mail" description="Remove this account’s downloaded mail and sync state. Mail stays at Google. Save any open work first."><button className={`${settingButton} text-red-600 dark:text-red-400`} disabled={busy} onClick={() => toast("Clear cached mail for this account?", { description: "Mail will need to download again. Your Google mailbox is not deleted.", action: { label: "Clear cache", onClick: async () => { setBusy(true); try { await invoke("clear_local_cache"); window.location.assign("/inbox"); } catch (error) { toast.error("Could not clear cached mail.", { description: String(error) }); setBusy(false); } } }, cancel: { label: "Cancel", onClick: () => {} } })}>Clear cache</button></SettingRow></SettingGroup>}
     </div>;
 }

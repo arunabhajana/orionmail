@@ -556,6 +556,7 @@ pub async fn fetch_and_cache_body_with_session(app_handle: &AppHandle, account: 
     let folder = folder.to_string();
     tokio::task::spawn_blocking(move || {
         let _work = crate::performance::WorkSpan::new("message body processing");
+        let _assets = crate::cache_preferences::INLINE_ASSET_LOCK.read().map_err(|_|"Inline image cache unavailable")?;
         let parsed_body = if !fetched_full_payload.is_empty() {
             match extract_displayable_body(&app_handle, &serde_json::json!([account_id,folder,stored_validity,uid]).to_string(), &fetched_full_payload) {
                 Ok(parsed) => parsed,
