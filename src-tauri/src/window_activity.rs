@@ -3,6 +3,36 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static DISPLAYED: AtomicBool = AtomicBool::new(false);
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
+static VISIBLE: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+pub async fn wait_until_displayed() {
+    loop {
+        let changed = VISIBLE.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        if is_displayed() { return; }
+        changed.await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn hidden_history_sleeps_and_all_waiters_resume_on_show() {
+        DISPLAYED.store(false, Ordering::Relaxed);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), wait_until_displayed()).await.is_err());
+        let resume = async {
+            tokio::task::yield_now().await;
+            DISPLAYED.store(true, Ordering::Relaxed);
+            VISIBLE.notify_waiters();
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(wait_until_displayed(), wait_until_displayed(), resume);
+        }).await.unwrap();
+        DISPLAYED.store(false, Ordering::Relaxed);
+    }
+}
 
 pub fn is_displayed() -> bool {
     DISPLAYED.load(Ordering::Relaxed)
@@ -15,6 +45,7 @@ pub fn refresh(window: &tauri::WebviewWindow) {
     if INITIALIZED.swap(true, Ordering::Relaxed) && !changed {
         return;
     }
+    if displayed { VISIBLE.notify_waiters(); }
     // Wake an idle worker so it discards queued speculative jobs immediately
     // when hidden, without waiting for another mail request.
     if !displayed {

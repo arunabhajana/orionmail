@@ -12,12 +12,15 @@ pub async fn sync_folder_with_options(
     account: Account,
     folder: MailFolder,
     force_reconcile: bool,
+    history_pass: bool,
 ) -> Result<u32, String> {
     crate::auth::app_lock::require_unlocked(app_handle)?;
-    crate::mail::drafts::kick(app_handle);
-    crate::mail::trash::retry_pending(app_handle, &account).await;
-    crate::mail::message_actions::retry_pending(app_handle, &account).await;
-    crate::mail::tags::outbox::retry_pending(app_handle, &account).await;
+    if !history_pass {
+        crate::mail::drafts::kick(app_handle);
+        crate::mail::trash::retry_pending(app_handle, &account).await;
+        crate::mail::message_actions::retry_pending(app_handle, &account).await;
+        crate::mail::tags::outbox::retry_pending(app_handle, &account).await;
+    }
     // Check global state for tags sync
     let global_state = database::get_global_sync_state(app_handle, &account.id).unwrap_or_default();
     let now = std::time::SystemTime::now()
@@ -25,7 +28,7 @@ pub async fn sync_folder_with_options(
         .unwrap()
         .as_secs() as i64;
 
-    if global_state.last_tag_sync_at.unwrap_or(0) + 60 < now {
+    if force_reconcile || global_state.last_tag_sync_at.unwrap_or(0) + 900 < now {
         log::info!("Refreshing provider tags.");
         if let Err(e) = crate::mail::tags::sync_tags(app_handle, &account).await {
             log::error!("Failed to sync tags: {}", e);
@@ -247,11 +250,11 @@ pub async fn sync_folder_with_options(
                         for msg in messages.iter().filter(|msg| msg.uid > sync_state.last_uid) {
                             notif_batch.push((msg.from.clone(), msg.subject.clone(), msg.uid));
                         }
-                        notifications::show_new_emails(
+                        if !notif_batch.is_empty() { notifications::show_new_emails(
                             &app_handle_clone,
                             &account_id,
                             &notif_batch,
-                        );
+                        ); }
                     }
                 }
 
@@ -263,15 +266,13 @@ pub async fn sync_folder_with_options(
             sync_state.last_synced_at = chrono::Utc::now().timestamp();
             database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
 
-            if matches!(account_clone.provider, crate::auth::account::MailProvider::Google) && num_new == 0 {
+            let now = chrono::Utc::now().timestamp();
+            let maintenance_due = crate::mail::reconciliation::is_due(sync_state.last_full_sync_at, now, force_reconcile);
+            if !has_more && maintenance_due && matches!(account_clone.provider, crate::auth::account::MailProvider::Google) && num_new == 0 {
                 crate::mail::tags::gmail::refresh_cached_memberships(session,&folder_name_clone,&account_id,&app_handle_clone)?;
             }
-            let now = chrono::Utc::now().timestamp();
-            if !has_more && crate::mail::reconciliation::is_due(
-                sync_state.last_full_sync_at,
-                now,
-                force_reconcile,
-            ) {
+            let mut changed = num_new > 0;
+            if !has_more && maintenance_due {
                 let changes = crate::mail::reconciliation::reconcile(
                     &app_handle_clone,
                     &account_id,
@@ -283,9 +284,9 @@ pub async fn sync_folder_with_options(
                 )?;
                 sync_state.last_full_sync_at = now;
                 if changes.updated > 0 || changes.removed > 0 {
+                    changed = true;
                     use tauri::Emitter;
                     let _ = app_handle_clone.emit("mail:updated", &folder_name_clone);
-                    crate::tray_state::refresh_unread_count_from_db(&app_handle_clone);
                 }
             }
 
@@ -301,7 +302,6 @@ pub async fn sync_folder_with_options(
                     None,
                 );
                 crate::tray_state::set_last_sync_time(&app_handle_clone, &account_id);
-                crate::tray_state::refresh_unread_count_from_db(&app_handle_clone);
             }
 
             sync_state.last_synced_at = std::time::SystemTime::now()
@@ -311,7 +311,10 @@ pub async fn sync_folder_with_options(
             sync_state.last_error = None;
             database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
 
-            notifications::schedule_refresh(&app_handle_clone,&account_id);
+            if changed {
+                crate::tray_state::refresh_unread_count_from_db(&app_handle_clone);
+                notifications::schedule_refresh(&app_handle_clone,&account_id);
+            }
             Ok(num_new)
         },
     );
@@ -343,7 +346,7 @@ pub async fn sync_folder_with_options(
     // Quiet syncs must not keep crawling older uncached bodies while the user
     // is idle. The settled viewport already prefetches messages being browsed.
     let preferences = crate::mail_preferences::load(app_handle);
-    if new_messages_count > 0 && crate::window_activity::is_displayed()
+    if !history_pass && new_messages_count > 0 && crate::window_activity::is_displayed()
         && preferences.prefetch_bodies && !preferences.sync_paused
     {
         let cache_app = app_handle.clone();
@@ -468,14 +471,21 @@ pub(crate) fn message_timestamp(date: &str, internal_date: Option<i64>) -> i64 {
 }
 
 const HEADER_BATCH_SIZE: usize = 200;
+const UID_SEARCH_WINDOW: u32 = 8192;
 
 fn pending_uid_criteria(last_uid: u32, end: u32, history: u32) -> Option<String> {
+    let arrival_start = last_uid.saturating_add(1).max(window_start(end));
+    let history_start = window_start(history);
     match (last_uid < end, history > 0) {
-        (true, true) => Some(format!("OR UID {}:{} UID 1:{}", last_uid + 1, end, history)),
-        (true, false) => Some(format!("UID {}:{}", last_uid + 1, end)),
-        (false, true) => Some(format!("UID 1:{history}")),
+        (true, true) => Some(format!("OR UID {arrival_start}:{end} UID {history_start}:{history}")),
+        (true, false) => Some(format!("UID {arrival_start}:{end}")),
+        (false, true) => Some(format!("UID {history_start}:{history}")),
         (false, false) => None,
     }
+}
+
+fn window_start(end: u32) -> u32 {
+    end.saturating_sub(UID_SEARCH_WINDOW - 1).max(1)
 }
 
 struct HistoryBatch {
@@ -496,7 +506,14 @@ fn history_batch<T: std::io::Read + std::io::Write>(
     pending.truncate(HEADER_BATCH_SIZE);
     let next_history = if has_more {
         pending.last().copied().unwrap_or(1).saturating_sub(1)
-    } else { 0 };
+    } else {
+        // Empty UID windows still advance. If arrivals exceeded the window,
+        // their older portion becomes history rather than being skipped.
+        let older_arrivals = if window_start(end) > last_uid.saturating_add(1) {
+            window_start(end) - 1
+        } else { 0 };
+        window_start(history).saturating_sub(1).max(older_arrivals)
+    };
     Ok(HistoryBatch { uids: pending, next_history })
 }
 
@@ -551,6 +568,19 @@ mod tests {
         let mut failed = session("a1 OK login\r\na2 NO disconnected\r\n");
         assert!(history_batch(&mut failed, 500, 700, 200).is_err());
         assert_eq!(pending_uid_criteria(500, 500, 200).as_deref(), Some("UID 1:200"));
+    }
+
+    #[test]
+    fn bounded_search_preserves_unsearched_history_and_large_arrival_gaps() {
+        assert_eq!(pending_uid_criteria(100_000, 100_000, 50_000).unwrap(), "UID 41809:50000");
+        let mut empty_window = session("a1 OK login\r\n* SEARCH\r\na2 OK search\r\n");
+        let batch = history_batch(&mut empty_window, 100_000, 100_000, 50_000).unwrap();
+        assert!(batch.uids.is_empty());
+        assert_eq!(batch.next_history, 41_808); // Empty window is not end-of-history.
+        let mut arrivals = session("a1 OK login\r\n* SEARCH 99999 100000\r\na2 OK search\r\n");
+        let batch = history_batch(&mut arrivals, 10, 100_000, 0).unwrap();
+        assert_eq!(batch.uids, vec![100_000, 99_999]);
+        assert_eq!(batch.next_history, 91_808); // Older arrivals remain discoverable.
     }
 
     #[test]

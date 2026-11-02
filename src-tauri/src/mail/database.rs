@@ -250,6 +250,7 @@ pub fn get_db_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
 
 pub(crate) fn open_connection(app_handle: &AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(get_db_path(app_handle)?).map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(|e| e.to_string())?;
     conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
     Ok(conn)
 }
@@ -392,6 +393,8 @@ mod reconciliation_identity_tests {
 
 pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     let mut conn = open_connection(app_handle)?;
+    // Readers can browse cached mail while the single sync writer commits.
+    conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
     conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
     // Legacy message rows have no trustworthy owner. Keep them in an isolated
     // migration scope instead of assigning them to whichever account is active
@@ -823,7 +826,10 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, account_id: &str, messa
     }
 
     let mut conn = open_connection(app_handle)?;
+    upsert_message_headers(&mut conn, account_id, messages)
+}
 
+fn upsert_message_headers(conn: &mut Connection, account_id: &str, messages: &[MessageHeader]) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
         let mut stmt = tx.prepare(
@@ -836,8 +842,16 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, account_id: &str, messa
                 date = excluded.date,
                 seen = excluded.seen,
                 flagged = excluded.flagged,
-                snippet = excluded.snippet,
-                message_id = excluded.message_id"
+                snippet = CASE WHEN messages.body_fetched=1 THEN messages.snippet ELSE excluded.snippet END,
+                message_id = excluded.message_id
+             WHERE messages.subject IS NOT excluded.subject
+                OR messages.sender IS NOT excluded.sender
+                OR messages.recipient IS NOT excluded.recipient
+                OR messages.date IS NOT excluded.date
+                OR messages.seen IS NOT excluded.seen
+                OR messages.flagged IS NOT excluded.flagged
+                OR (messages.body_fetched<>1 AND messages.snippet IS NOT excluded.snippet)
+                OR messages.message_id IS NOT excluded.message_id"
         ).map_err(|e| e.to_string())?;
 
         for msg in messages {
@@ -860,6 +874,35 @@ pub fn insert_or_update_messages(app_handle: &AppHandle, account_id: &str, messa
     tx.commit().map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod header_write_tests {
+    use super::*;
+
+    #[test]
+    fn replayed_headers_do_not_write_and_flag_updates_keep_cached_bodies() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE messages(account_id TEXT, folder TEXT, uid INTEGER, uid_validity INTEGER, subject TEXT, sender TEXT, recipient TEXT, date INTEGER, seen INTEGER, flagged INTEGER, snippet TEXT, message_id TEXT, body_fetched INTEGER DEFAULT 0, body TEXT, PRIMARY KEY(account_id,folder,uid));").unwrap();
+        let messages: Vec<_> = (1..=200).map(|uid| MessageHeader {
+            folder: "inbox".into(), uid, uid_validity: 9,
+            subject: "Subject".into(), from: "test@example.com".into(),
+            date: 100, seen: false, flagged: false, snippet: None,
+            has_attachments: false, thread_id: None, to: None,
+            message_id: Some(format!("<{uid}@example.com>")), tags: vec![],
+        }).collect();
+        upsert_message_headers(&mut conn, "a", &messages).unwrap();
+        conn.execute("UPDATE messages SET body='cached body',body_fetched=1,snippet='body preview' WHERE uid=1", []).unwrap();
+        let before = conn.total_changes();
+        for _ in 0..50 { upsert_message_headers(&mut conn, "a", &messages).unwrap(); }
+        assert_eq!(conn.total_changes() - before, 0); // 10,000 redundant row writes avoided.
+        let mut changed = messages[0].clone();
+        changed.flagged = true;
+        upsert_message_headers(&mut conn, "a", &[changed]).unwrap();
+        assert_eq!(conn.total_changes() - before, 1);
+        let row: (String, String, bool) = conn.query_row("SELECT body,snippet,flagged FROM messages WHERE uid=1", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(row, ("cached body".into(), "body preview".into(), true));
+    }
 }
 
 fn populate_message_tags(conn: &Connection, account_id: &str, messages: &mut [MessageHeader]) {

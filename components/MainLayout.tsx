@@ -556,6 +556,7 @@ export default function MainLayout() {
             }
 
             const existingEmails = emailsRef.current;
+            if (existingEmails.length <= 50) setHasMore(cached.length === 50);
             if (existingEmails.length === 0) {
                 await fetchCache(folderToFetch);
                 return;
@@ -873,6 +874,28 @@ export default function MainLayout() {
         let unlistenError: (() => void) | undefined;
         let unlistenReconciled: (() => void) | undefined;
         let unlistenConflict: (() => void) | undefined;
+        let disposed = false;
+        let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+        let refreshing = false;
+        let refreshAgain = false;
+        const scheduleMailRefresh = () => {
+            if (disposed) return;
+            if (refreshing) { refreshAgain = true; return; }
+            if (refreshTimer) return;
+            refreshTimer = setTimeout(async () => {
+                refreshTimer = undefined;
+                if (disposed) return;
+                refreshing = true;
+                try {
+                    const folder = currentFolderRef.current;
+                    if (emailsRef.current.length === 0) await fetchCache(folder);
+                    else await refreshNewEmails(folder);
+                } finally {
+                    refreshing = false;
+                    if (refreshAgain) { refreshAgain = false; scheduleMailRefresh(); }
+                }
+            }, 150);
+        };
 
         const setupListener = async () => {
             unlistenReconciled = await listen<{ account_id: string; folder: string; updated_flags: { uid: number; seen: boolean; flagged: boolean }[]; removed_uids: number[] }>('mail:reconciled', event => {
@@ -896,7 +919,7 @@ export default function MainLayout() {
                 if (event.payload.account_id !== activeAccountRef.current) return;
                 toast.error('A queued message action needs attention', { description: event.payload.error });
             });
-            unlistenUpdated = await listen<string>('mail:updated', async (event) => {
+            unlistenUpdated = await listen<string>('mail:updated', (event) => {
                 const syncedFolder = event.payload;
                 const activeFolder = currentFolderRef.current;
 
@@ -906,11 +929,7 @@ export default function MainLayout() {
 
                 if (!isRelevant) return;
 
-                if (emailsRef.current.length === 0) {
-                    await fetchCache(activeFolder);
-                } else {
-                    await refreshNewEmails(activeFolder);
-                }
+                scheduleMailRefresh();
             });
 
             unlistenStarted = await listen<string>('mail:sync_started', (event) => {
@@ -923,16 +942,15 @@ export default function MainLayout() {
                 });
             });
 
-            unlistenFinished = await listen<string>('mail:sync_finished', async (event) => {
+            unlistenFinished = await listen<string>('mail:sync_finished', (event) => {
                 setSyncingFolders(prev => {
                     const next = new Set(prev);
                     next.delete(event.payload);
                     return next;
                 });
                 
-                if (event.payload === currentFolderRef.current) {
-                    await fetchCache(event.payload);
-                }
+                // Only mail:updated reloads rows. A completed no-op sync must
+                // not query the list/counts again or reset a paginated view.
             });
             
             unlistenError = await listen<{ folder: string; error: string }>('mail:sync_error', (event) => {
@@ -955,6 +973,8 @@ export default function MainLayout() {
 
         return () => {
             if (unlistenUpdated) unlistenUpdated();
+            disposed = true;
+            if (refreshTimer) clearTimeout(refreshTimer);
             if (unlistenStarted) unlistenStarted();
             if (unlistenFinished) unlistenFinished();
             if (unlistenError) unlistenError();

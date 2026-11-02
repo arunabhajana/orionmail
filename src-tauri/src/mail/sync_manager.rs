@@ -4,11 +4,13 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
+use std::{sync::Arc, time::Duration};
 
 #[derive(Default)]
 struct Request {
     force: bool,
     dirty: bool,
+    wake: Arc<tokio::sync::Notify>,
 }
 static SYNC_QUEUE: Lazy<Mutex<HashMap<(String, MailFolder), Request>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -30,11 +32,13 @@ pub async fn enqueue_sync_with_force(
 ) {
     if !force && crate::mail_preferences::load(&app).sync_paused { return; }
     let key = (account.id.clone(), folder.clone());
+    let wake = Arc::new(tokio::sync::Notify::new());
     {
         let mut queue = SYNC_QUEUE.lock().await;
         if let Some(request) = queue.get_mut(&key) {
             request.dirty = true;
             request.force |= force;
+            request.wake.notify_one();
             return;
         }
         queue.insert(
@@ -42,21 +46,40 @@ pub async fn enqueue_sync_with_force(
             Request {
                 force,
                 dirty: false,
+                wake: wake.clone(),
             },
         );
     }
     tokio::spawn(async move {
         let mut follow_up = false;
+        let mut pass_duration = Duration::ZERO;
         loop {
+            // Backfill has no timer while hidden. New mail/manual requests can
+            // wake one pass, and showing the window resumes ordinary catch-up.
+            if follow_up {
+                tokio::select! {
+                    _ = wake.notified() => {},
+                    _ = async {
+                        crate::window_activity::wait_until_displayed().await;
+                        tokio::time::sleep(history_delay(pass_duration)).await;
+                    } => {},
+                    _ = crate::mail::shutdown::APP_TOKEN.cancelled() => {
+                        SYNC_QUEUE.lock().await.remove(&key);
+                        return;
+                    }
+                }
+            }
             let mut continue_history = false;
             let guard = SYNC_LOCK.lock().await;
-            let force = {
+            let (force, history_only) = {
                 let mut queue = SYNC_QUEUE.lock().await;
                 let Some(request) = queue.get_mut(&key) else {
                     return;
                 };
+                let force = std::mem::take(&mut request.force);
+                let history_only = follow_up && !force && !request.dirty;
                 request.dirty = false;
-                std::mem::take(&mut request.force)
+                (force, history_only)
             };
             if (!force && crate::mail_preferences::load(&app).sync_paused) || crate::auth::app_lock::require_unlocked(&app).is_err() {
                 SYNC_QUEUE.lock().await.remove(&key);
@@ -84,16 +107,20 @@ pub async fn enqueue_sync_with_force(
                 force || follow_up,
             ) {
                 let _ = app.emit("mail:sync_started", folder.to_string());
+                let started = std::time::Instant::now();
                 let result =
                     std::panic::AssertUnwindSafe(crate::mail::sync::sync_folder_with_options(
                         &app,
                         account.clone(),
                         folder.clone(),
                         force,
+                        history_only,
                     ))
                     .catch_unwind()
                     .await
                     .unwrap_or_else(|_| Err("Unexpected sync failure; please retry".into()));
+                pass_duration = started.elapsed();
+                log::debug!("[sync] folder={} pass_ms={} success={}", folder, pass_duration.as_millis(), result.is_ok());
                 if result.is_ok() {
                     continue_history = crate::mail::database::get_folder_sync_state(
                         &app, &account.id, &folder.to_string(),
@@ -132,6 +159,10 @@ pub async fn enqueue_sync_with_force(
     });
 }
 
+fn history_delay(previous_pass: Duration) -> Duration {
+    (previous_pass / 4).clamp(Duration::from_millis(250), Duration::from_secs(2))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +172,11 @@ mod tests {
         assert!(!should_skip_for_interval(5, 30, false, true));
         assert!(should_skip_for_interval(5, 30, false, false));
         assert!(!should_skip_for_interval(30, 30, false, false));
+    }
+    #[test]
+    fn backfill_pacing_is_bounded_for_fast_and_slow_passes() {
+        assert_eq!(history_delay(Duration::ZERO), Duration::from_millis(250));
+        assert_eq!(history_delay(Duration::from_secs(4)), Duration::from_secs(1));
+        assert_eq!(history_delay(Duration::from_secs(120)), Duration::from_secs(2));
     }
 }
