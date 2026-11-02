@@ -36,10 +36,12 @@ fn minutes(value: &str) -> Option<u32> {
 }
 impl MailPreferences {
     pub fn notifications_allowed(&self) -> bool {
+        let now = chrono::Local::now();
+        self.notifications_allowed_at(now.hour() * 60 + now.minute())
+    }
+    fn notifications_allowed_at(&self, current: u32) -> bool {
         if !self.desktop_notifications || self.dnd_enabled { return false; }
         if !self.quiet_hours { return true; }
-        let now = chrono::Local::now();
-        let current = now.hour() * 60 + now.minute();
         let (Some(start), Some(end)) = (minutes(&self.quiet_start), minutes(&self.quiet_end)) else { return false; };
         let quiet = if start < end { current >= start && current < end } else { current >= start || current < end };
         !quiet
@@ -99,6 +101,16 @@ pub fn get_download_folder(app_handle:AppHandle)->Result<String,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn notification_policy_handles_midnight_boundaries_and_manual_override(){
+        let mut prefs=MailPreferences::default();prefs.quiet_hours=true;
+        assert!(!prefs.notifications_allowed_at(22*60));assert!(!prefs.notifications_allowed_at(0));
+        assert!(!prefs.notifications_allowed_at(8*60-1));assert!(prefs.notifications_allowed_at(8*60));
+        prefs.quiet_start="09:00".into();prefs.quiet_end="17:00".into();
+        assert!(prefs.notifications_allowed_at(8*60));assert!(!prefs.notifications_allowed_at(9*60));assert!(prefs.notifications_allowed_at(17*60));
+        prefs.quiet_end=prefs.quiet_start.clone();assert!(!prefs.notifications_allowed_at(12*60));
+        prefs.quiet_hours=false;prefs.dnd_enabled=true;assert!(!prefs.notifications_allowed_at(12*60));
+        prefs.dnd_enabled=false;prefs.desktop_notifications=false;assert!(!prefs.notifications_allowed_at(12*60));
+    }
     #[test]fn legacy_preferences_keep_values_and_gain_cache_defaults(){
         let prefs:MailPreferences=serde_json::from_str(r#"{"desktopNotifications":false,"pollInterval":"300"}"#).unwrap();
         assert!(!prefs.desktop_notifications);assert_eq!(prefs.poll_interval,"300");assert_eq!(prefs.cache_retention,"30");assert!(prefs.taskbar_badge);assert!(prefs.download_folder.is_empty());assert!(prefs.validate().is_ok());

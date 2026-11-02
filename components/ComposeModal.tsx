@@ -26,7 +26,8 @@ import RichTextEditor, {
 import type { Editor } from "@tiptap/core";
 import DOMPurify from "isomorphic-dompurify";
 import { useAppPreferences } from "./AppPreferencesContext";
-import { parseAddressList, plainTextHtml } from "@/lib/app-preferences";
+import { parseAddressList, signatureHtml } from "@/lib/app-preferences";
+import { SignaturePanel } from './compose/SignaturePanel';
 import { ComposeToolbar } from "./compose/ComposeToolbar";
 import { useAuth } from "./AuthContext";
 import { confirm } from "@tauri-apps/plugin-dialog";
@@ -236,6 +237,7 @@ export type ComposeStatus = "draft" | "sending" | "sent" | "failed";
 
 export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSendFailure, windowRef, initialDraft }: ComposeModalProps) {
   const { preferences } = useAppPreferences();
+  const [showSignature, setShowSignature] = useState(false);
   const { user } = useAuth();
   const titleId = useId();
   const contactsId = useId();
@@ -525,7 +527,10 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
 
   const handleEditorReady = useCallback((e: Editor) => {
     editorRef.current = e;
-    if (!initialDraft && preferences.signature.trim() && e.isEmpty) e.commands.setContent(`<p></p><p>—<br>${plainTextHtml(preferences.signature)}</p>`);
+    if (!initialDraft && preferences.signature.trim() && e.isEmpty) {
+      e.commands.setContent(`<p></p>${signatureHtml(preferences.signature)}`);
+      e.commands.setTextSelection(1);
+    }
     setTick((t) => t + 1);
 
     // Subscribe to selection updates so toolbar stays live
@@ -1030,6 +1035,13 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
           {/* ---------------------------------------------------------------- */}
           {/* Rich Text Editor Area */}
           {/* ---------------------------------------------------------------- */}
+          {showSignature && <SignaturePanel disabled={editingDisabled} onClose={() => setShowSignature(false)} onInsert={text => {
+            const editor = editorRef.current;
+            if (!editor || editingDisabled) return;
+            if (editor.getText().trimEnd().endsWith(text.trim())) { showToast('This signature is already at the end of your message.'); return; }
+            editor.chain().focus('end').insertContent(`<p></p>${signatureHtml(text)}`).run();
+            setShowSignature(false);
+          }} />}
           <div className="compose-writing-area flex-1 overflow-y-auto px-6 py-5 flex flex-col min-h-0 relative" style={{ "--compose-font": preferences.composeFont === "serif" ? "Georgia, serif" : preferences.composeFont === "monospace" ? "Courier New, monospace" : "Arial, sans-serif" } as React.CSSProperties}>
             <RichTextEditor
               value={restoreHtml}
@@ -1073,6 +1085,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
             <ComposeToolbar editor={editorRef.current} onLink={() => openLinkDialog()} disabled={editingDisabled} />
             <div className="compose-action-row">
               <button type="button" onClick={handleAttachFiles} disabled={editingDisabled || isAttaching} className="compose-attach-button" title="Attach files"><Paperclip className={cn('size-4', isAttaching && 'animate-pulse')} /><span className="hidden sm:inline">{isAttaching ? 'Preparing…' : 'Attach files'}</span></button>
+              <button type="button" onClick={() => setShowSignature(value => !value)} disabled={editingDisabled} aria-label="Edit or insert signature" aria-expanded={showSignature} title="Signature" className={cn('compose-attach-button', showSignature && 'bg-primary/10 text-primary')}><Pencil className="size-4" /><span className="hidden md:inline">Signature</span></button>
               <div className="min-w-0 flex-1"><p id="compose-send-help" aria-live="polite" className={cn('truncate text-[11px]', invalidRecipient || copiesInvalid ? 'text-red-500' : 'text-muted-foreground')} title={sendDisabledReason || formatCharCount(editorValue.characterCount)}>{sendDisabledReason || (draft.saving ? 'Saving…' : draft.state === 'new' ? 'Saves as you write' : draftStatus(draft.state))}</p></div>
               <button type="button" onClick={() => { void discardMessage(); }} disabled={editingDisabled} aria-label="Discard draft" title="Discard draft" className="compose-tool hover:!bg-red-500/10 hover:!text-red-500"><Trash2 className="size-4" /></button>
               <button type="button" onClick={() => { void handleSend(); }} disabled={isSendDisabled} aria-label="Send message" aria-describedby="compose-send-help" title={sendDisabledReason || 'Send message (Ctrl+Enter)'} className="compose-send-button">{isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-3.5" />}<span>{isSending ? 'Sending…' : composeStatus === 'sent' ? 'Sent' : 'Send'}</span></button>

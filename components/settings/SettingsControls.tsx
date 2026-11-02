@@ -11,7 +11,7 @@ export function SettingRow({ id, title, description, children, unavailable = fal
 export function SettingToggle({ label, checked, onChange, disabled = false }: { label: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
     return <button type="button" role="switch" aria-label={label} aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} className={`relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-40 disabled:cursor-not-allowed ${checked ? "bg-primary" : "bg-black/15 dark:bg-white/20"}`}><span className={`absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-4" : "translate-x-0"}`} /></button>;
 }
-export function SettingSelect({ label, value, options, onChange, disabled = false }: { label: string; value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void; disabled?: boolean }) {
+export function SettingSelect({ label, value, options, onChange, disabled = false, compact = false }: { label: string; value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void; disabled?: boolean; compact?: boolean }) {
     const id = useId();
     const trigger = useRef<HTMLButtonElement>(null);
     const menu = useRef<HTMLDivElement>(null);
@@ -25,7 +25,7 @@ export function SettingSelect({ label, value, options, onChange, disabled = fals
         const below = window.innerHeight - rect.bottom - 12;
         const above = rect.top - 12;
         const up = below < Math.min(240, options.length * 36 + 8) && above > below;
-        const width = Math.min(Math.max(rect.width, 208), window.innerWidth - 16);
+        const width = Math.min(Math.max(rect.width, compact ? 100 : 208), window.innerWidth - 16);
         setActive(last ? options.length - 1 : Math.max(0, options.findIndex(([key]) => key === value)));
         setPosition({ position: 'fixed', width, left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
             ...(up ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }), maxHeight: Math.max(40, Math.min(280, up ? above : below)) });
@@ -50,7 +50,7 @@ export function SettingSelect({ label, value, options, onChange, disabled = fals
     return <>
         <button ref={trigger} type="button" aria-label={label} aria-haspopup="listbox" aria-expanded={!!position} aria-controls={position ? id : undefined} disabled={disabled}
             onClick={() => position ? close() : show()} onKeyDown={event => { if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { event.preventDefault(); show(event.key === 'End'); } }}
-            className="settings-input inline-flex max-w-full min-w-40 items-center justify-between gap-3 text-left text-xs hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40 disabled:cursor-not-allowed">
+            className={`settings-input inline-flex max-w-full ${compact ? 'min-w-16' : 'min-w-40'} items-center justify-between gap-3 text-left text-xs hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40 disabled:cursor-not-allowed`}>
             <span className="truncate">{options.find(([key]) => key === value)?.[1] || value}</span><ChevronDown size={14} className={`shrink-0 text-muted-foreground transition-transform ${position ? 'rotate-180' : ''}`} />
         </button>
         {position && createPortal(<div ref={menu} id={id} role="listbox" aria-label={label} tabIndex={-1} aria-activedescendant={`${id}-${active}`} style={position}
@@ -75,5 +75,16 @@ export function SettingSelect({ label, value, options, onChange, disabled = fals
             </div>)}
         </div>, document.body)}
     </>;
+}
+const hours = Array.from({ length: 24 }, (_, i) => { const n = String(i).padStart(2, '0'); return [n, n] as const; });
+const minutes = Array.from({ length: 60 }, (_, i) => { const n = String(i).padStart(2, '0'); return [n, n] as const; });
+export function SettingTimePicker({ label, value, onChange, disabled = false }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
+    const [hour, minute] = value.split(':');
+    return <div role="group" aria-label={label} className="flex items-center gap-2">
+        <SettingSelect compact label={`${label}, hour`} value={hour} options={hours} disabled={disabled} onChange={next => onChange(`${next}:${minute}`)} />
+        <span aria-hidden="true" className="text-muted-foreground">:</span>
+        <SettingSelect compact label={`${label}, minute`} value={minute} options={minutes} disabled={disabled} onChange={next => onChange(`${hour}:${next}`)} />
+        <span className="text-[10px] text-muted-foreground">24-hour</span>
+    </div>;
 }
 export const settingButton = "inline-flex items-center justify-center gap-2 rounded-xl border border-black/[0.08] dark:border-white/10 bg-white/40 dark:bg-white/5 px-3.5 py-2 text-xs font-medium hover:bg-white/80 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed";

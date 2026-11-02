@@ -16,6 +16,7 @@ import { useBackgroundTasks } from "@/components/BackgroundTasksContext";
 import { useAuth } from "@/components/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import LoadingOrion from "./LoadingOrion";
+import { useQuietHours } from '@/hooks/useQuietHours';
 
 // --- Types & Interfaces ---
 
@@ -92,18 +93,21 @@ function BackgroundTaskIndicator() {
  */
 function DndToggle() {
     const { preferences, updatePreferences } = useAppPreferences();
+    const scheduled = useQuietHours();
+    const silenced = preferences.dndEnabled || scheduled;
+    const description = preferences.dndEnabled ? 'Do not disturb is on. Click to turn off.' : scheduled ? `Scheduled quiet hours until ${preferences.quietEnd}. Click to also enable manual Do not disturb.` : 'Turn on Do not disturb';
     return (
         <button
             onClick={() => { void updatePreferences({ dndEnabled: !preferences.dndEnabled }).catch(() => toast.error("Could not update Do not disturb.")); }}
             className={cn(
                 "p-1.5 rounded-md transition-colors relative mr-1",
                 "hover:bg-black/5 dark:hover:bg-white/10 text-foreground/70 dark:text-white/70",
-                preferences.dndEnabled && "text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-400/10"
+                silenced && "text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-400/10"
             )}
-            title={preferences.dndEnabled ? "Do Not Disturb: On" : "Do Not Disturb: Off"}
+            title={description} aria-label={description} aria-pressed={preferences.dndEnabled}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-            {preferences.dndEnabled ? <BellOff size={14} strokeWidth={2} /> : <Bell size={14} strokeWidth={2} />}
+            {silenced ? <BellOff size={14} strokeWidth={2} /> : <Bell size={14} strokeWidth={2} />}
         </button>
     );
 }

@@ -3,6 +3,15 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { SettingGroup, SettingRow, settingButton } from "./SettingsControls";
+import { useAppPreferences } from '@/components/AppPreferencesContext';
+import { useQuietHours } from '@/hooks/useQuietHours';
+
+export function NotificationFocusStatus() {
+    const { preferences } = useAppPreferences();
+    const scheduled = useQuietHours();
+    const status = !preferences.desktopNotifications ? 'Desktop notifications are off.' : preferences.dndEnabled ? 'Do not disturb is on until you turn it off.' : scheduled ? `Quiet hours are active until ${preferences.quietEnd} (device local time).` : 'New mail alerts are enabled.';
+    return <div role="status" className="rounded-xl border border-primary/15 bg-primary/[0.04] px-5 py-3 text-xs leading-relaxed text-muted-foreground"><span className="font-medium text-foreground">Current status: </span>{status}<p className="mt-1">Sync and unread counts continue while alerts are silenced. Changes below take effect when saved.</p></div>;
+}
 
 export function NotificationSystemControls() {
     const [busy, setBusy] = useState(false);

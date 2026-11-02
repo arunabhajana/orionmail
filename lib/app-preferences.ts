@@ -43,3 +43,13 @@ export function parseAddressList(value: string): string[] {
 export function plainTextHtml(text: string): string {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "<br>");
 }
+export function signatureHtml(signature: string): string {
+    return signature.trim() ? `<p>—<br>${plainTextHtml(signature.trim())}</p>` : '';
+}
+export function quietHoursActive(preferences: Pick<AppPreferences, 'quietHours' | 'quietStart' | 'quietEnd'>, now = new Date()): boolean {
+    if (!preferences.quietHours) return false;
+    const minutes = (time: string) => { const [h, m] = time.split(':').map(Number); return h * 60 + m; };
+    const start = minutes(preferences.quietStart), end = minutes(preferences.quietEnd);
+    const current = now.getHours() * 60 + now.getMinutes();
+    return start < end ? current >= start && current < end : current >= start || current < end;
+}

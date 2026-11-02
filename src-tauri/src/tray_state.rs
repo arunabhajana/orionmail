@@ -148,10 +148,16 @@ pub fn spawn_tray_update_loop(app: AppHandle) {
     
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
+        let mut notifications_allowed = crate::mail_preferences::load(&app).notifications_allowed();
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     update_tray_now(&app);
+                    let allowed = crate::mail_preferences::load(&app).notifications_allowed();
+                    if allowed != notifications_allowed {
+                        notifications_allowed = allowed;
+                        crate::mail::notifications::refresh_policy(&app);
+                    }
                 }
                 _ = crate::mail::shutdown::TRAY_TOKEN.cancelled() => {
                     break;

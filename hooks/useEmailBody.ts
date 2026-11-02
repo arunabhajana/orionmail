@@ -44,6 +44,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
 
     const retryRef = useRef<() => Promise<void>>(async () => {});
     const loadedKey = useRef<string | null>(null);
+    const [readyBody, setReadyBody] = useState<{ key: string } | null>(null);
     const retry = useCallback(() => retryRef.current(), []);
 
     useEffect(() => {
@@ -66,6 +67,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
                 const detail = await invoke<MessageDetail>('get_message_body', { folder: dbFolder, uid: emailUid, localId, accountId: user.id, expectedUidValidity: uidValidity });
                 if (!active) return;
                 loadedKey.current = key;
+                setReadyBody({ key });
                 setBodyContent(detail.body || "<p>Message has no content.</p>");
                 setAttachments(detail.attachments || []);
                 setExtractedData(detail.extractedData || null);
@@ -127,13 +129,25 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     const unreadRef = useRef(emailUnread);
     readCallback.current = onMarkAsRead;
     unreadRef.current = emailUnread;
+    const readAttempt = useRef<string | null>(null);
+    useEffect(() => { readAttempt.current = null; }, [emailId, emailUid, folder, user?.id, uidValidity]);
     // A timer belongs to one opening; rerenders and an explicit unread action do not reopen it.
     useEffect(() => {
-        if (!emailId || !unreadRef.current || preferences.markRead === 'manual') return;
+        const key = `${user?.id}:${folder}:${emailUid}:${uidValidity}:${emailId}`;
+        if (!emailId || readyBody?.key !== key || loadedKey.current !== key || isLoadingBody || error || !unreadRef.current || preferences.markRead === 'manual' || readAttempt.current === key) return;
         const delay = preferences.markRead === 'immediate' ? 0 : Number(preferences.markRead) * 1000;
-        const timer = setTimeout(() => { if (unreadRef.current) readCallback.current?.(emailId); }, delay);
-        return () => clearTimeout(timer);
-    }, [emailId, emailUid, folder, user?.id, uidValidity, preferences.markRead]);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const schedule = () => {
+            clearTimeout(timer);
+            if (document.visibilityState !== 'visible' || !document.hasFocus() || readAttempt.current === key) return;
+            timer = setTimeout(() => { if (unreadRef.current) { readAttempt.current = key; readCallback.current?.(emailId); } }, delay);
+        };
+        schedule();
+        document.addEventListener('visibilitychange', schedule);
+        window.addEventListener('focus', schedule);
+        window.addEventListener('blur', schedule);
+        return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', schedule); window.removeEventListener('focus', schedule); window.removeEventListener('blur', schedule); };
+    }, [emailId, emailUid, folder, user?.id, uidValidity, preferences.markRead, readyBody, isLoadingBody, error]);
 
     // Handle iframe messages sent from the injected srcDoc script
     useEffect(() => {

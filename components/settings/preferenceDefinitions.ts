@@ -6,7 +6,7 @@ const later = (id: string, title: string, description: string): PreferenceDefini
 export const preferenceGroups: Record<string, PreferenceGroup[]> = {
     compose: [
         { title: "Your writing defaults", items: [
-            item("signature", "Email signature", "Plain text, added to new messages. Leave empty for no signature.", "textarea"),
+            item("signature", "Email signature", "Plain text, added to new messages. The Signature button in Compose lets you edit or insert it into an existing draft. Leave empty for no default signature.", "textarea"),
             item("defaultCc", "Default Cc", "Visible to all recipients. Separate addresses with commas.", "text"),
             item("defaultBcc", "Default Bcc", "Copied privately on every new message. Review before sending.", "text"),
             item("composeFont", "Message font", "Used in the composer and outgoing HTML email.", "select", [["system", "Sans serif"], ["serif", "Serif"], ["monospace", "Monospace"]]),
@@ -19,7 +19,7 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
     reading: [
         { title: "Reading comfort", items: [
             item("readingFontSize", "Message text size", "Default text size for messages. Sender formatting may vary.", "select", [["14", "Small · 14 px"], ["16", "Default · 16 px"], ["18", "Large · 18 px"], ["20", "Extra large · 20 px"]]),
-            item("markRead", "Mark messages as read", "Manual mode keeps mail unread until you mark it yourself.", "select", [["immediate", "When opened"], ["3", "After 3 seconds"], ["5", "After 5 seconds"], ["manual", "Manually"]]),
+            item("markRead", "Mark messages as read", "The timer starts when the message loads and pauses while the app is in the background. Manual mode keeps mail unread until you mark it yourself.", "select", [["immediate", "When opened"], ["3", "After 3 seconds"], ["5", "After 5 seconds"], ["manual", "Manually"]]),
             item("autoSelectNext", "Select next after deleting", "Open the next message in the current list after a confirmed deletion."),
         ] },
         { title: "Mailbox layout", items: [
@@ -46,7 +46,7 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
             later("tone", "Custom tone and volume", "Use Windows notification settings for sound customization."),
         ] },
         { title: "Time to focus", items: [
-            item("dndEnabled", "Do not disturb", "Silence new mail alerts until you turn this off."),
+            item("dndEnabled", "Do not disturb", "Silence mail alerts and sounds until you turn this off. The bell in the titlebar controls the same setting. Scheduled quiet hours still apply when this is off."),
             item("quietHours", "Scheduled quiet hours", "Silence alerts during a daily window, in your device’s local time."),
             item("quietStart", "Quiet hours begin", "Start of your daily quiet window.", "time"),
             item("quietEnd", "Quiet hours end", "End of your daily quiet window. Equal times silence alerts all day.", "time"),
