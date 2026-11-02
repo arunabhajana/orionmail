@@ -14,6 +14,8 @@ pub struct FolderSyncState {
     pub last_full_sync_at: i64,
     pub last_error: Option<String>,
     pub uid_validity: Option<u32>,
+    // None initializes/repairs history; zero means history is complete.
+    pub history_before_uid: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, Default)]
@@ -315,6 +317,9 @@ mod account_scope_tests {
 
 fn migrate_reconciliation_identity(conn: &Connection) -> Result<(), String> {
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    if !table_columns(&tx, "folder_sync_state")?.iter().any(|(name, _)| name == "history_before_uid") {
+        tx.execute("ALTER TABLE folder_sync_state ADD COLUMN history_before_uid INTEGER", ()).map_err(|e| e.to_string())?;
+    }
     if !table_columns(&tx, "folder_sync_state")?.iter().any(|(name, _)| name == "uid_validity") {
         tx.execute("ALTER TABLE folder_sync_state ADD COLUMN uid_validity INTEGER", ()).map_err(|e| e.to_string())?;
         tx.execute_batch("UPDATE folder_sync_state SET uid_validity = (
@@ -368,6 +373,20 @@ mod reconciliation_identity_tests {
         assert!(migrate_reconciliation_identity(&conn).is_err());
         assert!(!table_columns(&conn,"folder_sync_state").unwrap().iter().any(|(name,_)|name=="uid_validity"));
         assert!(!table_columns(&conn,"pending_message_actions").unwrap().iter().any(|(name,_)|name=="uid_validity"));
+        assert!(!table_columns(&conn,"folder_sync_state").unwrap().iter().any(|(name,_)|name=="history_before_uid"));
+    }
+    #[test]
+    fn history_migration_repairs_existing_caches_and_keeps_resume_cursors_on_restart() {
+        let conn = fixture();
+        migrate_reconciliation_identity(&conn).unwrap();
+        let history = |account: &str| conn.query_row("SELECT history_before_uid FROM folder_sync_state WHERE account_id=?1 AND folder='inbox'", [account], |row| row.get::<_, Option<u32>>(0)).unwrap();
+        assert_eq!(history("a"), None); // Existing rows get one header repair pass.
+        conn.execute("UPDATE folder_sync_state SET history_before_uid=100 WHERE account_id='a' AND folder='inbox'", []).unwrap();
+        conn.execute("UPDATE folder_sync_state SET history_before_uid=0 WHERE account_id='b' AND folder='inbox'", []).unwrap();
+        migrate_reconciliation_identity(&conn).unwrap();
+        assert_eq!(history("a"), Some(100));
+        assert_eq!(history("b"), Some(0));
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
     }
 }
 
@@ -765,7 +784,7 @@ pub fn reset_mailbox_epoch(app: &AppHandle, account: &str, folder: &str, mailbox
         WHERE account_id = ?1 AND mailbox = ?2 AND (uid_validity IS NULL OR uid_validity != ?3) AND (last_error IS NULL OR last_error NOT LIKE 'CONFLICT:%')",
         rusqlite::params![account, mailbox, validity]).map_err(|e| e.to_string())?;
     tx.execute("INSERT OR REPLACE INTO mailbox_state (account_id, mailbox, uid_validity) VALUES (?1,?2,?3)", rusqlite::params![account, mailbox, validity]).map_err(|e| e.to_string())?;
-    tx.execute("UPDATE folder_sync_state SET last_uid = 0, last_synced_at = 0, last_full_sync_at = 0, uid_validity = ?3 WHERE account_id = ?1 AND folder = ?2", rusqlite::params![account, folder, validity]).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE folder_sync_state SET last_uid = 0, last_synced_at = 0, last_full_sync_at = 0, history_before_uid = NULL, uid_validity = ?3 WHERE account_id = ?1 AND folder = ?2", rusqlite::params![account, folder, validity]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(conflicts)
 }
@@ -958,7 +977,7 @@ mod tag_view_tests {
 pub fn get_folder_sync_state(app_handle: &AppHandle, account_id: &str, folder: &str) -> Result<Option<FolderSyncState>, String> {
     let conn = open_connection(app_handle)?;
 
-    let mut stmt = conn.prepare("SELECT account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error, uid_validity FROM folder_sync_state WHERE account_id = ?1 AND folder = ?2").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error, uid_validity, history_before_uid FROM folder_sync_state WHERE account_id = ?1 AND folder = ?2").map_err(|e| e.to_string())?;
     let state = stmt.query_row(rusqlite::params![account_id, folder], |row| {
         Ok(FolderSyncState {
             account_id: row.get(0)?,
@@ -969,6 +988,7 @@ pub fn get_folder_sync_state(app_handle: &AppHandle, account_id: &str, folder: &
             last_full_sync_at: row.get(5)?,
             last_error: row.get(6)?,
             uid_validity: row.get(7)?,
+            history_before_uid: row.get(8)?,
         })
     }).optional().map_err(|e| e.to_string())?;
 
@@ -979,7 +999,7 @@ pub fn update_folder_sync_state(app_handle: &AppHandle, state: &FolderSyncState)
     let conn = open_connection(app_handle)?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO folder_sync_state (account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error, uid_validity) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT OR REPLACE INTO folder_sync_state (account_id, folder, last_uid, last_synced_at, sync_in_progress, last_full_sync_at, last_error, uid_validity, history_before_uid) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             state.account_id,
             state.folder,
@@ -988,7 +1008,8 @@ pub fn update_folder_sync_state(app_handle: &AppHandle, state: &FolderSyncState)
             if state.sync_in_progress { 1 } else { 0 },
             state.last_full_sync_at,
             state.last_error,
-            state.uid_validity
+            state.uid_validity,
+            state.history_before_uid
         ],
     ).map_err(|e| e.to_string())?;
 

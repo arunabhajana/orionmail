@@ -7,21 +7,6 @@ use mailparse::parse_mail;
 
 use tauri::AppHandle;
 
-// Re-export the SYNC_LOCK from sync_manager for backwards compatibility with poll/idle
-pub use crate::mail::sync_manager::SYNC_LOCK;
-
-pub async fn sync_inbox(app_handle: &AppHandle, account: Account) -> Result<u32, String> {
-    sync_folder(app_handle, account, MailFolder::Inbox).await
-}
-
-pub async fn sync_folder(
-    app_handle: &AppHandle,
-    account: Account,
-    folder: MailFolder,
-) -> Result<u32, String> {
-    sync_folder_with_options(app_handle, account, folder, false).await
-}
-
 pub async fn sync_folder_with_options(
     app_handle: &AppHandle,
     account: Account,
@@ -41,7 +26,7 @@ pub async fn sync_folder_with_options(
         .as_secs() as i64;
 
     if global_state.last_tag_sync_at.unwrap_or(0) + 60 < now {
-        log::info!("Tags are older than 15 mins, syncing tags via provider.");
+        log::info!("Refreshing provider tags.");
         if let Err(e) = crate::mail::tags::sync_tags(app_handle, &account).await {
             log::error!("Failed to sync tags: {}", e);
         }
@@ -75,12 +60,12 @@ pub async fn sync_folder_with_options(
     let folder_clone = folder.clone();
     let account_clone = account.clone();
     let account_id = account.id.clone();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
 
     let new_messages_count_future = crate::mail::imap_session::execute_with_session(
         &account,
         crate::mail::imap_session::SessionKind::Sync,
         move |session| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
             let imap_mailbox = if folder_clone==MailFolder::Trash {crate::mail::trash::discover(&app_handle_clone,&account_clone,session)?}else{imap_mailbox.clone()};
             // Use the drop guard to automatically clear sync_in_progress if we panic
             let _progress_guard = database::SyncProgressGuard::new(
@@ -103,6 +88,7 @@ pub async fn sync_folder_with_options(
                 last_full_sync_at: 0,
                 last_error: None,
                 uid_validity: None,
+                history_before_uid: None,
             });
 
             let stored_validity =
@@ -157,6 +143,7 @@ pub async fn sync_folder_with_options(
                     let _ = app_handle_clone.emit("mail:action_conflict", serde_json::json!({"account_id":account_id,"folder":folder_name_clone,"error":"Mailbox identity changed. Old queued actions were stopped to protect your mail."}));
                 }
                 sync_state.last_uid = 0;
+                sync_state.history_before_uid = None;
                 sync_state.last_synced_at = 0;
                 sync_state.last_full_sync_at = 0;
                 sync_state.uid_validity = Some(server_validity);
@@ -167,34 +154,14 @@ pub async fn sync_folder_with_options(
             // New-arrival delta and existing-message reconciliation are independent.
             let mut num_new = 0;
             let is_bootstrap = sync_state.last_uid == 0 || sync_state.last_synced_at == 0;
-            if uid_next > sync_state.last_uid.saturating_add(1) {
-                let range = if sync_state.last_uid == 0 {
-                    let end = uid_next.saturating_sub(1);
-                    format!("{}:{}", 1, end)
-                } else {
-                    let end = uid_next.saturating_sub(1);
-                    let start_uid = sync_state.last_uid + 1;
-                    if start_uid > end {
-                        return Ok(0);
-                    }
-                    format!("{}:{}", start_uid, end)
-                };
-
-                log::info!("Fetching interval for {}: {}", folder_name_clone, range);
-
-                // Mailboxes can contain years of mail. Materialize only
-                // UID numbers up front, then fetch/cache at most 200 headers at
-                // a time. Each completed batch advances the resumable cursor.
-                let ranges = {
-                    let mut uids: Vec<_> = session.uid_search(format!("UID {range}"))
-                        .map_err(|e| format!("Mailbox UID search failed: {e}"))?.into_iter().collect();
-                    uids.sort_unstable();
-                    uids.chunks(200).map(|batch| batch.iter().map(u32::to_string).collect::<Vec<_>>().join(",")).collect::<Vec<_>>()
-                };
-                for batch_range in ranges {
-                if std::time::Instant::now() >= deadline {
-                    return Err("Folder history sync paused at its checkpoint. Sync again to continue.".into());
-                }
+            let end_uid = uid_next.saturating_sub(1);
+            let history = sync_state.history_before_uid.unwrap_or(end_uid).min(end_uid);
+            let batch = history_batch(session, sync_state.last_uid, end_uid, history)?;
+            let pending = batch.uids;
+            let has_more = batch.next_history > 0;
+            let next_history = batch.next_history;
+            if !pending.is_empty() {
+                let batch_range = pending.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
                 // A FETCH taken before a move must not commit
                 // after that action and resurrect the source row. Enqueue is
                 // independent of this network lock, so clicks remain local.
@@ -203,22 +170,21 @@ pub async fn sync_folder_with_options(
                 let fetch_results = session
                     .uid_fetch(
                         &batch_range,
-                        "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID)])",
+                        "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO CC REPLY-TO MESSAGE-ID)])",
                     )
                     .map_err(|e| format!("IMAP Fetch Error: {}", e))?;
 
                 let mut messages = Vec::new();
                 let mut raw_headers = Vec::new();
-                let mut max_fetched_uid = sync_state.last_uid;
 
                 for msg in fetch_results.iter() {
+                    if !msg.uid.is_some_and(|uid| pending.contains(&uid)) { continue; }
                     if let Some(header) =
                         parse_header_to_message(msg, server_validity, &folder_name_clone)
                     {
-                        if header.uid > max_fetched_uid {
-                            max_fetched_uid = header.uid;
-                        }
                         messages.push(header);
+                    } else if msg.header().is_some() {
+                        return Err("Could not parse a requested header; checkpoint preserved".into());
                     }
                     if let Some(body) = msg.header() {
                         if let Ok(s) = std::str::from_utf8(body) {
@@ -278,7 +244,7 @@ pub async fn sync_folder_with_options(
                 if batch_count > 0 {
                     if !is_bootstrap && folder_clone == MailFolder::Inbox {
                         let mut notif_batch = Vec::new();
-                        for msg in &messages {
+                        for msg in messages.iter().filter(|msg| msg.uid > sync_state.last_uid) {
                             notif_batch.push((msg.from.clone(), msg.subject.clone(), msg.uid));
                         }
                         notifications::show_new_emails(
@@ -289,22 +255,19 @@ pub async fn sync_folder_with_options(
                     }
                 }
 
-                sync_state.last_uid = max_fetched_uid;
-                database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
-                }
-                // Only skip gaps once every batch completed successfully.
-                sync_state.last_uid = uid_next.saturating_sub(1);
-                // Header history is initialized even if the later full flag
-                // scan needs another pass. Future arrivals remain eligible.
-                sync_state.last_synced_at = chrono::Utc::now().timestamp();
-                database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
             }
+            // Keep an arrival watermark and a separate descending history cursor.
+            // Both advance only after header and label commits succeed.
+            sync_state.last_uid = end_uid;
+            sync_state.history_before_uid = Some(next_history);
+            sync_state.last_synced_at = chrono::Utc::now().timestamp();
+            database::update_folder_sync_state(&app_handle_clone, &sync_state)?;
 
             if matches!(account_clone.provider, crate::auth::account::MailProvider::Google) && num_new == 0 {
                 crate::mail::tags::gmail::refresh_cached_memberships(session,&folder_name_clone,&account_id,&app_handle_clone)?;
             }
             let now = chrono::Utc::now().timestamp();
-            if crate::mail::reconciliation::is_due(
+            if !has_more && crate::mail::reconciliation::is_due(
                 sync_state.last_full_sync_at,
                 now,
                 force_reconcile,
@@ -353,14 +316,9 @@ pub async fn sync_folder_with_options(
         },
     );
 
-    let new_messages_count = match tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        new_messages_count_future,
-    )
-    .await
-    {
-        Ok(Ok(count)) => count,
-        Ok(Err(e)) => {
+    let new_messages_count = match new_messages_count_future.await {
+        Ok(count) => count,
+        Err(e) => {
             // Error handling
             let mut sync_state =
                 database::get_folder_sync_state(&app_handle, &account.id, &folder_name)
@@ -380,7 +338,6 @@ pub async fn sync_folder_with_options(
             }
             return Err(e);
         }
-        Err(_) => return Err("Sync Connection Timeout".to_string()),
     };
 
     // Quiet syncs must not keep crawling older uncached bodies while the user
@@ -462,10 +419,7 @@ pub(crate) fn parse_header_to_message(
         }
     }
 
-    let clean_date = date.trim().replace('\r', "").replace('\n', "");
-    let timestamp = chrono::DateTime::parse_from_rfc2822(&clean_date)
-        .map(|dt| dt.timestamp())
-        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
+    let timestamp = message_timestamp(&date, msg.internal_date().map(|date| date.timestamp()));
 
     let plain_body = parsed.get_body().unwrap_or_default();
 
@@ -503,4 +457,122 @@ pub(crate) fn parse_header_to_message(
         message_id,
         tags: Vec::new(),
     })
+}
+
+// Never turn old mail into new mail because its Date header is malformed.
+pub(crate) fn message_timestamp(date: &str, internal_date: Option<i64>) -> i64 {
+    chrono::DateTime::parse_from_rfc2822(date.trim()).ok().map(|date| date.timestamp())
+        // mailparse returns Ok(0) for some incomplete/invalid inputs.
+        .or_else(|| mailparse::dateparse(date).ok().filter(|date| *date > 0))
+        .or(internal_date).unwrap_or(0)
+}
+
+const HEADER_BATCH_SIZE: usize = 200;
+
+fn pending_uid_criteria(last_uid: u32, end: u32, history: u32) -> Option<String> {
+    match (last_uid < end, history > 0) {
+        (true, true) => Some(format!("OR UID {}:{} UID 1:{}", last_uid + 1, end, history)),
+        (true, false) => Some(format!("UID {}:{}", last_uid + 1, end)),
+        (false, true) => Some(format!("UID 1:{history}")),
+        (false, false) => None,
+    }
+}
+
+struct HistoryBatch {
+    uids: Vec<u32>,
+    next_history: u32,
+}
+
+fn history_batch<T: std::io::Read + std::io::Write>(
+    session: &mut imap::Session<T>, last_uid: u32, end: u32, history: u32,
+) -> Result<HistoryBatch, String> {
+    let mut pending: Vec<u32> = if let Some(criteria) = pending_uid_criteria(last_uid, end, history) {
+        session.uid_search(criteria)
+            .map_err(|e| format!("Mailbox UID search failed: {e}"))?
+            .into_iter().filter(|uid| *uid > 0 && *uid <= end).collect()
+    } else { Vec::new() };
+    pending.sort_unstable_by(|a, b| b.cmp(a));
+    let has_more = pending.len() > HEADER_BATCH_SIZE;
+    pending.truncate(HEADER_BATCH_SIZE);
+    let next_history = if has_more {
+        pending.last().copied().unwrap_or(1).saturating_sub(1)
+    } else { 0 };
+    Ok(HistoryBatch { uids: pending, next_history })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Read, Write};
+
+    struct Wire(Cursor<Vec<u8>>);
+    impl Read for Wire {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> { self.0.read(bytes) }
+    }
+    impl Write for Wire {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { Ok(bytes.len()) }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    fn session(replies: &str) -> imap::Session<Wire> {
+        imap::Client::new(Wire(Cursor::new(replies.as_bytes().to_vec())))
+            .login("test", "test").map_err(|(error, _)| error).unwrap()
+    }
+
+    #[test]
+    fn sparse_history_resumes_newest_first_and_new_arrivals_take_priority() {
+        // Sparse UIDs, as in a mailbox where old mail has been moved/deleted.
+        let all: Vec<u32> = (1..=450).map(|uid| uid * 3).collect();
+        let search = |uids: &[u32]| uids.iter().map(u32::to_string).collect::<Vec<_>>().join(" ");
+        let mut wire = session(&format!(
+            "a1 OK login\r\n* SEARCH {}\r\na2 OK search\r\n* SEARCH {} 2000\r\na3 OK search\r\n* SEARCH {}\r\na4 OK search\r\n",
+            search(&all), search(&all[..250]), search(&all[..51]),
+        ));
+        let first = history_batch(&mut wire, 0, 1350, 1350).unwrap();
+        assert_eq!(first.uids.len(), 200);
+        assert_eq!(first.uids[0], 1350);
+        let second = history_batch(&mut wire, 1350, 2000, first.next_history).unwrap();
+        assert_eq!(second.uids[0], 2000);
+        let third = history_batch(&mut wire, 2000, 2000, second.next_history).unwrap();
+        assert_eq!(third.next_history, 0);
+        let mut fetched = [first.uids, second.uids, third.uids].concat();
+        fetched.sort_unstable();
+        let mut expected = all;
+        expected.push(2000);
+        assert_eq!(fetched, expected); // No skipped or repeated history UIDs.
+    }
+
+    #[test]
+    fn empty_completed_and_failed_searches_preserve_safe_boundaries() {
+        let mut empty = session("a1 OK login\r\n* SEARCH\r\na2 OK search\r\n");
+        assert_eq!(history_batch(&mut empty, 0, 500, 500).unwrap().next_history, 0);
+        let mut completed = session("a1 OK login\r\n");
+        assert!(history_batch(&mut completed, 500, 500, 0).unwrap().uids.is_empty());
+        assert!(history_batch(&mut completed, 0, 0, 0).unwrap().uids.is_empty());
+        let mut failed = session("a1 OK login\r\na2 NO disconnected\r\n");
+        assert!(history_batch(&mut failed, 500, 700, 200).is_err());
+        assert_eq!(pending_uid_criteria(500, 500, 200).as_deref(), Some("UID 1:200"));
+    }
+
+    #[test]
+    fn malformed_dates_never_sort_old_mail_as_new() {
+        let expected = chrono::DateTime::parse_from_rfc3339("2026-05-16T13:09:00Z").unwrap().timestamp();
+        // The weekday is intentionally wrong, which strict RFC2822 rejects.
+        assert_eq!(message_timestamp("Mon, 16 May 2026 18:39:00 +0530", Some(99)), expected);
+        assert_eq!(message_timestamp("16 May 2026 18:39:00 +0530 (IST)", Some(99)), expected);
+        assert_eq!(message_timestamp("not a date", Some(expected)), expected);
+        assert_eq!(message_timestamp("", None), 0);
+    }
+
+    #[test]
+    fn fetched_headers_use_server_date_when_sender_date_is_invalid() {
+        let header = "Subject: Old statement\r\nFrom: bank@example.com\r\nDate: broken\r\n\r\n";
+        let mut wire = session(&format!(
+            "a1 OK login\r\n* 1 FETCH (UID 42 FLAGS () INTERNALDATE \"16-May-2026 18:39:00 +0530\" BODY[HEADER] {{{}}}\r\n{})\r\na2 OK fetch\r\n", header.len(), header,
+        ));
+        let rows = wire.uid_fetch("42", "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER])").unwrap();
+        let message = parse_header_to_message(&rows[0], 9, "tag:bank").unwrap();
+        assert_eq!(message.date, chrono::DateTime::parse_from_rfc3339("2026-05-16T13:09:00Z").unwrap().timestamp());
+        assert_eq!(message.folder, "tag:bank");
+        assert_eq!(message.uid, 42);
+    }
 }

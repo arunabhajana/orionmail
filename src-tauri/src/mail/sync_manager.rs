@@ -48,6 +48,7 @@ pub async fn enqueue_sync_with_force(
     tokio::spawn(async move {
         let mut follow_up = false;
         loop {
+            let mut continue_history = false;
             let guard = SYNC_LOCK.lock().await;
             let force = {
                 let mut queue = SYNC_QUEUE.lock().await;
@@ -93,6 +94,11 @@ pub async fn enqueue_sync_with_force(
                     .catch_unwind()
                     .await
                     .unwrap_or_else(|_| Err("Unexpected sync failure; please retry".into()));
+                if result.is_ok() {
+                    continue_history = crate::mail::database::get_folder_sync_state(
+                        &app, &account.id, &folder.to_string(),
+                    ).ok().flatten().is_some_and(|state| state.history_before_uid.unwrap_or(0) > 0);
+                }
                 if let Err(error) = result {
                     log::error!("Sync failed for folder {}: {}", folder, error);
                     let _ = crate::mail::database::set_folder_sync_error(
@@ -110,7 +116,7 @@ pub async fn enqueue_sync_with_force(
             }
             let rerun = {
                 let mut queue = SYNC_QUEUE.lock().await;
-                if queue.get(&key).is_some_and(|request| request.dirty) {
+                if continue_history || queue.get(&key).is_some_and(|request| request.dirty) {
                     true
                 } else {
                     queue.remove(&key);

@@ -10,9 +10,7 @@ pub async fn login_google(app_handle: AppHandle) -> Result<UserProfile, String> 
     session::save_account(&app_handle, account.clone(), true)?;
     
     // Initial sync
-    if let Ok(_guard) = crate::mail::sync::SYNC_LOCK.try_lock() {
-        let _ = crate::mail::sync::sync_inbox(&app_handle, account.clone()).await;
-    }
+    crate::mail::sync_manager::enqueue_sync(app_handle.clone(), account.clone(), crate::mail::folder::MailFolder::Inbox).await;
     
     // Start IDLE
     crate::mail::idle::start_idle_listener(app_handle.clone(), account.clone());

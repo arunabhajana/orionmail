@@ -47,7 +47,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
             }
 
             let uids_str = recent_uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-            let fetches = session.uid_fetch(uids_str, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE MESSAGE-ID)])")
+            let fetches = session.uid_fetch(uids_str, "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE MESSAGE-ID)])")
                 .map_err(|e| format!("IMAP UID Fetch Error: {}", e))?;
 
             let mut messages = Vec::new();
@@ -92,10 +92,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                         plain_body = parsed.get_body().unwrap_or_default();
                     }
 
-                    let clean_date = date.trim().replace('\r', "").replace('\n', "");
-                    let timestamp = chrono::DateTime::parse_from_rfc2822(&clean_date)
-                        .map(|dt| dt.timestamp())
-                        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
+                    let timestamp = crate::mail::sync::message_timestamp(&date, fetch.internal_date().map(|date| date.timestamp()));
 
                     let snippet = if !plain_body.is_empty() {
                         let clean: String = plain_body

@@ -936,7 +936,9 @@ export default function MainLayout() {
             });
             
             unlistenError = await listen<{ folder: string; error: string }>('mail:sync_error', (event) => {
-                console.error(`Sync failed for ${event.payload.folder}:`, event.payload.error);
+                // Recoverable sync errors already have a retry banner. Keep
+                // Next.js's development error overlay out of that flow.
+                console.warn(`Sync failed for ${event.payload.folder}:`, event.payload.error);
                 setSyncingFolders(prev => {
                     const next = new Set(prev);
                     next.delete(event.payload.folder);

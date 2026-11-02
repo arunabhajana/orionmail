@@ -328,7 +328,7 @@ fn find(
                 .map(u32::to_string)
                 .collect::<Vec<_>>()
                 .join(","),
-            "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO MESSAGE-ID)])",
+            "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO MESSAGE-ID)])",
         )
         .map_err(|e| e.to_string())?;
     let headers: Vec<_> = fetched
@@ -364,7 +364,7 @@ async fn remote(
         let fetched = session
             .uid_fetch(
                 source.uid.to_string(),
-                "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO MESSAGE-ID)])",
+                "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE TO MESSAGE-ID)])",
             )
             .map_err(|e| e.to_string())?;
         let current = fetched

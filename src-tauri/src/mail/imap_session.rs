@@ -59,8 +59,27 @@ pub fn connect_and_authenticate(
         .build()
         .map_err(|e| format!("TLS Builder Error: {}", e))?;
 
-    let client = imap::connect((domain.as_str(), port), domain.as_str(), &tls)
-        .map_err(|e| format!("IMAP Connection Error: {}", e))?;
+    // Time out the actual blocking I/O. Dropping an async timeout around
+    // spawn_blocking leaves the old sync running and holding its locks.
+    use std::net::ToSocketAddrs;
+    use std::time::Duration;
+    let addresses = (domain.as_str(), port).to_socket_addrs()
+        .map_err(|e| format!("IMAP DNS Error: {e}"))?;
+    let mut connected = None;
+    let mut last_error = None;
+    for address in addresses {
+        match std::net::TcpStream::connect_timeout(&address, Duration::from_secs(15)) {
+            Ok(stream) => { connected = Some(stream); break; }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    let stream = connected.ok_or_else(|| format!("IMAP Connection Error: {:?}", last_error))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30))).map_err(|e| e.to_string())?;
+    stream.set_write_timeout(Some(Duration::from_secs(30))).map_err(|e| e.to_string())?;
+    let stream = tls.connect(domain.as_str(), stream)
+        .map_err(|e| format!("IMAP TLS Error: {e}"))?;
+    let mut client = imap::Client::new(stream);
+    client.read_greeting().map_err(|e| format!("IMAP Greeting Error: {e}"))?;
 
     let auth_raw = format!(
         "user={}\x01auth=Bearer {}\x01\x01",
