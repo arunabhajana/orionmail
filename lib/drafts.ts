@@ -1,5 +1,5 @@
 export interface DraftAttachment { id: string; name: string; size: number; mime_type: string; handle?: string; }
-export interface DraftPayload { to: string[]; pending_to: string; cc: string; bcc: string; subject: string; html: string; plain: string; attachments: DraftAttachment[]; }
+export interface DraftPayload { in_reply_to?: string | null; references?: string[]; to: string[]; pending_to: string; cc: string; bcc: string; subject: string; html: string; plain: string; attachments: DraftAttachment[]; }
 export interface MailDraft { id: string; revision: number; payload: DraftPayload; updated_at: number; remote_id: string | null; state: string; error: string | null; conflict: boolean; }
 export interface DraftSummary { id: string; revision: number; subject: string; to: string[]; preview: string; updated_at: number; state: string; error: string | null; conflict: boolean; attachments: number; }
 export function draftStatus(state: string): string {

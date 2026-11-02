@@ -1,3 +1,4 @@
+import { usePathname } from 'next/navigation';
 import { useAppPreferences } from "@/components/AppPreferencesContext";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useState, useEffect, useRef, useCallback, type RefObject } from "react";
@@ -34,6 +35,7 @@ interface MessageDetail {
 
 export function useEmailBody(emailId: string | undefined, emailUid: number | undefined, emailUnread: boolean | undefined, folder: string | undefined, iframeRef: RefObject<HTMLIFrameElement | null>, onMarkAsRead?: (id: string) => void, localId?: string, uidValidity?: number) {
     const { preferences } = useAppPreferences();
+    const pathname=usePathname();
     const { user } = useAuth();
     const [bodyContent, setBodyContent] = useState<string>("");
     const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -134,7 +136,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     // A timer belongs to one opening; rerenders and an explicit unread action do not reopen it.
     useEffect(() => {
         const key = `${user?.id}:${folder}:${emailUid}:${uidValidity}:${emailId}`;
-        if (!emailId || readyBody?.key !== key || loadedKey.current !== key || isLoadingBody || error || !unreadRef.current || preferences.markRead === 'manual' || readAttempt.current === key) return;
+        if (pathname!=='/inbox' || !emailId || readyBody?.key !== key || loadedKey.current !== key || isLoadingBody || error || !unreadRef.current || preferences.markRead === 'manual' || readAttempt.current === key) return;
         const delay = preferences.markRead === 'immediate' ? 0 : Number(preferences.markRead) * 1000;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const schedule = () => {
@@ -147,7 +149,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         window.addEventListener('focus', schedule);
         window.addEventListener('blur', schedule);
         return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', schedule); window.removeEventListener('focus', schedule); window.removeEventListener('blur', schedule); };
-    }, [emailId, emailUid, folder, user?.id, uidValidity, preferences.markRead, readyBody, isLoadingBody, error]);
+    }, [emailId, emailUid, folder, user?.id, uidValidity, preferences.markRead, readyBody, isLoadingBody, error, pathname]);
 
     // Handle iframe messages sent from the injected srcDoc script
     useEffect(() => {
@@ -163,7 +165,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             } else if (event.data.type === "open_url" && typeof event.data.url === "string" && isAllowedExternalUrl(event.data.url)) {
                 const url = event.data.url;
                 void (async () => {
-                    if (preferences.confirmExternalLinks && !await confirm(`Open this link in your browser?\n\n${url.slice(0, 1000)}`, { title: 'Open external link', kind: 'info', okLabel: 'Open link', cancelLabel: 'Cancel' })) return;
+                    if (!url.toLowerCase().startsWith('mailto:') && preferences.confirmExternalLinks && !await confirm(`Open this link in your browser?\n\n${url.slice(0, 1000)}`, { title: 'Open external link', kind: 'info', okLabel: 'Open link', cancelLabel: 'Cancel' })) return;
                     await invoke("open_url", { url });
                 })().catch(console.error);
             }

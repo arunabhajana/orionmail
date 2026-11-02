@@ -464,3 +464,23 @@ html, body {
 @media (prefers-reduced-motion: reduce) { .compose-window *, .compose-window *::before { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
 .compose-address-row input::placeholder { color: var(--color-muted-foreground); opacity: .8; }
+
+.mail-toolbar-action { transition: color 140ms, background 140ms, transform 140ms, box-shadow 140ms; }
+.mail-toolbar-action:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgb(0 0 0 / .05); }
+.mail-toolbar-action:not(:disabled):active { transform: translateY(0) scale(.94); }
+.mail-toolbar-action svg { transition: transform 140ms; }
+.mail-toolbar-action:not(:disabled):hover svg { transform: scale(1.08); }
+.mail-action-tooltip { animation: mail-tooltip-enter 120ms ease-out; }
+@keyframes mail-tooltip-enter { from { opacity: 0; margin-top: -3px; } to { opacity: 1; margin-top: 0; } }
+@media (prefers-reduced-motion: reduce) { .mail-toolbar-action, .mail-toolbar-action svg { transition: none; } .mail-toolbar-action:not(:disabled):hover, .mail-toolbar-action:not(:disabled):active, .mail-toolbar-action:not(:disabled):hover svg { transform: none; } .mail-action-tooltip { animation: none; } }
+
+.tag-choice-row, .tag-choice-check, .tag-choice-mark, .tag-picker-button { transition: background-color 140ms, border-color 140ms, color 140ms, transform 140ms, opacity 140ms; }
+.tag-choice-row:not(:disabled):hover { transform: translateY(-1px); }
+.tag-choice-row:not(:disabled):active, .tag-picker-button:not(:disabled):active { transform: scale(.985); }
+@media (prefers-reduced-motion: reduce) { .tag-choice-row, .tag-choice-check, .tag-choice-mark, .tag-picker-button { transition: none; } .tag-choice-row:not(:disabled):hover, .tag-choice-row:not(:disabled):active, .tag-picker-button:not(:disabled):active { transform: none; } }
+
+@media (max-width: 640px) {
+  .mail-reading-toolbar .mail-toolbar-action { width: 28px; height: 28px; }
+  .mail-reading-toolbar > div:last-child { gap: 0; }
+  .mail-reading-toolbar > div:last-child > span[aria-hidden="true"] { margin-left: 4px; margin-right: 4px; }
+}

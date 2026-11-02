@@ -728,6 +728,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     migrate_reconciliation_identity(&conn)?;
     crate::cache_preferences::init(&conn)?;
+    crate::snooze::init(&conn)?;
     conn.execute("CREATE TABLE IF NOT EXISTS conversation_schema(version INTEGER PRIMARY KEY)", []).map_err(|e|e.to_string())?;
     if conn.execute("INSERT OR IGNORE INTO conversation_schema(version) VALUES(1)", []).map_err(|e|e.to_string())? > 0 {
         conn.execute("UPDATE folder_sync_state SET history_before_uid=NULL", []).map_err(|e|e.to_string())?;

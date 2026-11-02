@@ -88,3 +88,6 @@ Desktop.ini
 *.swo
 *~
 /.idea/
+
+# Docs
+docs/

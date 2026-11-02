@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo } from 'react';
-import { Loader2, Paperclip, Star, MessagesSquare } from 'lucide-react';
+import { Loader2, Paperclip, Pin, Star, MessagesSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email, Tag } from '@/lib/types';
 import { mailInitials, contactFromHeader, splitHeaderAddresses } from '@/lib/mail-display';
@@ -30,13 +30,14 @@ export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, 
         : email.time;
 
     return <article onContextMenu={event => onContextMenu?.(event, email.id)} className={cn('mail-message-card group', isSelected && 'is-selected', unread && 'is-unread')} data-density={preferences.density}>
-        <button type="button" onClick={() => onSelect?.(email.id)} className="mail-message-hit" aria-label={`${unread ? 'Unread: ' : ''}${sender}, ${email.subject}${conversationCount>1?`, conversation with ${conversationCount} messages`:''}`} aria-current={isSelected ? 'true' : undefined} />
+        <button type="button" onClick={() => onSelect?.(email.id)} className="mail-message-hit" aria-label={`${email.pinned?'Pinned, ':''}${unread ? 'Unread: ' : ''}${sender}, ${email.subject}${conversationCount>1?`, conversation with ${conversationCount} messages`:''}`} aria-current={isSelected ? 'true' : undefined} />
         <div className="pointer-events-none relative flex min-w-0 gap-3">
             {preferences.showAvatars && <span aria-hidden="true" className="mail-sender-avatar">{mailInitials(sender)}</span>}
             <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
 
                     <span className={cn('min-w-0 basis-32 grow truncate text-[13px] leading-5', unread ? 'font-semibold text-foreground' : 'font-medium text-foreground/75')} title={sender}>{sent && <span className="mr-1 font-normal text-muted-foreground">To</span>}{sender || 'Unknown sender'}</span>
+                    {email.pinned&&<Pin aria-label="Pinned" className="size-3 shrink-0 fill-primary/15 text-primary" />}
                     <time title={email.date} dateTime={validDate ? new Date(email.timestamp).toISOString() : undefined} className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{timestamp}</time>
                     <button type="button" aria-label={email.starred ? 'Unstar message' : 'Star message'} aria-pressed={email.starred} disabled={!onToggleStar} onClick={() => onToggleStar?.(email.id)} className={cn('mail-star-button pointer-events-auto relative z-10 -mr-1', email.starred && 'is-starred')}><Star className={cn('size-3.5', email.starred && 'fill-current')} /></button>
                 </div>
@@ -45,6 +46,7 @@ export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, 
                     {conversationCount>1&&<span title={`Conversation with ${conversationCount} messages`} className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary/[0.08] px-2 py-1 text-[10px] font-medium leading-none text-primary"><MessagesSquare aria-hidden="true" className="size-3"/><span>{conversationCount} messages</span></span>}
                 </div>
                 {preferences.previewLines !== '0' && <p className={cn('mt-1 text-xs leading-[1.65] text-muted-foreground', preferences.previewLines === '1' ? 'line-clamp-1' : 'line-clamp-2')}>{replyPreview(email.preview) || 'No preview available'}</p>}
+                {email.snoozedUntil&&<p className="mt-2 text-[10px] font-medium text-primary">Snoozed until {new Date(email.snoozedUntil*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</p>}
                 {(tags.length > 0 || email.attachments.length > 0) && <div className="mt-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden">
 
                     {tags.slice(0, 2).map(tag => <span key={tag.id} className="inline-flex max-w-28 items-center gap-1.5 truncate rounded-md bg-black/[0.035] px-1.5 py-0.5 text-[10px] text-muted-foreground dark:bg-white/[0.05]" title={tag.name}><span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: tag.bg_color || '#94a3b8' }} /><span className="truncate">{tag.name}</span></span>)}

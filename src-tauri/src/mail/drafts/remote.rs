@@ -135,8 +135,10 @@ fn fingerprint(
             .to_string()
     };
     let mut digest = Sha256::new();
-    let fields = json!({"to":payload.to,"cc":addresses(&payload.cc)?,"bcc":addresses(&payload.bcc)?,"subject":payload.subject,
+    let mut fields = json!({"to":payload.to,"cc":addresses(&payload.cc)?,"bcc":addresses(&payload.bcc)?,"subject":payload.subject,
         "html":normalize(&payload.html),"plain":normalize(&payload.plain)});
+    if let Some(id)=&payload.in_reply_to {fields["in_reply_to"]=json!(id);}
+    if !payload.references.is_empty(){fields["references"]=json!(payload.references);}
     digest.update(serde_json::to_vec(&fields).map_err(|e| e.to_string())?);
     for file in files {
         let metadata = serde_json::to_vec(&json!([file.name, file.mime_type.to_ascii_lowercase()]))
@@ -175,6 +177,8 @@ fn mime(app: &AppHandle, account: &Account, draft: &Draft) -> Result<(String, St
             )
             .map_err(|e| e.to_string())?,
         );
+    if let Some(id)=&payload.in_reply_to {builder=builder.header(lettre::message::header::InReplyTo::from(id.clone()));}
+    if !payload.references.is_empty(){builder=builder.header(lettre::message::header::References::from(payload.references.join(" ")));}
     for address in &payload.to {
         builder = builder.to(address
             .parse()
@@ -230,6 +234,8 @@ fn decode(
         .map_err(|_| "Invalid Gmail MIME encoding")?;
     let parsed = mailparse::parse_mail(&bytes).map_err(|e| e.to_string())?;
     let mut payload = Payload {
+        in_reply_to:parsed.headers.get_first_value("In-Reply-To"),
+        references:parsed.headers.get_first_value("References").unwrap_or_default().split_whitespace().map(str::to_string).collect(),
         to: addresses(&parsed.headers.get_first_value("To").unwrap_or_default())?,
         cc: parsed.headers.get_first_value("Cc").unwrap_or_default(),
         bcc: parsed.headers.get_first_value("Bcc").unwrap_or_default(),

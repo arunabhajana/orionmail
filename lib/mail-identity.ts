@@ -12,7 +12,7 @@ export function sameMail(a: Email, b: Email): boolean {
 
 const MAIL_SCALARS = [
     'id', 'uid', 'uidValidity', 'messageId', 'threadId', 'sender', 'senderEmail', 'to',
-    'subject', 'preview', 'date', 'time', 'timestamp', 'unread', 'starred',
+    'subject', 'preview', 'date', 'time', 'timestamp', 'unread', 'starred', 'pinned', 'snoozedUntil', 'resurfacedAt',
     'folder', 'avatar', 'body', 'tagsPending', 'locationId', 'displayFolder',
 ] as const satisfies readonly (keyof Email)[];
 

@@ -272,6 +272,9 @@ pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<Diagno
 pub async fn open_url(app_handle: AppHandle, url: String) -> Result<(), String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
     let validated_url = validate_external_url(&url)?;
+    if validated_url.scheme() == "mailto" {
+        return crate::mailto::receive(&app_handle, validated_url.as_str());
+    }
     open::that(validated_url.as_str()).map_err(|e| format!("Failed to open URL: {}", e))?;
     Ok(())
 }

@@ -1,7 +1,15 @@
 "use client";
 
+import { usePathname } from 'next/navigation';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Email } from '@/lib/types';
+import { Email, Tag } from '@/lib/types';
+import { SnoozeDialog } from './inbox/SnoozeDialog';
+import { useSnoozedMail } from '@/hooks/useSnoozedMail';
+import { snoozeKey } from '@/lib/snooze';
+import { contactFromHeader } from '@/lib/mail-display';
+import { pinIdentity, pinnedFirst } from '@/lib/mail-pins';
+import DOMPurify from 'isomorphic-dompurify';
+import { MessageTagPicker } from './inbox/MessageTagPicker';
 import { dedupeMail, sameMail,mailIdentity, reuseUnchangedMail } from '@/lib/mail-identity';
 import { formatEmailTime } from '@/lib/utils';
 import { AlertCircle } from 'lucide-react';
@@ -13,7 +21,8 @@ import { useTrashOperations } from '@/hooks/useTrashOperations';
 import type { PendingTrashAction } from '@/lib/trash';
 import { useActiveFolderRefresh } from '@/hooks/useActiveFolderRefresh';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import type { MailDraft } from '@/lib/drafts';
+import { plainTextHtml, signatureHtml } from '@/lib/app-preferences';
+import type { DraftPayload, MailDraft } from '@/lib/drafts';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSync } from '@/components/SyncContext';
@@ -27,7 +36,6 @@ import { SearchProgressData } from '@/components/inbox/EmailListHeader';
 import { CreateTagModal } from '@/components/tags/CreateTagModal';
 import { EditTagModal } from '@/components/tags/EditTagModal';
 import { DeleteTagModal } from '@/components/tags/DeleteTagModal';
-import { Tag } from '@/lib/types';
 import { toast } from 'sonner';
 import { useAppPreferences } from './AppPreferencesContext';
 interface FolderSearchState {
@@ -47,6 +55,22 @@ interface LocalLocationChoice { accountId: string; email: Email; desired: 'inbox
 
 export default function MainLayout() {
     const { user } = useAuth();
+    const pathname=usePathname();
+    const snoozes=useSnoozedMail(user?.id);
+    const [showSnoozed,setShowSnoozed]=useState(false);
+    const [snoozeSearch,setSnoozeSearch]=useState('');
+    const [snoozeTarget,setSnoozeTarget]=useState<Email|null>(null);
+    const replyBusy=useRef(false);
+    const [pinRows,setPinRows]=useState<Email[]>([]);
+    const pinBusy=useRef(new Set<string>());
+    const pinRevision=useRef(0);
+    useEffect(()=>{
+        if(!user?.id)return;let active=true;let stop:(()=>void)|undefined;let timer:ReturnType<typeof setTimeout>|undefined;
+        const refresh=async()=>{const version=pinRevision.current;try{const rows=await invoke<any[]>('list_mail_pins',{accountId:user.id});if(active&&version===pinRevision.current&&!pinBusy.current.size)setPinRows(previous=>reuseUnchangedMail(previous,rows.map(formatEmailFromMessage).sort((a,b)=>a.id.localeCompare(b.id))));}catch(error){if(active)console.error('Could not load mail pins',error);}};
+        void listen<{account_id:string}>('mail:updated',event=>{if(event.payload.account_id!==user.id||timer)return;timer=setTimeout(()=>{timer=undefined;void refresh();},1500);}).then(fn=>{if(active){stop=fn;void refresh();}else fn();});
+        return()=>{active=false;stop?.();clearTimeout(timer);};
+    },[user?.id]);
+    const [detailTags,setDetailTags]=useState<{accountId:string;email:Email;tags:Tag[]}|null>(null);
     const { preferences, updatePreferences } = useAppPreferences();
     const preferencesRef = useRef(preferences);
     preferencesRef.current = preferences;
@@ -54,6 +78,10 @@ export default function MainLayout() {
     useEffect(() => { activeAccountRef.current = user?.id; }, [user?.id]);
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
     const [isComposeOpen, setIsComposeOpen] = useState(false);
+    const composeOpenRef=useRef(isComposeOpen);composeOpenRef.current=isComposeOpen;
+    const pathnameRef=useRef(pathname);pathnameRef.current=pathname;
+    const [mailLink, setMailLink] = useState<{id:string;payload:DraftPayload}|null>(null);
+    const mailLinkBusy=useRef(false);
     const [composeDraft, setComposeDraft] = useState<MailDraft | undefined>();
     const [locationChoices, setLocationChoices] = useState<Record<string, LocalLocationChoice>>({});
     const locationChoicesRef = useRef<Record<string, LocalLocationChoice>>({});
@@ -61,6 +89,28 @@ export default function MainLayout() {
     const locationChains = useRef(new Map<string, Promise<PendingTrashAction>>());
     const purgeConfirmations = useRef(new Set<string>());
     const composeWindowRef = useRef<ComposeHandle>(null);
+    useEffect(()=>{
+        if (!user?.id || pathname!=='/inbox') return;
+        let active=true;let stop:(()=>void)|undefined;
+        const consume=async()=>{
+            if(!active)return;
+            if(mailLinkBusy.current){setTimeout(()=>{if(active)void consume();},50);return;}
+            mailLinkBusy.current=true;
+            try{
+                const link=await invoke<{id:string;to:string[];cc:string;bcc:string;subject:string;body:string}|null>('pending_mailto');
+                if(!active||!link)return;
+                if(isComposeOpen){composeWindowRef.current?.restore();toast.info('An email link is waiting. Close your current draft to open it.');return;}
+                const html=(link.body ? '<p>'+plainTextHtml(link.body)+'</p>' : '<p></p>')+signatureHtml(preferences.signature);
+                setComposeDraft(undefined);
+                setMailLink({id:link.id,payload:{to:link.to,pending_to:'',cc:link.cc||preferences.defaultCc,bcc:link.bcc||preferences.defaultBcc,subject:link.subject,plain:link.body+(preferences.signature.trim()?'\n\n—\n'+preferences.signature:''),html,attachments:[]}});
+                setIsComposeOpen(true);
+                await invoke('ack_mailto',{id:link.id});
+            }catch(error){if(active)toast.error('Could not open email link',{description:String(error)});}
+            finally{mailLinkBusy.current=false;}
+        };
+        void listen('mailto:pending',()=>{void consume();}).then(fn=>{if(active){stop=fn;void consume();}else fn();});
+        return()=>{active=false;stop?.();};
+    },[user?.id,isComposeOpen,preferences.signature,preferences.defaultCc,preferences.defaultBcc,pathname]);
     const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
     const [editingTag, setEditingTag] = useState<Tag | null>(null);
     const [deletingTag, setDeletingTag] = useState<Tag | null>(null);
@@ -145,7 +195,12 @@ export default function MainLayout() {
             return pending ? { ...email, tags: [...new Set([...email.tags, ...pending.tags])].filter(id => !pending.removed.includes(id)), tagsPending: true } : email;
         };
         const candidates = new Map<string, Email>();
-        const base = activeSearchState.searchQuery ? activeSearchState.searchResults : emails;
+        const activeSnoozes=snoozes.active.map(row=>({...row,email:formatEmailFromMessage(row.message)}));
+        const snoozeIds=new Map(activeSnoozes.map(row=>[snoozeKey(row.email),row.until]));
+        const returned=snoozes.returned.map(row=>({...formatEmailFromMessage(row.message),resurfacedAt:row.until*1000}));
+        const base = showSnoozed ? activeSnoozes.map(row=>row.email).filter(email=>(email.senderEmail+' '+email.subject+' '+email.preview).toLocaleLowerCase().includes(snoozeSearch.toLocaleLowerCase())) : activeSearchState.searchQuery ? activeSearchState.searchResults : dedupeMail([...emails,...pinRows.filter(email=>currentFolder.startsWith('tag:')||currentFolder==='starred'||email.folder===currentFolder),...returned.filter(email=>email.folder===currentFolder)]);
+        const returnedTimes=new Map(returned.map(email=>[mailIdentity(email),email.resurfacedAt]));
+        const pinIds=new Set(pinRows.map(pinIdentity));
         const searchMatches = new Set(base.map(mailIdentity));
         const matchesSearch = (email: Email) => {
             if (!activeSearchState.searchQuery || searchMatches.has(mailIdentity(email))) return true;
@@ -185,14 +240,16 @@ export default function MainLayout() {
                 candidates.set(mailIdentity(pending.email), pending.email);
             }
         }
-        const filteredEmails = dedupeMail([...candidates.values()].map(overlayTags).filter(email => {
+        const filteredEmails = dedupeMail([...candidates.values()].map(overlayTags).map(email=>({...email,pinned:currentFolder!=='trash'&&pinIds.has(pinIdentity(email)),snoozedUntil:snoozeIds.get(snoozeKey(email)),resurfacedAt:returnedTimes.get(mailIdentity(email))})).filter(email => {
             const folder = email.displayFolder || email.folder;
+            if(showSnoozed)return folder!=='trash'&&snoozeIds.has(snoozeKey(email));
+            if(currentFolder==='inbox'&&snoozeIds.has(snoozeKey(email)))return false;
             if (currentFolder === 'starred') return folder !== 'trash' && email.starred;
             if (currentFolder.startsWith('tag:')) return folder !== 'trash' && email.tags.includes(currentFolder.slice(4));
             return folder === currentFolder;
         }));
-        return { filteredEmails, visibleEmails: filteredEmails };
-    }, [emails, pendingTagAdds, pendingFlags, locationChoices, pendingTrash, user?.id, currentFolder, activeSearchState.searchQuery, activeSearchState.searchResults]);
+        return { filteredEmails, visibleEmails: showSnoozed?[...filteredEmails].sort((a,b)=>(a.snoozedUntil||Infinity)-(b.snoozedUntil||Infinity)):pinnedFirst(filteredEmails) };
+    }, [emails, pinRows, snoozes.active, snoozes.returned, showSnoozed, snoozeSearch, pendingTagAdds, pendingFlags, locationChoices, pendingTrash, user?.id, currentFolder, activeSearchState.searchQuery, activeSearchState.searchResults]);
     const conversationTargetRef = useRef<Email | null>(null);
     const selectedEmail = visibleEmails.find(e => e.id === selectedEmailId);
 
@@ -260,6 +317,77 @@ export default function MainLayout() {
         };
     };
 
+    const unsnooze=async(email:Email)=>{
+        const accountId=user?.id;if(!accountId)return;
+        const rows=snoozes.active.filter(row=>snoozeKey(formatEmailFromMessage(row.message))===snoozeKey(email));
+        try{for(const row of rows)await invoke('unsnooze_mail',{accountId,key:row.key});await snoozes.refresh();setSelectedEmailId(null);toast.success('Returned to Inbox');}catch(error){toast.error('Could not unsnooze',{description:String(error)});}
+    };
+    const togglePin=async(email:Email)=>{
+        const accountId=user?.id;if(!accountId)return;
+        const key=preferences.conversationView&&email.threadId?email.threadId:pinIdentity(email);
+        if(pinBusy.current.has(key))return;pinBusy.current.add(key);pinRevision.current++;
+        const memberKeys=new Set(visibleEmails.filter(item=>preferences.conversationView&&email.threadId&&item.threadId===email.threadId).map(pinIdentity));
+        const pinned=pinRows.filter(item=>memberKeys.has(pinIdentity(item))||pinIdentity(item)===pinIdentity(email)||(preferences.conversationView&&email.threadId&&item.threadId===email.threadId));
+        const targets=pinned.length?pinned:[email];
+        try{
+            const unique=new Map(targets.map(item=>[pinIdentity(item),item]));
+            for(const target of unique.values())await invoke('set_mail_pin',{accountId,folder:target.folder,uid:target.uid,expectedUidValidity:target.uidValidity??0,pinned:!pinned.length});
+        }catch(error){toast.error('Could not update pin',{description:String(error)});}finally{
+            pinBusy.current.delete(key);const version=++pinRevision.current;
+            if(!pinBusy.current.size){try{const rows=await invoke<any[]>('list_mail_pins',{accountId});if(activeAccountRef.current===accountId&&pinRevision.current===version)setPinRows(previous=>reuseUnchangedMail(previous,rows.map(formatEmailFromMessage).sort((a,b)=>a.id.localeCompare(b.id))));}catch(error){toast.error('Could not refresh pins',{description:String(error)});}}
+        }
+    };
+    const newMessageToSender=(email:Email)=>{
+        if(replyBusy.current){toast.info('A message is being prepared. Try again in a moment.');return;}
+        if(composeOpenRef.current){composeWindowRef.current?.restore();toast.info('Close your current draft before starting a new message.');return;}
+        const sender=contactFromHeader(email.senderEmail).email;
+        if(!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(sender)){toast.error('This message has no valid sender address.');return;}
+        setComposeDraft(undefined);
+        setMailLink({id:crypto.randomUUID(),payload:{to:[sender],pending_to:'',cc:preferences.defaultCc,bcc:preferences.defaultBcc,subject:'',plain:preferences.signature.trim()?'—\n'+preferences.signature:'',html:'<p></p>'+signatureHtml(preferences.signature),attachments:[]}});
+        setIsComposeOpen(true);
+    };
+    const startReply = async (email:Email, replyAll=false) => {
+        if(isComposeOpen){composeWindowRef.current?.restore();toast.info('Close your current draft before starting a reply.');return;}
+        if(replyBusy.current||!user)return;
+        replyBusy.current=true;const accountId=user.id;
+        const notice=toast.loading(replyAll?'Preparing reply all…':'Preparing reply…');
+        try{
+            const headers=await invoke<{to:string[];cc:string;in_reply_to:string|null;references:string[]}>('prepare_reply',{accountId,replyAll,folder:email.folder,uid:email.uid,expectedUidValidity:email.uidValidity??0});
+            if(activeAccountRef.current!==accountId||pathnameRef.current!=='/inbox')return;
+            if(composeOpenRef.current){toast.info('Close your current draft before starting a reply.');return;}
+            const signature=signatureHtml(preferences.signature);
+            setComposeDraft(undefined);
+            setMailLink({id:crypto.randomUUID(),payload:{...headers,pending_to:'',cc:headers.cc,bcc:preferences.defaultBcc,subject:/^re\s*:/i.test(email.subject)?email.subject:'Re: '+email.subject,plain:preferences.signature.trim()?'—\n'+preferences.signature:'',html:'<p></p>'+signature,attachments:[]}});
+            setIsComposeOpen(true);
+        }catch(error){toast.error('Could not prepare reply',{description:String(error)});}finally{toast.dismiss(notice);replyBusy.current=false;}
+    };
+    const openDetailTags=async(email:Email)=>{
+        const accountId=user?.id;if(!accountId||tagRequests.current.has(accountId+':'+email.id))return;
+        try{const tags=await invoke<Tag[]>('get_all_tags');if(activeAccountRef.current===accountId&&pathnameRef.current==='/inbox')setDetailTags({accountId,email,tags});}
+        catch(error){toast.error('Could not load tags',{description:String(error)});}
+    };
+    const startForward=async(email:Email)=>{
+        if(composeOpenRef.current){composeWindowRef.current?.restore();toast.info('Close your current draft before forwarding.');return;}
+        if(replyBusy.current||!user)return;
+        replyBusy.current=true;const accountId=user.id;const notice=toast.loading('Preparing forward…');
+        let handles:string[]=[];let transferred=false;
+        try{
+            const original=await invoke<{plain:string;html:string;from:string;to:string;cc:string;date:string;subject:string;attachments:{handle:string;name:string;size:number;mime_type:string}[]}>('prepare_forward',{accountId,folder:email.folder,uid:email.uid,expectedUidValidity:email.uidValidity??0});
+            handles=original.attachments.map(file=>file.handle);
+            if(activeAccountRef.current!==accountId||pathnameRef.current!=='/inbox')return;
+            if(composeOpenRef.current){toast.info('Close your current draft before forwarding.');return;}
+            let text=original.plain;
+            if(!text&&original.html){const document=new DOMParser().parseFromString(DOMPurify.sanitize(original.html),'text/html');document.querySelectorAll('style,script,head').forEach(node=>node.remove());document.querySelectorAll('br').forEach(node=>node.replaceWith('\n'));document.querySelectorAll('p,div,tr').forEach(node=>node.append('\n'));text=document.body.textContent||'';}
+            const forwarded='---------- Forwarded message ----------\nFrom: '+original.from+'\nDate: '+original.date+'\nSubject: '+original.subject+'\nTo: '+original.to+(original.cc?'\nCc: '+original.cc:'')+'\n\n'+text;
+            const signature=preferences.signature.trim()?'—\n'+preferences.signature+'\n\n':'';
+            setComposeDraft(undefined);
+            setMailLink({id:crypto.randomUUID(),payload:{to:[],pending_to:'',cc:preferences.defaultCc,bcc:preferences.defaultBcc,subject:/^fwd?\s*:/i.test(original.subject)?original.subject:'Fwd: '+original.subject,plain:signature+forwarded,html:'<p></p>'+signatureHtml(preferences.signature)+'<p>'+plainTextHtml(forwarded)+'</p>',attachments:original.attachments.map(file=>({id:crypto.randomUUID(),...file}))}});
+            setIsComposeOpen(true);transferred=true;
+        }catch(error){toast.error('Could not prepare forward',{description:String(error)});}finally{
+            if(!transferred&&handles.length)void invoke('release_attachment_handles',{handles}).catch(()=>{});
+            toast.dismiss(notice);replyBusy.current=false;
+        }
+    };
     const toggleStar = async (emailId: string) => {
         const target = (conversationTargetRef.current?.id === emailId ? conversationTargetRef.current : undefined) || filteredEmails.find(e => e.id === emailId);
         if (!target) return;
@@ -1008,6 +1136,7 @@ export default function MainLayout() {
                     const destination = target.message?.folder || 'inbox';
                     const current = await invoke<Parameters<typeof formatEmailFromMessage>[0][]>('get_folder_messages', { folder: destination, beforeUid: null, limit: 50 });
                     if (disposed || target.account_id !== activeAccountRef.current) continue;
+                    setShowSnoozed(false);
                     currentFolderRef.current = destination;
                     cacheRevisionRef.current += 1;
                     setCurrentFolder(destination);
@@ -1207,6 +1336,7 @@ export default function MainLayout() {
             if (!preferences.shortcutsEnabled || event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
             const target = event.target as HTMLElement;
             if (target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return;
+            if (pathname!=='/inbox')return;
             if (event.key.toLowerCase() === 'n' && !event.shiftKey) { event.preventDefault(); if (isComposeOpen) composeWindowRef.current?.restore(); else setIsComposeOpen(true); }
             if (isComposeOpen) return;
             if (event.key.toLowerCase() === 'k' && !event.shiftKey) { event.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder*="Search"]')?.focus(); }
@@ -1214,7 +1344,7 @@ export default function MainLayout() {
         };
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
-    }, [preferences.shortcutsEnabled, isComposeOpen, selectedEmailId, toggleRead]);
+    }, [preferences.shortcutsEnabled, isComposeOpen, selectedEmailId, toggleRead, pathname]);
 
     if (isBootstrapping) {
         return (
@@ -1249,9 +1379,9 @@ export default function MainLayout() {
                 onCreateTagClick={() => setIsCreateTagOpen(true)}
                 onEditTagClick={(tag) => setEditingTag(tag)}
                 onDeleteTagClick={(tag) => setDeletingTag(tag)}
-                currentFolder={currentFolder}
-                onFolderSelect={folder => { setSelectedEmailId(null); setCurrentFolder(folder); }}
-                unreadCounts={unreadCounts}
+                currentFolder={showSnoozed?'snoozed':currentFolder}
+                onFolderSelect={folder => { setSelectedEmailId(null);setShowSnoozed(folder==='snoozed');setSnoozeSearch('');setCurrentFolder(folder==='snoozed'?'inbox':folder); }}
+                unreadCounts={{...unreadCounts,snoozed:snoozes.active.length}}
             />
 
             <div className="mail-panes">
@@ -1294,6 +1424,13 @@ export default function MainLayout() {
                     </>}
                     className="flex-1 overflow-hidden"
                     emails={visibleEmails}
+                    onSnooze={id=>{const email=visibleEmails.find(item=>item.id===id);if(email)setSnoozeTarget(email);}}
+                    onUnsnooze={id=>{const email=visibleEmails.find(item=>item.id===id);if(email)void unsnooze(email);}}
+                    onTogglePin={id=>{const email=visibleEmails.find(item=>item.id===id);if(email)void togglePin(email);}}
+                    onNewToSender={id=>{const email=visibleEmails.find(item=>item.id===id);if(email)newMessageToSender(email);}}
+                    onReplyAll={id=>{const email=visibleEmails.find(item=>item.id===id);if(email)void startReply(email,true);}}
+                    onForward={id=>{const email=visibleEmails.find(item=>item.id===id);if(email)void startForward(email);}}
+                    onReply={id=>{const email=visibleEmails.find(item=>item.id===id);if(email)void startReply(email);}}
                     pendingMessages={currentFolder === 'sent' ? pendingMessages : []}
                     selectedEmailId={selectedEmailId}
                 onSelectEmail={(id) => setSelectedEmailId(id)}
@@ -1304,22 +1441,28 @@ export default function MainLayout() {
                 onAddTags={(email, tags, removed) => { void handleAddTags(email, tags, removed); }}
                 onSync={handleSync}
                 isSyncing={isSyncing || isLoadingFolder || syncingFolders.has(currentFolder)}
-                isLoading={isLoadingFolder}
+                isLoading={showSnoozed?false:isLoadingFolder}
                 onLoadMore={loadMoreEmails}
-                hasMore={activeSearchState.searchQuery ? activeSearchState.hasMoreSearch : hasMore}
-                isLoadingMore={activeSearchState.searchQuery ? activeSearchState.isLoadingMoreSearch : isLoadingMore}
+                hasMore={!showSnoozed&&(activeSearchState.searchQuery ? activeSearchState.hasMoreSearch : hasMore)}
+                isLoadingMore={!showSnoozed&&(activeSearchState.searchQuery ? activeSearchState.isLoadingMoreSearch : isLoadingMore)}
                 listRef={emailListContainerRef}
-                currentFolder={currentFolder}
-                searchQuery={activeSearchState.searchQuery}
-                onSearchQueryChange={handleSearchQueryChange}
-                onSearchClear={handleSearchClear}
-                searchProgress={activeSearchState.searchProgress}
+                currentFolder={showSnoozed?'snoozed':currentFolder}
+                searchQuery={showSnoozed?snoozeSearch:activeSearchState.searchQuery}
+                onSearchQueryChange={showSnoozed?setSnoozeSearch:handleSearchQueryChange}
+                onSearchClear={showSnoozed?()=>setSnoozeSearch(''):handleSearchClear}
+                searchProgress={showSnoozed?null:activeSearchState.searchProgress}
                 onSearchLoadMore={handleSearchLoadMore}
             />
             </div>
 
             {/* Column 3: Reading Pane */}
             <ConversationReader
+                onSnooze={email=>setSnoozeTarget(email)}
+                isSnoozed={email=>snoozes.active.some(row=>snoozeKey(formatEmailFromMessage(row.message))===snoozeKey(email))}
+                onReplyAll={email=>{void startReply(email,true);}}
+                onForward={email=>{void startForward(email);}}
+                onManageTags={email=>{void openDetailTags(email);}}
+                onReply={email=>{void startReply(email);}}
                 className="mail-detail-pane min-h-0 min-w-0 flex-1 flex flex-col"
                 email={selectedEmail}
                 onAction={(message,action)=>{
@@ -1336,14 +1479,17 @@ export default function MainLayout() {
             </>}
 
             </div>
+            {detailTags&&detailTags.accountId===user?.id&&pathname==='/inbox'&&<MessageTagPicker key={detailTags.accountId+':'+detailTags.email.id} email={detailTags.email} tags={detailTags.tags} onClose={()=>setDetailTags(null)} onApply={(email,added,removed)=>{void handleAddTags(email,added,removed);}}/>}
+            {snoozeTarget&&pathname==='/inbox'&&<SnoozeDialog subject={snoozeTarget.subject} onClose={()=>setSnoozeTarget(null)} onSave={async until=>{const accountId=user?.id;if(!accountId)return;const savedKey=await invoke<string>('snooze_mail',{accountId,folder:snoozeTarget.folder,uid:snoozeTarget.uid,expectedUidValidity:snoozeTarget.uidValidity??0,until});if(activeAccountRef.current!==accountId)return;await snoozes.refresh();setSelectedEmailId(null);toast.success('Snoozed until '+new Date(until*1000).toLocaleString(),{action:{label:'Undo',onClick:()=>{void invoke('unsnooze_mail',{accountId,key:savedKey}).then(()=>snoozes.refresh()).catch(error=>toast.error('Could not undo snooze',{description:String(error)}));}}});}}/>}
             {/* Compose Modal Overlay */}
             <AnimatePresence>
                 {isComposeOpen && (
                     <ComposeModal
-                        key={`${user?.id}:${composeDraft?.id || 'new'}`}
+                        key={`${user?.id}:${composeDraft?.id || mailLink?.id || 'new'}`}
                         initialDraft={composeDraft}
+                        initialMessage={mailLink?.payload}
                         windowRef={composeWindowRef}
-                        onClose={() => { setIsComposeOpen(false); setComposeDraft(undefined); }}
+                        onClose={() => { setIsComposeOpen(false); setComposeDraft(undefined); setMailLink(null); }}
                         onSendStart={addPendingMessage}
                         onSendFailure={removePendingMessage}
                         onSendSuccess={(id, messageId) => {

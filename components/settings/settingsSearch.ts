@@ -38,13 +38,14 @@ const nativeEntries: [SettingsTab, string, string, string, string][] = [
     ['storage', 'clear', 'Clear cached mail', 'Remove downloaded mail for the current account.', 'delete cache reset resync'],
     ['system', 'autostart', 'Launch at startup', 'Start when you sign in to Windows.', 'boot login'],
     ['system', 'hidden', 'Start in the tray', 'Start quietly in the background.', 'minimized hidden'],
+    ['system', 'defaultMail', 'Default mail app', 'Choose OrionMail for MAILTO links in Windows Default apps.', 'mailto email links protocol association'],
     ['system', 'tray', 'Keep running when closed', 'Hide to the system tray instead of quitting.', 'close background minimize'],
     ['shortcuts', 'save', 'Save settings', 'Press Ctrl+S to save pending changes.', 'keyboard'],
     ['shortcuts', 'search', 'Search settings', 'Press Ctrl+K to find a setting.', 'keyboard'],
     ['about', 'version', 'App version', 'Installed version of OrionMail.', 'release build'],
     ['about', 'developer', 'Developed by Arunabhajana', 'About the developer.', 'credits'],
     ['about', 'support', 'Contact and support', 'Email arunabhajana@gmail.com.', 'help feedback'],
-    ['about', 'changelog', 'Release notes', 'Published release notes are not available yet.', 'updates changelog'],
+    ['about', 'changelog', 'Release notes', 'Browse categorized mock release notes and preview the What’s new tour.', 'updates changelog whats new preview tour'],
     ['about', 'privacy', 'Privacy policy and licenses', 'Public policies and notices are not published yet.', 'legal terms third party'],
 ];
 export const SETTINGS_SEARCH_INDEX: SettingsSearchResult[] = [

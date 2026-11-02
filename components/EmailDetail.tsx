@@ -17,6 +17,7 @@ import { useAuth } from './AuthContext';
 import { useAppPreferences } from '@/components/AppPreferencesContext';
 import {ConversationMessageRow} from './inbox/ConversationMessageRow';
 import {MessagesSquare} from 'lucide-react';
+import {conversationSurfaceScript} from '@/lib/email-surface';
 import {replyDisplay} from '@/lib/reply-display';
 
 // --- Types ---
@@ -33,11 +34,17 @@ interface EmailDetailProps {
     onMarkAsRead?: (emailId: string) => void;
     onToggleRead?: (emailId: string) => void;
     onBack?: () => void;
+    onReply?:()=>void;
+    onReplyAll?:()=>void;
+    onForward?:()=>void;
+    onManageTags?:()=>void;
+    onSnooze?:()=>void;
+    isSnoozed?:boolean;
 }
 
 // --- Main Component ---
 
-const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onRestoreMessage, onMarkAsRead, onToggleRead, onBack, conversation=[],onSelectConversation,conversationNotice }) => {
+const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onRestoreMessage, onMarkAsRead, onToggleRead, onBack, onReply, onReplyAll, onForward, onManageTags, onSnooze, isSnoozed, conversation=[],onSelectConversation,conversationNotice }) => {
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const emailIframeRef = React.useRef<HTMLIFrameElement>(null);
     const { resolvedTheme } = useTheme();
@@ -160,9 +167,11 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                     <script>
                                         const wrapper = document.getElementById('email-content-wrapper');
                                         let lastHeight = 0;
+                                        ${conversationSurfaceScript(isDark)}
                                         
                                         // --- Smart Dark Mode Heuristics ---
                                         const applySmartInvert = () => {
+                                            if (${conversation.length>1} && applyConversationSurface()) return;
                                             if (!${isDark}) return;
                                             
                                             // Function to parse rgb/rgba to check brightness
@@ -191,9 +200,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                             
                                             // If the background is light (brightness > 128), invert it!
                                             // If it's already dark (brightness <= 128), leave it alone because it's a native dark email.
-                                            if (brightness > 128) {
-                                                document.documentElement.classList.add('dark-mode');
-                                            }
+                                            document.documentElement.classList.toggle('dark-mode', brightness > 128);
                                         };
                                         
                                         // Run IMMEDIATELY as the DOM parses, before images load!
@@ -271,6 +278,12 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                 onRestore={onRestoreMessage ? () => onRestoreMessage(email.id) : undefined}
                 isUnread={email?.unread}
                 onBack={onBack}
+                onReplyAll={onReplyAll}
+                onForward={onForward}
+                onSnooze={onSnooze}
+                isSnoozed={isSnoozed}
+                onManageTags={onManageTags}
+                onReply={onReply}
                 onToggleRead={onToggleRead ? () => onToggleRead(email.id) : undefined}
                 onToggleStar={onToggleStar ? () => onToggleStar(email.id) : undefined}
                 onDelete={onDeleteMessage ? () => onDeleteMessage(email.id) : undefined}
@@ -324,9 +337,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                             </div>
                         ) : (
                             <iframe
+                                key={`${user?.id}:${email.id}:${isDark}:${conversation.length>1}`}
                                 ref={emailIframeRef}
                                 title="Email Content"
-                                className="block w-full border-0 email-content-iframe bg-white dark:bg-[#111111]"
+                                className={cn('block w-full border-0 email-content-iframe', conversation.length>1 ? 'bg-transparent' : 'bg-white dark:bg-[#111111]')}
                                 sandbox="allow-scripts"
                                 scrolling="no"
                                 style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}

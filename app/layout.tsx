@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import TitlebarWrapper from "@/components/TitlebarWrapper"; // Wrapper handles client-side only import
+import { PersistentInbox } from "@/components/PersistentInbox";
+import { MailtoNavigation } from "@/components/MailtoNavigation";
 import { AuthProvider } from "@/components/AuthContext";
 import { SyncProvider } from "@/components/SyncContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -52,9 +54,11 @@ export default function RootLayout({
                       <AppLockGate>
                         <AppContextMenus>
                         <div className="app-window">
+                          <MailtoNavigation />
                           <GlobalLoader />
                           <TitlebarWrapper />
                           <div className="pt-[30px] h-full w-full overflow-hidden">
+                            <PersistentInbox />
                             {children}
                           </div>
                           <Toaster theme="system" richColors position="top-center" />

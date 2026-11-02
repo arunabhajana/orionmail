@@ -210,3 +210,14 @@ mod tests {
         assert!(store.is_empty());
     }
 }
+
+/// Snapshot forwarded MIME parts into the same account-scoped handle store as
+/// picked files. No renderer-provided paths are opened.
+pub(crate) fn snapshot_forwarded(account_id:&str,files:Vec<AttachmentData>)->Result<Vec<AttachmentMetadata>,String>{
+    if files.len()>MAX_ATTACHMENTS || files.iter().map(|file|file.bytes.len()).sum::<usize>()>MAX_ATTACHMENT_BYTES {return Err("Forwarded attachments exceed 25 files or 18 MB.".into());}
+    let mut store=SELECTED_ATTACHMENTS.lock().map_err(|_|"Attachment store unavailable")?;purge_expired(&mut store);
+    if store.len()+files.len()>MAX_ATTACHMENTS*4 || store.values().map(|file|file.bytes.len()).sum::<usize>()+files.iter().map(|file|file.bytes.len()).sum::<usize>()>MAX_STORED_ATTACHMENT_BYTES{return Err("Too many temporary attachments are open.".into());}
+    let mut result=Vec::new();
+    for file in files {let handle=uuid::Uuid::new_v4().to_string();result.push(AttachmentMetadata{handle:handle.clone(),name:file.name.clone(),size:file.bytes.len(),mime_type:file.mime_type.clone()});store.insert(handle,SelectedAttachment{account_id:account_id.into(),name:file.name,mime_type:file.mime_type,bytes:file.bytes,created_at:Instant::now()});}
+    Ok(result)
+}

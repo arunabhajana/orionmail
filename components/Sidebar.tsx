@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Inbox, Send, File, Trash2, Star, Pencil, Plus, ChevronDown, Tags } from 'lucide-react';
+import { Inbox, Send, File, Trash2, Clock, Star, Pencil, Plus, ChevronDown, Tags } from 'lucide-react';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { useAppPreferences } from './AppPreferencesContext';
@@ -142,6 +142,7 @@ interface SidebarProps {
 
 const NAV_ITEMS: NavItemConfig[] = [
     { icon: Inbox, label: "Inbox", id: "inbox" },
+    { icon: Clock, label: "Snoozed", id: "snoozed" },
     { icon: Star, label: "Starred", id: "starred" },
     { icon: Send, label: "Sent", id: "sent" },
     { icon: File, label: "Drafts", id: "drafts" },

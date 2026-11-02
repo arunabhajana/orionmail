@@ -15,6 +15,10 @@ pub struct DraftFile {
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Payload {
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    #[serde(default)]
+    pub references: Vec<String>,
     pub to: Vec<String>,
     pub pending_to: String,
     pub cc: String,
@@ -26,6 +30,8 @@ pub struct Payload {
 }
 impl Payload {
     fn validate(&self) -> Result<(), String> {
+        let valid=|id:&str|id.len()>=3 && id.len()<=998 && id.starts_with('<') && id.ends_with('>') && !id.chars().any(char::is_whitespace) && !id.chars().any(char::is_control) && !id[1..id.len()-1].contains(['<','>']);
+        if self.references.len()>100 || self.in_reply_to.as_ref().is_some_and(|id|!valid(id)) || self.references.iter().any(|id|!valid(id)){return Err("Invalid reply threading headers".into());}
         if self.html.len() > 2 * 1024 * 1024
             || self.plain.len() > 2 * 1024 * 1024
             || self.subject.len() > 2000
@@ -112,4 +118,24 @@ pub fn start_worker(app: &AppHandle) {
 pub fn kick(app: &AppHandle) {
     start_worker(app);
     WAKE.notify_one();
+}
+
+#[cfg(test)]
+mod reply_payload_tests {
+    use super::*;
+    #[test]
+    fn reply_metadata_survives_draft_serialization_and_rejects_header_injection(){
+        let mut payload=Payload::default();
+        payload.in_reply_to=Some("<parent@example.com>".into());
+        payload.references=vec!["<root@example.com>".into(),"<parent@example.com>".into()];
+        assert!(payload.validate().is_ok());
+        let restored:Payload=serde_json::from_str(&serde_json::to_string(&payload).unwrap()).unwrap();
+        assert_eq!(restored.in_reply_to,payload.in_reply_to);assert_eq!(restored.references,payload.references);
+        payload.references.push("<bad>\r\nBcc: injected@example.com".into());assert!(payload.validate().is_err());
+        payload.references.clear();payload.in_reply_to=Some("<>".into());assert!(payload.validate().is_err());
+    }
+    #[test]fn old_drafts_need_no_reply_metadata(){
+        let payload:Payload=serde_json::from_str(r#"{"to":[],"pending_to":"","cc":"","bcc":"","subject":"","html":"","plain":"","attachments":[]}"#).unwrap();
+        assert!(payload.in_reply_to.is_none());assert!(payload.references.is_empty());assert!(payload.validate().is_ok());
+    }
 }

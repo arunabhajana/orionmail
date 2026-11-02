@@ -6,6 +6,9 @@ export interface Attachment {
 }
 
 export interface Email {
+    pinned?: boolean;
+    snoozedUntil?:number;
+    resurfacedAt?:number;
     locationId?: string;
     displayFolder?: 'inbox' | 'trash';
     tagsPending?: boolean;

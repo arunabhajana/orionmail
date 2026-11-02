@@ -40,6 +40,11 @@ function SettingsPageInner() {
     const activeSection = SETTINGS_TABS.find(tab => tab.id === activeTab)!;
     const ActiveIcon = activeSection.icon;
 
+    useEffect(()=>{
+        const navigate=()=>requestNavigation(()=>router.push('/inbox'));
+        window.addEventListener('orion:mailto-navigation',navigate);
+        return()=>window.removeEventListener('orion:mailto-navigation',navigate);
+    },[requestNavigation,router]);
     const closeSearch = () => {
         setSearchQuery('');
         setSelectedSearchIndex(0);

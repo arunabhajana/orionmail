@@ -10,7 +10,7 @@ import {formatEmailTime} from '@/lib/utils';
 import {useAppPreferences} from './AppPreferencesContext';
 
 type Action = 'star' | 'read' | 'markRead' | 'delete' | 'restore';
-export default function ConversationReader({email,className,onBack,onAction}: {email?:Email|null;className?:string;onBack?:()=>void;onAction:(email:Email,action:Action)=>void}) {
+export default function ConversationReader({email,className,onBack,onAction,onReply,onReplyAll,onForward,onManageTags,onSnooze,isSnoozed}: {email?:Email|null;className?:string;onBack?:()=>void;onReply?:(email:Email)=>void;onReplyAll?:(email:Email)=>void;onForward?:(email:Email)=>void;onManageTags?:(email:Email)=>void;onSnooze?:(email:Email)=>void;isSnoozed?:(email:Email)=>boolean;onAction:(email:Email,action:Action)=>void}) {
     const {user} = useAuth();
     const {preferences} = useAppPreferences();
     const [members,setMembers] = React.useState<Email[]>([]);
@@ -45,6 +45,8 @@ export default function ConversationReader({email,className,onBack,onAction}: {e
     const selected=(preferences.conversationView ? members.find(item=>item.id===(activeId||email?.id)) : undefined)||email;
     return <section className={className}>
         <EmailDetail className="flex min-h-0 flex-1 flex-col" email={selected} onBack={onBack}
+            onSnooze={selected&&selected.folder==='inbox'&&onSnooze?()=>onSnooze(selected):undefined} isSnoozed={selected&&isSnoozed?isSnoozed(selected):false}
+            onReplyAll={selected&&onReplyAll?()=>onReplyAll(selected):undefined} onForward={selected&&onForward?()=>onForward(selected):undefined} onManageTags={selected&&onManageTags&&selected.folder!=='trash'?()=>onManageTags(selected):undefined} onReply={selected&&onReply?()=>onReply(selected):undefined}
             conversation={preferences.conversationView&&members.length>1?[...members].sort((a,b)=>a.timestamp-b.timestamp):[]}
             onSelectConversation={setActiveId} conversationNotice={error}
             onToggleStar={()=>selected&&onAction(selected,'star')} onToggleRead={()=>selected&&onAction(selected,'read')}

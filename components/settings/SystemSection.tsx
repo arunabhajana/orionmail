@@ -4,9 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { enable, isEnabled, disable } from '@tauri-apps/plugin-autostart';
 import { useSettings } from './SettingsContext';
+import { toast } from "sonner";
 import { PreferencesSection } from './PreferencesSection';
 import { deepEqual } from '@/lib/deepEqual';
-import { SettingGroup, SettingRow, SettingToggle } from './SettingsControls';
+import { SettingGroup, SettingRow, SettingToggle, settingButton } from './SettingsControls';
 
 interface SystemSettings {
     minimize_to_tray: boolean;
@@ -118,6 +119,7 @@ export function SystemSection() {
         <SettingGroup title="Window behavior">
             <SettingRow id="system.tray" title="Keep running when closed" description="The close button hides the window in the system tray. Mail keeps syncing."><SettingToggle label="Keep running when closed" checked={settings.minimize_to_tray} onChange={toggleMinimizeToTray} /></SettingRow>
         </SettingGroup>
+        <SettingGroup title="Default mail app"><SettingRow id="system.defaultMail" title="Open email links with OrionMail" description="Register OrionMail as a mail app, then choose it for MAILTO in Windows Default apps. This leaves your current default unchanged until you select OrionMail."><button type="button" className={settingButton} onClick={()=>{void invoke('open_default_mail_settings').catch(error=>toast.error('Could not open default mail settings',{description:String(error)}));}}>Choose in Windows</button></SettingRow></SettingGroup>
         <PreferencesSection section="system" />
     </div>;
 }

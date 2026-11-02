@@ -336,6 +336,8 @@ fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[(String,u32)]) 
             return Ok(());
         }
         items.truncate(500);
+        items=store::unread(app,account,items)?;
+        if items.is_empty(){return Ok(());}
         let token = uuid::Uuid::new_v4().simple().to_string();
         let batch = Batch {
             display_tag: previous
@@ -653,4 +655,10 @@ mod folder_snapshot_tests {
         let restored:Item=serde_json::from_str(&serde_json::to_string(&Item{folder:"tag:Label_1".into(),identity:"unique".into(),..item}).unwrap()).unwrap();
         assert_eq!(restored.folder,"tag:Label_1");assert_eq!(restored.validity,9);
     }
+}
+
+pub fn snooze_returned(app:&AppHandle,account:&str){
+ if !permitted(app)||crate::auth::session::get_active_profile(app).map(|value|value.id)!=Some(account.into()){return;}
+ #[cfg(target_os="windows")]
+ if let Err(error)=windows::preview("Snoozed mail is back","Your snoozed messages are available in Inbox again.",crate::mail_preferences::load(app).notification_sound,&crate::mail_preferences::load(app).notification_tone){log::debug!("Snooze reminder unavailable: {}",error);}
 }

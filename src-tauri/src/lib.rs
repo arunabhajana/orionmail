@@ -1,3 +1,8 @@
+mod snooze;
+mod pins;
+mod forward;
+mod reply;
+mod mailto;
 mod auth;
 mod commands;
 mod mail;
@@ -37,7 +42,12 @@ use window_vibrancy::apply_mica;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_single_instance::init(|app,args,_| {
+        for arg in args.iter().skip(1).filter(|arg|arg.to_ascii_lowercase().starts_with("mailto:")){if let Err(error)=mailto::receive(app,arg){log::warn!("Mail link rejected: {}",error);}}
+        if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.unminimize();let _=window.set_focus();}
+    }))
     .setup(|app| {
+      for arg in std::env::args().skip(1).filter(|arg|arg.to_ascii_lowercase().starts_with("mailto:")){let _=mailto::receive(app.handle(),&arg);}
       let (min_to_tray, start_hidden, app_lock) = config::load_settings(app.handle());
       app.manage(auth::app_lock::AppLockState(Mutex::new(auth::app_lock::LockSession::new(app_lock))));
       app.manage(AppSettings { 
@@ -176,6 +186,8 @@ pub fn run() {
       // Never wait for SQLite migration, credential I/O, COM registration, or
       // cache cleanup on the Windows message loop.
       std::thread::Builder::new().name("app-startup".into()).spawn(move||{
+          #[cfg(all(target_os="windows",not(debug_assertions)))]
+          if let Err(error)=mailto::register(){log::warn!("Mail handler registration failed: {}",error);}
           let started=std::time::Instant::now();
           if let Ok(cache_dir)=handle.path().app_cache_dir(){
               // This fixed, app-owned cache contains temporary inline images.
@@ -270,6 +282,16 @@ pub fn run() {
       pick_attachments,
       release_attachment_handles,
       open_url,
+      reply::prepare_reply,
+      forward::prepare_forward,
+      snooze::snooze_mail,
+      snooze::unsnooze_mail,
+      snooze::list_snoozed_mail,
+      pins::list_mail_pins,
+      pins::set_mail_pin,
+      mailto::pending_mailto,
+      mailto::ack_mailto,
+      mailto::open_default_mail_settings,
       clear_local_cache,
       search_messages,
       load_more_results,

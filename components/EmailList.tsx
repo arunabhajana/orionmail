@@ -19,6 +19,7 @@ import { useAppPreferences } from './AppPreferencesContext';
 import { listen } from '@tauri-apps/api/event';
 import {useVisibleMailLabels} from '@/hooks/useVisibleMailLabels';
 import {useAuth} from './AuthContext';
+import {pinnedFirst} from '@/lib/mail-pins';
 import {groupConversations} from '@/lib/conversations';
 
 // Global cache states removed as predictive prefetch happens in Rust backend now
@@ -31,6 +32,13 @@ interface EmailListProps {
     emails: Email[];
     selectedEmailId: string | null;
     onSelectEmail: (id: string) => void;
+    onReply?: (id:string)=>void;
+    onTogglePin?:(id:string)=>void;
+    onNewToSender?:(id:string)=>void;
+    onSnooze?:(id:string)=>void;
+    onUnsnooze?:(id:string)=>void;
+    onReplyAll?: (id:string)=>void;
+    onForward?: (id:string)=>void;
     onToggleStar?: (emailId: string) => void;
     onToggleRead?: (emailId: string) => void;
     onDeleteMessage?: (emailId: string) => void;
@@ -62,6 +70,13 @@ const EmailList: React.FC<EmailListProps> = ({
     emails,
     selectedEmailId,
     onSelectEmail,
+    onReply,
+    onTogglePin,
+    onNewToSender,
+    onSnooze,
+    onUnsnooze,
+    onReplyAll,
+    onForward,
     onToggleStar,
     onToggleRead,
     onDeleteMessage,
@@ -109,7 +124,8 @@ const EmailList: React.FC<EmailListProps> = ({
     }, []);
 
     const displayedEmails = React.useMemo(() => {
-        const grouped = preferences.conversationView ? groupConversations(emails) : emails;
+        const rows=preferences.conversationView ? groupConversations(emails) : emails;
+        const grouped=currentFolder==='snoozed'?[...rows].sort((a,b)=>(a.snoozedUntil||Infinity)-(b.snoozedUntil||Infinity)):pinnedFirst(rows);
         const unread = new Set(emails.filter(item=>item.unread).map(item=>item.id));
         const starred = new Set(emails.filter(item=>item.starred).map(item=>item.id));
         switch (currentFilter) {
@@ -117,7 +133,7 @@ const EmailList: React.FC<EmailListProps> = ({
             case 'flagged': return grouped.filter(e => (e.conversationIds || [e.id]).some(id=>starred.has(id)));
             default: return grouped;
         }
-    }, [emails, currentFilter, preferences.conversationView]);
+    }, [emails, currentFilter, preferences.conversationView, currentFolder]);
 
     const getItemKey = React.useCallback((index: number) => displayedEmails[index]?.id || index, [displayedEmails]);
     const { parentRef, rowVirtualizer, virtualItems } = useVirtualEmailList({
@@ -407,9 +423,16 @@ const EmailList: React.FC<EmailListProps> = ({
             )}
             <EmailContextMenu 
                 contextMenu={contextMenuState && emails.some(email => email.id === contextMenuState.emailId)
-                    ? { ...contextMenuState, unread: Boolean(emails.find(email => email.id === contextMenuState.emailId)?.unread) }
+                    ? { ...contextMenuState, snoozedUntil:emails.find(email=>email.id===contextMenuState.emailId)?.snoozedUntil, canSnooze:emails.find(email=>email.id===contextMenuState.emailId)?.folder==='inbox', pinned:Boolean(displayedEmails.find(email=>email.id===contextMenuState.emailId)?.pinned), unread: Boolean(emails.find(email => email.id === contextMenuState.emailId)?.unread) }
                     : null}
                 onClose={() => setContextMenuState(null)} 
+                onSnooze={onSnooze}
+                onUnsnooze={onUnsnooze}
+                onTogglePin={onTogglePin}
+                onNewToSender={onNewToSender}
+                onReplyAll={onReplyAll}
+                onForward={onForward}
+                onReply={onReply}
                 onToggleRead={onToggleRead} 
                 isTrash={currentFolder === 'trash'}
                 onDelete={onDeleteMessage}

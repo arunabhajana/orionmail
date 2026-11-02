@@ -44,6 +44,7 @@ export interface ComposeHandle { restore: () => void; }
 
 interface ComposeModalProps {
   initialDraft?: MailDraft;
+  initialMessage?: DraftPayload;
   windowRef?: React.Ref<ComposeHandle>;
   onClose: () => void;
   onSendStart?: (pending: PendingSentMessage) => void;
@@ -235,7 +236,7 @@ function LinkDialog({ open, initialUrl, isEditing, onConfirm, onCancel }: LinkDi
 export type ComposeWindowState = "normal" | "maximized" | "minimized" | "hidden";
 export type ComposeStatus = "draft" | "sending" | "sent" | "failed";
 
-export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSendFailure, windowRef, initialDraft }: ComposeModalProps) {
+export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSendFailure, windowRef, initialDraft, initialMessage }: ComposeModalProps) {
   const { preferences } = useAppPreferences();
   const [showSignature, setShowSignature] = useState(false);
   const { user } = useAuth();
@@ -243,12 +244,12 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
   const contactsId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closingRef = useRef(false);
-  const [cc, setCc] = useState(initialDraft?.payload.cc ?? preferences.defaultCc);
-  const [bcc, setBcc] = useState(initialDraft?.payload.bcc ?? preferences.defaultBcc);
-  const [showCopies, setShowCopies] = useState(Boolean(initialDraft ? initialDraft.payload.cc || initialDraft.payload.bcc : preferences.defaultCc || preferences.defaultBcc));
+  const [cc, setCc] = useState(initialDraft?.payload.cc ?? initialMessage?.cc ?? preferences.defaultCc);
+  const [bcc, setBcc] = useState(initialDraft?.payload.bcc ?? initialMessage?.bcc ?? preferences.defaultBcc);
+  const [showCopies, setShowCopies] = useState(Boolean(initialDraft ? initialDraft.payload.cc || initialDraft.payload.bcc : initialMessage?.cc || initialMessage?.bcc || preferences.defaultCc || preferences.defaultBcc));
   const sendGuard = useRef(false);
-  const [subject, setSubject] = useState(initialDraft?.payload.subject || '');
-  const [attachments, setAttachments] = useState<AttachmentFile[]>(() => initialDraft?.payload.attachments.map(file => ({ ...file, handle: '', mimeType: file.mime_type, addedAt: initialDraft.updated_at })) || []);
+  const [subject, setSubject] = useState(initialDraft?.payload.subject || initialMessage?.subject || '');
+  const [attachments, setAttachments] = useState<AttachmentFile[]>(() => initialDraft ? initialDraft.payload.attachments.map(file => ({ ...file, handle: '', mimeType: file.mime_type, addedAt: initialDraft.updated_at })) : (initialMessage?.attachments || []).map(file=>({...file,handle:file.handle||'',mimeType:file.mime_type,addedAt:Date.now()})));
   const attachmentsRef = useRef(attachments);
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -266,7 +267,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
 
   const [composeStatus, setComposeStatus] = useState<ComposeStatus>("draft");
   const [bodyEdited, setBodyEdited] = useState(false);
-  const [restoreHtml] = useState(() => initialDraft ? DOMPurify.sanitize(initialDraft.payload.html) : undefined);
+  const [restoreHtml] = useState(() => initialDraft ? DOMPurify.sanitize(initialDraft.payload.html) : initialMessage ? DOMPurify.sanitize(initialMessage.html) : undefined);
 
 
   const [toast, setToast] = useState<{ message: string; id: number } | null>(null);
@@ -281,10 +282,10 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
   // Rich text editor state
   const [editorValue, setEditorValue] = useState<RichTextEditorValue>({
     html: restoreHtml || '',
-    plainText: initialDraft?.payload.plain || '',
+    plainText: initialDraft?.payload.plain || initialMessage?.plain || '',
     json: { type: "doc", content: [] },
     characterCount: 0,
-    isEmpty: !initialDraft?.payload.plain.trim(),
+    isEmpty: !(initialDraft?.payload.plain || initialMessage?.plain)?.trim(),
   });
   const editorRef = useRef<Editor | null>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
@@ -311,15 +312,16 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
     toggleOpen,
     addRecipient,
     setInputValue,
-  } = useRecipientAutocomplete(initialDraft?.payload.to, initialDraft?.payload.pending_to);
+  } = useRecipientAutocomplete(initialDraft?.payload.to ?? initialMessage?.to, initialDraft?.payload.pending_to);
 
   const hasDraftContent = Boolean(initialDraft || subject.trim() || recipients.length || inputValue.trim() || cc !== preferences.defaultCc || bcc !== preferences.defaultBcc || attachments.length || !editorValue.isEmpty && editorValue.plainText.replace(/\s/g, '') !== (`—${preferences.signature}`).replace(/\s/g, ''));
   const draftPayload = React.useMemo<DraftPayload>(() => ({
+    in_reply_to: initialDraft?.payload.in_reply_to ?? initialMessage?.in_reply_to, references: initialDraft?.payload.references ?? initialMessage?.references,
     to: recipients, pending_to: inputValue, cc, bcc, subject,
     html: !bodyEdited && initialDraft ? initialDraft.payload.html : `<div style="font-family:${preferences.composeFont === 'serif' ? 'Georgia, serif' : preferences.composeFont === 'monospace' ? 'Courier New, monospace' : 'Arial, sans-serif'}">${editorValue.html}</div>`,
     plain: !bodyEdited && initialDraft ? initialDraft.payload.plain : editorValue.plainText,
     attachments: attachments.map(file => ({ id: file.id, name: file.name, size: file.size, mime_type: file.mimeType, ...(file.handle ? { handle: file.handle } : {}) })),
-  }), [recipients, inputValue, cc, bcc, subject, bodyEdited, initialDraft, editorValue.html, editorValue.plainText, attachments, preferences.composeFont]);
+  }), [recipients, inputValue, cc, bcc, subject, bodyEdited, initialDraft, editorValue.html, editorValue.plainText, attachments, preferences.composeFont, initialMessage]);
   const draft = useDraftComposer(user?.id, initialDraft, draftPayload, hasDraftContent, composeStatus === 'sending' || composeStatus === 'sent');
 
   const validAddress = (value: string) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value.trim());
@@ -527,16 +529,17 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
 
   const handleEditorReady = useCallback((e: Editor) => {
     editorRef.current = e;
-    if (!initialDraft && preferences.signature.trim() && e.isEmpty) {
+    if (!initialDraft && !initialMessage && preferences.signature.trim() && e.isEmpty) {
       e.commands.setContent(`<p></p>${signatureHtml(preferences.signature)}`);
       e.commands.setTextSelection(1);
     }
+    if (initialMessage?.in_reply_to) e.commands.focus('start');
     setTick((t) => t + 1);
 
     // Subscribe to selection updates so toolbar stays live
     e.on("selectionUpdate", () => setTick((t) => t + 1));
     e.on("transaction", () => setTick((t) => t + 1));
-  }, [preferences.signature, initialDraft]);
+  }, [preferences.signature, initialDraft, initialMessage]);
 
   const isSending = composeStatus === 'sending';
   const editingDisabled = isSending || composeStatus === 'sent' || draft.blocked;
@@ -769,7 +772,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
             ) : (
               <>
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Pencil className="size-4" /></span>
-                <div className="min-w-0"><h1 className="truncate text-[13px] font-semibold">{isMinimized ? subject || 'New message' : 'New message'}</h1>{!isMinimized && user?.email && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">From {user.email}</p>}</div>
+                <div className="min-w-0"><h1 className="truncate text-[13px] font-semibold">{isMinimized ? subject || 'New message' : (initialDraft?.payload.in_reply_to || initialMessage?.in_reply_to) ? 'Reply' : 'New message'}</h1>{!isMinimized && user?.email && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">From {user.email}</p>}</div>
               </>
             )}
           </div>

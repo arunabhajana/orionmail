@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { Reply, ReplyAll, Forward, Archive, Trash2, Mail, MailOpen, Pin, Clock, Tag, Undo2 } from 'lucide-react';
+import { Reply, ReplyAll, Forward, Send, Trash2, Mail, MailOpen, Pin, Clock, Tag, Undo2 } from 'lucide-react';
 import { ContextMenu, ContextMenuAction } from '@/components/ui/ContextMenu';
 
 export interface EmailContextMenuState {
@@ -9,11 +9,21 @@ export interface EmailContextMenuState {
     y: number;
     emailId: string;
     unread: boolean;
+    pinned?:boolean;
+    snoozedUntil?:number;
+    canSnooze?:boolean;
 }
 
-export function EmailContextMenu({ contextMenu, onClose, onToggleRead, onAddTags, isTrash, onRestore, onDelete }: {
+export function EmailContextMenu({ contextMenu, onClose, onTogglePin, onNewToSender, onSnooze, onUnsnooze, onReply, onReplyAll, onForward, onToggleRead, onAddTags, isTrash, onRestore, onDelete }: {
     contextMenu: EmailContextMenuState | null;
     onClose: () => void;
+    onReply?: (id:string)=>void;
+    onTogglePin?:(id:string)=>void;
+    onNewToSender?:(id:string)=>void;
+    onSnooze?:(id:string)=>void;
+    onUnsnooze?:(id:string)=>void;
+    onReplyAll?: (id:string)=>void;
+    onForward?: (id:string)=>void;
     onToggleRead?: (id: string) => void;
     onAddTags?: (id: string) => void;
     isTrash?: boolean;
@@ -25,17 +35,18 @@ export function EmailContextMenu({ contextMenu, onClose, onToggleRead, onAddTags
         { id: 'delete-forever', label: 'Delete forever', icon: <Trash2 size={16} />, destructive: true, disabled: !onDelete, onSelect: () => { if (contextMenu) onDelete?.(contextMenu.emailId); } },
         { id: 'read', label: contextMenu?.unread ? 'Mark as read' : 'Mark as unread', icon: <Mail size={16} />, disabled: !onToggleRead, onSelect: () => { if (contextMenu) onToggleRead?.(contextMenu.emailId); } },
     ] : [
-        { id: 'reply', label: 'Reply', icon: <Reply size={16} /> },
-        { id: 'reply-all', label: 'Reply All', icon: <ReplyAll size={16} /> },
-        { id: 'forward', label: 'Forward', icon: <Forward size={16} /> },
-        { id: 'archive', label: 'Archive', icon: <Archive size={16} />, separatorBefore: true },
+        { id: 'reply', label: 'Reply', icon: <Reply size={16} />, disabled:!onReply, onSelect:()=>{if(contextMenu)onReply?.(contextMenu.emailId);} },
+        { id: 'reply-all', label: 'Reply all', icon: <ReplyAll size={16} />,disabled:!onReplyAll,onSelect:()=>{if(contextMenu)onReplyAll?.(contextMenu.emailId);} },
+        { id: 'forward', label: 'Forward', icon: <Forward size={16} />,disabled:!onForward,onSelect:()=>{if(contextMenu)onForward?.(contextMenu.emailId);} },
+        { id: 'new-to-sender', label: 'Email sender', icon: <Send size={16} />, separatorBefore: true,disabled:!onNewToSender,onSelect:()=>{if(contextMenu)onNewToSender?.(contextMenu.emailId);} },
         { id: 'delete', label: 'Move to Trash', icon: <Trash2 size={16} />, destructive: true, disabled: !onDelete, onSelect: () => { if (contextMenu) onDelete?.(contextMenu.emailId); } },
         { id: 'read', label: contextMenu?.unread ? 'Mark as Read' : 'Mark as Unread',
           icon: contextMenu?.unread ? <MailOpen size={16} /> : <Mail size={16} />,
           disabled: !onToggleRead,
           onSelect: () => { if (contextMenu) onToggleRead?.(contextMenu.emailId); } },
-        { id: 'pin', label: 'Pin email', icon: <Pin size={16} />, separatorBefore: true },
-        { id: 'snooze', label: 'Snooze', icon: <Clock size={16} /> },
+        { id: 'pin', label: contextMenu?.pinned?'Unpin message':'Pin to top', icon: <Pin size={16} />, separatorBefore: true,disabled:!onTogglePin,onSelect:()=>{if(contextMenu)onTogglePin?.(contextMenu.emailId);} },
+        { id: 'snooze', label: contextMenu?.snoozedUntil?'Reschedule snooze':contextMenu?.canSnooze?'Snooze':'Snooze (Inbox only)', icon: <Clock size={16} />,disabled:!onSnooze||!contextMenu?.canSnooze,onSelect:()=>{if(contextMenu)onSnooze?.(contextMenu.emailId);} },
+        ...(contextMenu?.snoozedUntil?[{id:'unsnooze',label:'Unsnooze',icon:<Undo2 size={16}/>,onSelect:()=>onUnsnooze?.(contextMenu.emailId)}]:[]),
         { id: 'tags', label: 'Manage tags', icon: <Tag size={16} />, disabled: !onAddTags,
           onSelect: () => { if (contextMenu) onAddTags?.(contextMenu.emailId); } },
     ];

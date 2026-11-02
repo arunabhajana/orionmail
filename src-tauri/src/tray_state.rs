@@ -153,6 +153,8 @@ pub fn spawn_tray_update_loop(app: AppHandle) {
             tokio::select! {
                 _ = interval.tick() => {
                     update_tray_now(&app);
+                    let snooze_app=app.clone();
+                    tauri::async_runtime::spawn_blocking(move||crate::snooze::tick(&snooze_app));
                     let allowed = crate::mail_preferences::load(&app).notifications_allowed();
                     if allowed != notifications_allowed {
                         notifications_allowed = allowed;

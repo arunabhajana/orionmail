@@ -67,7 +67,7 @@ pub fn unread(app: &AppHandle, account: &str, items: Vec<Item>) -> Result<Vec<It
         for chunk in items.chunks(200) {
             let placeholders=vec!["?";chunk.len()].join(",");
             let importance=if prefs.important_only {" AND EXISTS(SELECT 1 FROM message_tags mt JOIN tags t ON t.account_id=mt.account_id AND t.id=mt.tag_id WHERE mt.account_id=messages.account_id AND mt.folder=messages.folder AND mt.message_uid=messages.uid AND t.type='system' AND (lower(t.name)='important' OR lower(t.id)='important'))"}else{""};
-            let sql=format!("SELECT uid,uid_validity FROM messages WHERE account_id=? AND folder=? AND seen=0 AND uid IN ({placeholders}){importance}");
+            let sql=format!("SELECT uid,uid_validity FROM messages WHERE account_id=? AND folder=? AND seen=0 AND uid IN ({placeholders}){importance} AND NOT EXISTS(SELECT 1 FROM mail_snoozes s WHERE s.account_id=messages.account_id AND s.state=0 AND s.wake_at>strftime('%s','now') AND messages.folder='inbox' AND messages.uid<=s.seen_uid AND messages.date<=s.cutoff AND s.key IN(json_array('thread',COALESCE(NULLIF(messages.thread_id,''),messages.message_id)),json_array('source',messages.folder,messages.uid,messages.uid_validity)))");
             let mut values=vec![rusqlite::types::Value::Text(account.into()),rusqlite::types::Value::Text(folder.clone())];
             values.extend(chunk.iter().map(|item|rusqlite::types::Value::Integer(item.uid as i64)));
             let mut stmt=conn.prepare(&sql).map_err(|e|e.to_string())?;
