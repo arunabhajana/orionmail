@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { ROOT, checkVersions, bumpPlan, writeBatch, loadReleases, generatedCatalog, markdown, requirePublishable } from './release/lib.mjs';
+import { ROOT, checkVersions, bumpPlan, writeBatch, loadReleases, generatedCatalog, sameGeneratedContent, markdown, requirePublishable } from './release/lib.mjs';
 const [command, ...args] = process.argv.slice(2);
 const dry = args.includes('--dry-run');
 function run(bin, argv) {
@@ -25,7 +25,7 @@ function currentRelease(ready = false) {
 }
 function generate(check = false) {
     const target = 'lib/generated/releases.ts', content = generatedCatalog();
-    if (check) { if (!fs.existsSync(path.join(ROOT, target)) || fs.readFileSync(path.join(ROOT, target), 'utf8') !== content) throw new Error('Release catalog is stale. Run npm run release:generate and commit it.'); }
+    if (check) { if (!fs.existsSync(path.join(ROOT, target)) || !sameGeneratedContent(fs.readFileSync(path.join(ROOT, target), 'utf8'), content)) throw new Error('Release catalog is stale. Run npm run release:generate and commit it.'); }
     else writeBatch(ROOT, new Map([[target, content]]));
 }
 function requireReleaseGit(version, remoteCheck) {

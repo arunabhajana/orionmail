@@ -1,0 +1,2 @@
+# Keep the generated release catalog deterministic across checkouts.
+/lib/generated/releases.ts text eol=lf

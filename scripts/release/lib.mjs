@@ -132,3 +132,8 @@ export function generatedCatalog(root = ROOT) {
 export function markdown(release) {
     return `# OrionMail ${release.version} — ${release.title}\n\n${release.summary}\n\n` + release.sections.map(section => `## ${section.category}\n\n` + section.items.map(item => `- **${item.title}:** ${item.text}`).join('\n')).join('\n\n') + '\n';
 }
+
+/** Git may check out generated text with CRLF on Windows. Content must still match. */
+export function sameGeneratedContent(actual, expected) {
+    return actual.replace(/\r\n/g, "\n") === expected.replace(/\r\n/g, "\n");
+}

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ROOT, checkVersions, bumpPlan, writeBatch, validateRelease, generatedCatalog, readJSON, markdown, requirePublishable } from './release/lib.mjs';
+import { ROOT, checkVersions, bumpPlan, writeBatch, validateRelease, generatedCatalog, sameGeneratedContent, readJSON, markdown, requirePublishable } from './release/lib.mjs';
 function fixture(t) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orion-release-test-'));
     t.after(() => { const resolved = path.resolve(root); assert.ok(resolved.startsWith(path.resolve(os.tmpdir()) + path.sep)); assert.ok(path.basename(resolved).startsWith('orion-release-test-')); fs.rmSync(resolved, { recursive: true, force: true }); });
@@ -58,4 +58,11 @@ test('release validation rejects unfinished notes, missing images and unsafe ima
 test('catalog and text-only release description are deterministic and version aligned', t => {
     const root = fixture(t), release = readJSON(root, 'releases/0.1.0.json'); assert.equal(generatedCatalog(root), generatedCatalog(root));
     const body = markdown(release); assert.match(body, /## Added/); assert.match(body, /## Known issues/); assert.ok(!body.includes('<svg')); assert.ok(!body.includes('!['));
+});
+
+test('generated catalog checks accept Windows line endings but reject stale content', () => {
+    const expected = generatedCatalog();
+    assert.equal(sameGeneratedContent(expected.replace(/\n/g, '\r\n'), expected), true);
+    assert.equal(sameGeneratedContent(expected.replace('export const releases', 'export const stale'), expected), false);
+    assert.equal(sameGeneratedContent(expected + '\n', expected), false);
 });
