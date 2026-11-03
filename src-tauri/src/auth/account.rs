@@ -85,6 +85,7 @@ pub struct UserProfile {
     pub name: String,
     pub picture: String,
     pub provider: MailProvider,
+    pub needs_reauth: bool,
 }
 
 impl From<Account> for UserProfile {
@@ -95,6 +96,7 @@ impl From<Account> for UserProfile {
             name: account.profile_name,
             picture: account.profile_picture,
             provider: account.provider,
+            needs_reauth: account.needs_reauth,
         }
     }
 }

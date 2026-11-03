@@ -5,7 +5,26 @@ export interface Attachment {
     type: string;
 }
 
+/** Header DTO returned by native mailbox reads. Ownership comes from the scoped request. */
+export interface NativeMessageHeader {
+    folder: string;
+    uid: number;
+    uid_validity: number;
+    subject: string;
+    from: string;
+    date: number;
+    seen: boolean;
+    flagged: boolean;
+    message_id?: string | null;
+    thread_id?: string | null;
+    snippet?: string | null;
+    to?: string | null;
+    tags?: string[];
+}
+
 export interface Email {
+    /** Mailbox owner. Optional only for legacy fixtures/optimistic local rows. */
+    accountId?: string;
     pinned?: boolean;
     snoozedUntil?:number;
     resurfacedAt?:number;

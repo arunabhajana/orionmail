@@ -1,4 +1,6 @@
 "use client";
+import { useDevToolsEnabled } from '@/hooks/useDevToolsEnabled';
+
 
 
 import { Window as TauriWindow } from "@tauri-apps/api/window";
@@ -117,7 +119,7 @@ function DndToggle() {
  * Cycles between 'Online' and 'Syncing' states.
  */
 function SyncIndicator() {
-    const { isSyncing, syncMessage, unreadCounts } = useSync();
+    const { isSyncing, unreadCounts } = useSync();
     const { loading, mailboxLoading, isBootstrappingInbox } = useAuth();
     const unreadCount = unreadCounts['inbox'] || 0;
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -235,7 +237,7 @@ function DevToolsPopover() {
     const { user } = useAuth();
     const { startTask, endTask } = useBackgroundTasks();
     const [isOpen, setIsOpen] = useState(false);
-    const [enabled, setEnabled] = useState(false);
+    const enabled = useDevToolsEnabled();
     const [isSimulatedOffline, setIsSimulatedOffline] = useState(false);
     const [previewLoading, setPreviewLoading] = useState(false);
     const popoverRef = useRef<HTMLDivElement>(null);
@@ -243,10 +245,10 @@ function DevToolsPopover() {
     useEffect(() => {
         // Hydrate
         if (typeof window !== 'undefined') {
-            setEnabled(localStorage.getItem("orion_dev_tools_enabled") === "true");
+
             
-            const handleToggle = (e: any) => {
-                setEnabled(e.detail);
+            const handleToggle = (event: Event) => {
+                const e = event as CustomEvent<boolean>;
                 if (!e.detail) setIsOpen(false);
             };
             window.addEventListener("orion:dev_tools_toggled", handleToggle);

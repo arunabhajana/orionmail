@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Check, Loader2, Tag as TagIcon } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { toast } from 'sonner';
 import { Tag } from '@/lib/types';
 
@@ -44,6 +44,7 @@ interface CreateTagModalProps {
 }
 
 export const CreateTagModal: React.FC<CreateTagModalProps> = ({ onClose }) => {
+    const invoke = useAccountInvoke();
     const [name, setName] = useState('');
     const [parentTag, setParentTag] = useState<string>('');
     const [selectedColor, setSelectedColor] = useState<{ bg: string, text: string } | null>(null);
@@ -54,7 +55,7 @@ export const CreateTagModal: React.FC<CreateTagModalProps> = ({ onClose }) => {
         invoke<Tag[]>('get_all_tags')
             .then(setExistingTags)
             .catch(console.error);
-    }, []);
+    }, [invoke]);
 
     const trimmedName = name.trim();
     const fullName = parentTag ? `${parentTag}/${trimmedName}` : trimmedName;

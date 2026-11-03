@@ -106,9 +106,10 @@ pub fn start_worker(app: &AppHandle) {
                 {
                     continue;
                 }
-                if let Ok(account) = crate::auth::bootstrap::ensure_active_account(&app).await {
-                    if matches!(account.provider, crate::auth::account::MailProvider::Google) {
-                        let _ = remote::sync(&app, &account).await;
+                for profile in crate::auth::session::load_profile_metadata(&app).0 {
+                    if profile.needs_reauth { continue; }
+                    if let Ok(account) = crate::auth::bootstrap::ensure_account(&app, &profile.id).await {
+                        if matches!(account.provider, crate::auth::account::MailProvider::Google) { let _ = remote::sync(&app, &account).await; }
                     }
                 }
             }
@@ -125,9 +126,7 @@ mod reply_payload_tests {
     use super::*;
     #[test]
     fn reply_metadata_survives_draft_serialization_and_rejects_header_injection(){
-        let mut payload=Payload::default();
-        payload.in_reply_to=Some("<parent@example.com>".into());
-        payload.references=vec!["<root@example.com>".into(),"<parent@example.com>".into()];
+        let mut payload=Payload{in_reply_to:Some("<parent@example.com>".into()),references:vec!["<root@example.com>".into(),"<parent@example.com>".into()],..Default::default()};
         assert!(payload.validate().is_ok());
         let restored:Payload=serde_json::from_str(&serde_json::to_string(&payload).unwrap()).unwrap();
         assert_eq!(restored.in_reply_to,payload.in_reply_to);assert_eq!(restored.references,payload.references);

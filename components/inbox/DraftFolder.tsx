@@ -53,6 +53,8 @@ export function DraftFolder({ accountId, onOpen, onCompose, onBeforeOpen }: { ac
         const terms = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
         return drafts.filter(draft => { const text = `${draft.subject} ${draft.to.join(' ')} ${draft.preview}`.toLocaleLowerCase(); return terms.every(term => text.includes(term)); });
     }, [drafts, query]);
+    // Virtualizer owns mutable measurements; keep this hook outside compiler memoization.
+    // eslint-disable-next-line react-hooks/incompatible-library
     const rows = useVirtualizer({ count: filtered.length, getScrollElement: () => scroll.current, estimateSize: () => 136, overscan: 3, getItemKey: index => filtered[index].id });
     const open = async (draft: DraftSummary) => {
         if (opening) return;

@@ -253,6 +253,8 @@ pub fn run() {
       get_current_user,
       update_display_name,
       list_accounts,
+      switch_account,
+      mail::notifications::pending_notification_account,
       logout_user,
       bootstrap_accounts,
       get_mailboxes,

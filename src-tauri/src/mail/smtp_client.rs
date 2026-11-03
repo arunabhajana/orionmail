@@ -1,6 +1,5 @@
 use crate::auth::account::{Account, MailProvider};
 use crate::auth::oauth::refresh_google_token;
-use crate::auth::session::save_account;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use lettre::message::{MultiPart, header::MessageId};
@@ -36,6 +35,7 @@ impl From<anyhow::Error> for SendError {
     }
 }
 
+#[expect(clippy::too_many_arguments, reason = "Keeps the complete validated mail identity and operation fields explicit at this boundary.")]
 pub async fn send_email(
     app_handle: &AppHandle,
     account: &mut Account,
@@ -51,11 +51,9 @@ pub async fn send_email(
 ) -> Result<String, SendError> {
     // 1. Check if token needs refreshing (buffer of 5 minutes)
     if account.expires_at < Utc::now().timestamp() + 300 {
-        if let Err(e) = refresh_google_token(account).await {
+        if let Err(e) = refresh_google_token(app_handle, account).await {
             return Err(SendError::Other(format!("Failed to refresh token: {}", e)));
         }
-        // Save the updated account
-        let _ = save_account(app_handle, account.clone(), false);
     }
 
     // 2. Build the message
@@ -132,7 +130,7 @@ pub async fn send_email(
             all_recipients.extend(bcc);
             
             if !all_recipients.is_empty() {
-                if let Err(e) = crate::contacts::contact_indexer::record_sent_emails(app_handle, all_recipients) {
+                if let Err(e) = crate::contacts::contact_indexer::record_sent_emails(app_handle, &account.id, all_recipients) {
                     log::warn!("Failed to record sent emails for contacts index: {}", e);
                 }
             }

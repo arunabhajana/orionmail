@@ -239,14 +239,15 @@ pub async fn sync_folder_with_options(
                 if !raw_headers.is_empty() {
                     if let Err(e) = crate::contacts::contact_indexer::extract_and_store_contacts(
                         &app_handle_clone,
+                        &account_clone.id,
                         &raw_headers,
                     ) {
                         log::error!("Failed to index contacts: {}", e);
                     }
                 }
 
-                if batch_count > 0 {
-                    if !is_bootstrap && crate::mail_preferences::load(&app_handle_clone).folder_notifications_allowed(&folder_clone.to_string()) {
+                if batch_count > 0
+                    && !is_bootstrap && crate::mail_preferences::load(&app_handle_clone).folder_notifications_allowed(&folder_clone.to_string()) {
                         let mut notif_batch = Vec::new();
                         for msg in messages.iter().filter(|msg| msg.uid > sync_state.last_uid) {
                             notif_batch.push((msg.from.clone(), msg.subject.clone(), msg.uid));
@@ -258,7 +259,6 @@ pub async fn sync_folder_with_options(
                             &notif_batch,
                         ); }
                     }
-                }
 
             }
             // Keep an arrival watermark and a separate descending history cursor.
@@ -326,16 +326,16 @@ pub async fn sync_folder_with_options(
         Err(e) => {
             // Error handling
             let mut sync_state =
-                database::get_folder_sync_state(&app_handle, &account.id, &folder_name)
+                database::get_folder_sync_state(app_handle, &account.id, &folder_name)
                     .unwrap_or(None)
                     .unwrap_or_default();
             sync_state.account_id = account.id.clone();
             sync_state.folder = folder_name.clone();
             sync_state.last_error = Some(e.clone());
-            let _ = database::update_folder_sync_state(&app_handle, &sync_state);
+            let _ = database::update_folder_sync_state(app_handle, &sync_state);
             if folder == MailFolder::Inbox {
                 let _ = crate::mail::database::update_global_sync_time(
-                    &app_handle,
+                    app_handle,
                     &account.id,
                     None,
                     Some(e.clone()),

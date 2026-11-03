@@ -45,6 +45,8 @@ interface EmailDetailProps {
 // --- Main Component ---
 
 const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onRestoreMessage, onMarkAsRead, onToggleRead, onBack, onReply, onReplyAll, onForward, onManageTags, onSnooze, isSnoozed, conversation=[],onSelectConversation,conversationNotice }) => {
+
+    const isConversation = conversation.length > 1;
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const emailIframeRef = React.useRef<HTMLIFrameElement>(null);
     const { resolvedTheme } = useTheme();
@@ -54,6 +56,13 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     const [conversationCollapsed,setConversationCollapsed] = React.useState(false);
     const remoteMessageKey = `${user?.id}:${email?.id}`;
     const [showQuoted,setShowQuoted] = React.useState(false);
+    const readerKey = `${remoteMessageKey}:${isConversation}`;
+    const [lastReaderKey, setLastReaderKey] = React.useState(readerKey);
+    if (lastReaderKey !== readerKey) {
+        setLastReaderKey(readerKey);
+        setConversationCollapsed(false);
+        setShowQuoted(false);
+    }
     const [allowedRemoteMessage, setAllowedRemoteMessage] = React.useState<string | null>(null);
     const remoteAllowed = !preferences.blockRemoteImages || allowedRemoteMessage === remoteMessageKey;
 
@@ -70,14 +79,12 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
     const cleanReply = React.useMemo(()=>replyDisplay(bodyContent),[bodyContent]);
 
     React.useEffect(() => {
-        setConversationCollapsed(false);
-        setShowQuoted(false);
         scrollRef.current?.scrollTo({ top: 0 });
-    }, [email?.id, user?.id, conversation.length>1]);
+    }, [email?.id, user?.id, isConversation]);
 
     const detectedActions = React.useMemo(() => {
         if (!preferences.smartActionsGlobal || !extractedData || isLoadingBody) return [];
-        
+
         return SmartActionsEngine.detect({
             extractedData,
             receivedAt: email?.timestamp || 0,
@@ -92,16 +99,16 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
         return detectedActions.filter(action => {
             if (action.kind === SmartActionKind.OTP && !preferences.smartActionsOtp) return false;
             if (action.kind === SmartActionKind.MEETING && !preferences.smartActionsMeetings) return false;
-            
+
             const commerceKinds = [
-                SmartActionKind.PURCHASE, SmartActionKind.ORDER, SmartActionKind.INVOICE, 
-                SmartActionKind.REFUND, SmartActionKind.SUBSCRIPTION, SmartActionKind.TRANSACTION, 
+                SmartActionKind.PURCHASE, SmartActionKind.ORDER, SmartActionKind.INVOICE,
+                SmartActionKind.REFUND, SmartActionKind.SUBSCRIPTION, SmartActionKind.TRANSACTION,
                 SmartActionKind.DELIVERY, SmartActionKind.PAYMENT
             ];
             if (commerceKinds.includes(action.kind) && !preferences.smartActionsCommerce) return false;
-            
+
             if (action.kind === SmartActionKind.TRAVEL && !preferences.smartActionsTravel) return false;
-            
+
             return true;
         });
     }, [detectedActions, preferences.smartActionsGlobal, preferences.smartActionsOtp, preferences.smartActionsMeetings, preferences.smartActionsCommerce, preferences.smartActionsTravel]);
@@ -142,14 +149,14 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                         #email-content-wrapper { display: block; overflow: hidden; }
                                         #email-content-wrapper > :first-child { margin-top: 0 !important; }
                                         #email-content-wrapper > :last-child { margin-bottom: 0 !important; }
-                                        
+
                                         /* Smart Invert for Dark Mode */
                                         html.dark-mode {
                                             filter: invert(1) hue-rotate(180deg) brightness(1.05);
-                                            background-color: ${conversation.length>1?'#e7e7e7':'#EEEEEE'};
+                                            background-color: ${isConversation?'#e7e7e7':'#EEEEEE'};
                                         }
-                                        html.dark-mode img, 
-                                        html.dark-mode video, 
+                                        html.dark-mode img,
+                                        html.dark-mode video,
                                         html.dark-mode picture,
                                         html.dark-mode svg,
                                         html.dark-mode [style*="background-image"] {
@@ -168,12 +175,12 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                         const wrapper = document.getElementById('email-content-wrapper');
                                         let lastHeight = 0;
                                         ${conversationSurfaceScript(isDark)}
-                                        
+
                                         // --- Smart Dark Mode Heuristics ---
                                         const applySmartInvert = () => {
-                                            if (${conversation.length>1} && applyConversationSurface()) return;
+                                            if (${isConversation} && applyConversationSurface()) return;
                                             if (!${isDark}) return;
-                                            
+
                                             // Function to parse rgb/rgba to check brightness
                                             const getBrightness = (colorStr) => {
                                                 const match = colorStr.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
@@ -188,21 +195,21 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                             // Check body and wrapper computed backgrounds
                                             let bodyBg = window.getComputedStyle(document.body).backgroundColor;
                                             let wrapperBg = window.getComputedStyle(wrapper).backgroundColor;
-                                            
+
                                             // If both are transparent/rgba(0,0,0,0), assume it's "white" by default HTML standards
                                             let isTransparent = (bg) => bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent';
-                                            
+
                                             let effectiveBg = 'rgb(255, 255, 255)'; // Default HTML bg
                                             if (!isTransparent(wrapperBg)) effectiveBg = wrapperBg;
                                             else if (!isTransparent(bodyBg)) effectiveBg = bodyBg;
 
                                             const brightness = getBrightness(effectiveBg);
-                                            
+
                                             // If the background is light (brightness > 128), invert it!
                                             // If it's already dark (brightness <= 128), leave it alone because it's a native dark email.
                                             document.documentElement.classList.toggle('dark-mode', brightness > 128);
                                         };
-                                        
+
                                         // Run IMMEDIATELY as the DOM parses, before images load!
                                         applySmartInvert();
                                         document.documentElement.classList.add('ready');
@@ -245,7 +252,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                                     </script>
                                 </body>
                                 </html>
-                            `, [sanitizedBody, remoteAllowed, isDark, email?.id, preferences.readingFontSize, conversation.length>1]);
+                            `, [sanitizedBody, remoteAllowed, isDark, email?.id, preferences.readingFontSize, isConversation]);
 
     if (!email) {
         return (
@@ -295,15 +302,15 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                         <MessageHeader email={email} />
 
                         {conversationNotice&&<p role="status" className="mb-4 text-xs text-muted-foreground">{conversationNotice}</p>}
-                        {conversation.length>1&&<div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+                        {isConversation&&<div className="mb-5 flex flex-wrap items-center justify-between gap-2">
                             <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"><MessagesSquare aria-hidden="true" className="size-3.5"/>Conversation · {conversation.length} messages</span>
                             <span className="text-[11px] text-muted-foreground">Oldest first · select a message to read</span>
                         </div>}
-                        <div className={conversation.length>1?'mail-conversation-timeline':undefined}>
+                        <div className={isConversation?'mail-conversation-timeline':undefined}>
                         {conversation.slice(0,Math.max(0,conversation.findIndex(item=>item.id===email.id))).map((item,index)=><ConversationMessageRow key={item.id} email={item} index={index} onSelect={()=>onSelectConversation?.(item.id)}/>)}
-                        <div className={conversation.length>1?'mail-conversation-open':undefined} data-conversation-active={conversation.length>1||undefined}>
-                        {conversation.length>1&&<ConversationMessageRow email={email} index={Math.max(0,conversation.findIndex(item=>item.id===email.id))} expanded={!conversationCollapsed} onSelect={()=>setConversationCollapsed(value=>!value)}/>}
-                        <div hidden={conversation.length>1&&conversationCollapsed} className={conversation.length>1?'mail-conversation-body':undefined}>
+                        <div className={isConversation?'mail-conversation-open':undefined} data-conversation-active={isConversation||undefined}>
+                        {isConversation&&<ConversationMessageRow email={email} index={Math.max(0,conversation.findIndex(item=>item.id===email.id))} expanded={!conversationCollapsed} onSelect={()=>setConversationCollapsed(value=>!value)}/>}
+                        <div hidden={isConversation&&conversationCollapsed} className={isConversation?'mail-conversation-body':undefined}>
 
                         {smartActions.length > 0 && <section aria-label="Email highlights" className="mb-4 space-y-2.5">
                             <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Highlights</h2>
@@ -337,10 +344,10 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
                             </div>
                         ) : (
                             <iframe
-                                key={`${user?.id}:${email.id}:${isDark}:${conversation.length>1}`}
+                                key={`${user?.id}:${email.id}:${isDark}:${isConversation}`}
                                 ref={emailIframeRef}
                                 title="Email Content"
-                                className={cn('block w-full border-0 email-content-iframe', conversation.length>1 ? 'bg-transparent' : 'bg-white dark:bg-[#111111]')}
+                                className={cn('block w-full border-0 email-content-iframe', isConversation ? 'bg-transparent' : 'bg-white dark:bg-[#111111]')}
                                 sandbox="allow-scripts"
                                 scrolling="no"
                                 style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}

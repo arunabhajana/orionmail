@@ -111,7 +111,7 @@ pub fn get_download_folder(app_handle:AppHandle)->Result<String,String>{
 mod tests{
     use super::*;
     #[test]fn notification_policy_handles_midnight_boundaries_and_manual_override(){
-        let mut prefs=MailPreferences::default();prefs.quiet_hours=true;
+        let mut prefs=MailPreferences{quiet_hours:true,..Default::default()};
         assert!(!prefs.notifications_allowed_at(22*60));assert!(!prefs.notifications_allowed_at(0));
         assert!(!prefs.notifications_allowed_at(8*60-1));assert!(prefs.notifications_allowed_at(8*60));
         prefs.quiet_start="09:00".into();prefs.quiet_end="17:00".into();

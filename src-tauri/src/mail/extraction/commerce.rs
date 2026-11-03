@@ -193,21 +193,21 @@ fn extract_amount(text: &str) -> Option<serde_json::Value> {
     let lines: Vec<String> = text.lines().map(clean_line).filter(|line| !line.is_empty()).collect();
 
     for clean in &lines {
-        if clean.len() < 2 || is_non_total_amount_line(&clean) {
+        if clean.len() < 2 || is_non_total_amount_line(clean) {
             continue;
         }
 
-        for cap in amount_re.captures_iter(&clean) {
+        for cap in amount_re.captures_iter(clean) {
             let (currency_raw, value_raw) = match (cap.get(1), cap.get(2), cap.get(3), cap.get(4)) {
                 (Some(currency), Some(value), _, _) => (currency.as_str(), value.as_str()),
                 (_, _, Some(value), Some(currency)) => (currency.as_str(), value.as_str()),
                 _ => continue,
             };
-            let value_text = value_raw.replace(' ', "").replace(',', "");
+            let value_text = value_raw.replace([' ', ','], "");
             let Ok(value) = value_text.parse::<f64>() else {
                 continue;
             };
-            let score = amount_line_score(&clean);
+            let score = amount_line_score(clean);
             if !value.is_finite() || value < 0.0 || (value == 0.0 && score < 60) {
                 continue;
             }
@@ -230,7 +230,7 @@ fn extract_amount(text: &str) -> Option<serde_json::Value> {
                 (_, _, Some(value), Some(currency)) => (currency.as_str(), value.as_str()),
                 _ => continue,
             };
-            let value_text = value_raw.replace(' ', "").replace(',', "");
+            let value_text = value_raw.replace([' ', ','], "");
             let Ok(value) = value_text.parse::<f64>() else {
                 continue;
             };

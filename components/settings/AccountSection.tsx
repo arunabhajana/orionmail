@@ -9,6 +9,7 @@ import { useSettings } from './SettingsContext';
 import { invoke } from '@tauri-apps/api/core';
 import { ExternalLink, RefreshCw, LogOut } from 'lucide-react';
 import { SettingGroup, SettingRow, settingButton } from './SettingsControls';
+import { AccountManager } from '@/components/accounts/AccountManager';
 
 export const SectionHeader = ({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) => (
     <div className="flex items-start justify-between mb-8">
@@ -22,7 +23,7 @@ export const SectionHeader = ({ title, description, action }: { title: string; d
 SectionHeader.displayName = "SectionHeader";
 
 export const AccountSection = () => {
-    const { user, updateDisplayName, loginWithGoogle, mailboxConnected, logout } = useAuth();
+    const { user, updateDisplayName, loginWithGoogle, needsRefresh, logout } = useAuth();
     const [reconnecting, setReconnecting] = useState(false);
     const { registerSection, unregisterSection, markDirty, requestNavigation } = useSettings();
     const [alias, setAlias] = useState(user?.name ?? '');
@@ -31,11 +32,13 @@ export const AccountSection = () => {
     const normalizedAlias = alias.trim();
     const isDirty = normalizedAlias !== savedAlias;
 
-    useEffect(() => {
-        const currentName = user?.name ?? '';
+    const currentName = user?.name ?? '';
+    const [lastName, setLastName] = useState(currentName);
+    if (lastName !== currentName) {
+        setLastName(currentName);
         setAlias(currentName);
         setSavedAlias(currentName);
-    }, [user?.id, user?.name]);
+    }
 
     useEffect(() => {
         registerSection({
@@ -70,6 +73,7 @@ export const AccountSection = () => {
 
     return (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+            <AccountManager />
             <div className="settings-group p-6">
                 <div className="flex items-center gap-6">
                     {user?.picture ? (
@@ -100,10 +104,10 @@ export const AccountSection = () => {
                 {isSaving && <p role="status" className="sr-only">Saving alias…</p>}
             </div>
             <SettingGroup title="Google account">
-                <SettingRow id="account.connection" title="Mailbox connection" description={mailboxConnected ? "Your Google mailbox is connected." : "Reconnect if your session has expired or mail cannot connect."}><span className="text-xs text-muted-foreground">{mailboxConnected ? "Connected" : "Check connection"}</span></SettingRow>
+                <SettingRow id="account.connection" title="Mailbox access" description={needsRefresh ? "Reconnect this account to resume syncing. Cached mail stays available." : "This account is signed in. Check Sync & offline for its latest sync status."}><span className="text-xs text-muted-foreground">{needsRefresh ? "Reconnect required" : "Signed in"}</span></SettingRow>
                 <SettingRow id="account.reconnect" title="Reconnect Google" description="Sign in through Google again to renew access."><button className={settingButton} disabled={reconnecting} onClick={() => requestNavigation(() => { setReconnecting(true); void loginWithGoogle().catch(() => toast.error("Could not reconnect Google.")).finally(() => setReconnecting(false)); })}><RefreshCw className={`size-3.5 ${reconnecting ? "animate-spin" : ""}`} />{reconnecting ? "Connecting…" : "Reconnect"}</button></SettingRow>
                 <SettingRow id="account.google" title="Google security" description="Manage your password, two-step verification, and connected apps at Google."><button className={settingButton} onClick={() => invoke("open_url", { url: "https://myaccount.google.com/security" }).catch(() => toast.error("Could not open Google security."))}>Open Google<ExternalLink className="size-3.5" /></button></SettingRow>
-                <SettingRow id="account.signout" title="Sign out" description="Disconnect this account from OrionMail on this device."><button className={`${settingButton} text-red-600 dark:text-red-400`} onClick={() => requestNavigation(() => { if (user) void logout(user.id).catch(() => toast.error("Could not sign out.")); })}><LogOut className="size-3.5" />Sign out</button></SettingRow>
+                <SettingRow id="account.signout" title="Sign out of this account" description={`Disconnect ${user?.email || 'this account'} from this device. Your other accounts stay signed in.`}><button className={`${settingButton} text-red-600 dark:text-red-400`} onClick={() => requestNavigation(() => { if (user) void logout(user.id).catch(error => toast.error("Could not sign out.", { description: String(error) })); })}><LogOut className="size-3.5" />Sign out</button></SettingRow>
             </SettingGroup>
         </motion.div>
     );

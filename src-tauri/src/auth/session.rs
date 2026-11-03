@@ -6,6 +6,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 pub const TOKEN_KEYCHAIN_MIGRATION_V1: u32 = 1;
+pub const MAX_ACCOUNTS: usize = 3;
 static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -18,7 +19,6 @@ pub struct AuthStore {
 
 /// Manages persistence for user accounts and active sessions.
 /// Stores data in `accounts.json` within the OS-specific app data directory.
-
 /// Loads the JSON store path from Tauri's path resolver.
 fn get_store_path(app_handle: &AppHandle) -> PathBuf {
     let mut path = app_handle
@@ -47,6 +47,9 @@ pub fn save_account(app_handle: &AppHandle, account: Account, set_active: bool) 
 }
 
 fn update_store_account(store: &mut AuthStore, account: Account, set_active: bool) -> Result<(), String> {
+    if store.accounts.len() >= MAX_ACCOUNTS && !store.accounts.iter().any(|entry|entry.id == account.id) {
+        return Err("You can connect up to 3 accounts. Sign out of an account before adding another.".into());
+    }
     if !set_active && !store.accounts.iter().any(|entry| entry.id == account.id) {
         return Err("Account was removed during refresh".into());
     }
@@ -66,35 +69,9 @@ fn update_store_account(store: &mut AuthStore, account: Account, set_active: boo
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn account(id: &str) -> Account {
-        serde_json::from_value(serde_json::json!({"id":id,"email":"same@example.com","provider":{"type":"Google"},"expires_at":0,"last_sync":null,"profile_name":"","profile_picture":""})).unwrap()
-    }
-    #[test]
-    fn background_refresh_preserves_active_account_and_cannot_restore_removed_account() {
-        let mut store = AuthStore::default();
-        update_store_account(&mut store, account("a"), true).unwrap();
-        update_store_account(&mut store, account("b"), true).unwrap();
-        update_store_account(&mut store, account("a"), true).unwrap();
-        let mut refreshed = account("b");
-        refreshed.expires_at = 1234;
-        update_store_account(&mut store, refreshed.clone(), false).unwrap();
-        assert_eq!(store.active_account_id.as_deref(),Some("a"));
-        assert_eq!(store.accounts.iter().find(|account|account.id=="b").unwrap().expires_at,1234);
-        store.accounts.retain(|account|account.id!="b");
-        assert!(update_store_account(&mut store,refreshed,false).is_err());
-        assert_eq!(store.accounts.len(),1);
-    }
-}
 
-/// Returns all stored accounts.
-pub fn load_accounts(app_handle: &AppHandle) -> Vec<Account> {
-    let _store = STORE_LOCK.lock().unwrap_or_else(|error|error.into_inner());
-    load_store(app_handle).accounts
-}
 
+/// Returns the requested stored account.
 pub fn get_account(app_handle: &AppHandle, account_id: &str) -> Option<Account> {
     let _store = STORE_LOCK.lock().unwrap_or_else(|error|error.into_inner());
     load_store_for(app_handle, Some(account_id)).accounts.into_iter().find(|account|account.id==account_id)
@@ -113,6 +90,36 @@ pub fn get_active_profile(app_handle:&AppHandle)->Option<crate::auth::account::U
     profiles.into_iter().find(|profile|Some(&profile.id)==active.as_ref())
 }
 
+pub fn ensure_account_capacity(app: &AppHandle, id: &str) -> Result<(), String> {
+    let (profiles, _) = load_profile_metadata(app);
+    if profiles.len() >= MAX_ACCOUNTS && !profiles.iter().any(|profile|profile.id == id) {
+        return Err("You can connect up to 3 accounts. Sign out of an account before adding another.".into());
+    }
+    Ok(())
+}
+
+pub fn mark_reauth(app: &AppHandle, id: &str) -> Result<(), String> {
+    let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
+    let path = get_store_path(app);
+    let mut store: AuthStore = serde_json::from_slice(&fs::read(&path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    if let Some(account) = store.accounts.iter_mut().find(|account|account.id == id && !account.needs_reauth) {
+        account.needs_reauth = true;
+        fs::write(path, serde_json::to_vec_pretty(&store).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn update_profile_name(app: &AppHandle, id: &str, name: &str) -> Result<crate::auth::account::UserProfile, String> {
+    let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
+    let path = get_store_path(app);
+    let mut store: AuthStore = serde_json::from_slice(&fs::read(&path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    let account = store.accounts.iter_mut().find(|account|account.id == id).ok_or("Account was removed")?;
+    account.profile_name = name.to_string();
+    let profile = crate::auth::account::UserProfile::from(account.clone());
+    fs::write(path, serde_json::to_vec_pretty(&store).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    Ok(profile)
+}
+
 /// Retrieves the profile currently marked as active.
 pub fn get_active_account(app_handle: &AppHandle) -> Option<Account> {
     let _store = STORE_LOCK.lock().unwrap_or_else(|error|error.into_inner());
@@ -125,7 +132,7 @@ pub fn get_active_account(app_handle: &AppHandle) -> Option<Account> {
 pub fn set_active_account(app_handle: &AppHandle, account_id: String) -> Result<(), String> {
     let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
     let path = get_store_path(app_handle);
-    let mut store = load_store(app_handle);
+    let mut store: AuthStore = serde_json::from_slice(&fs::read(&path).map_err(|error|error.to_string())?).map_err(|error|error.to_string())?;
     
     if store.accounts.iter().any(|a| a.id == account_id) {
         store.active_account_id = Some(account_id);
@@ -226,4 +233,38 @@ fn load_store_for(app_handle: &AppHandle, only_account: Option<&str>) -> AuthSto
     }
 
     store
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn account(id: &str) -> Account {
+        serde_json::from_value(serde_json::json!({"id":id,"email":"same@example.com","provider":{"type":"Google"},"expires_at":0,"last_sync":null,"profile_name":"","profile_picture":""})).unwrap()
+    }
+    #[test]
+    fn account_limit_rejects_a_fourth_but_allows_reconnecting_existing_accounts() {
+        let mut store = AuthStore::default();
+        for id in ["a", "b", "c"] { update_store_account(&mut store, account(id), true).unwrap(); }
+        assert!(update_store_account(&mut store, account("d"), true).is_err());
+        assert_eq!(store.accounts.len(), 3);
+        assert_eq!(store.active_account_id.as_deref(), Some("c"));
+        update_store_account(&mut store, account("a"), true).unwrap();
+        assert_eq!(store.accounts.len(), 3);
+        assert_eq!(store.active_account_id.as_deref(), Some("a"));
+    }
+    #[test]
+    fn background_refresh_preserves_active_account_and_cannot_restore_removed_account() {
+        let mut store = AuthStore::default();
+        update_store_account(&mut store, account("a"), true).unwrap();
+        update_store_account(&mut store, account("b"), true).unwrap();
+        update_store_account(&mut store, account("a"), true).unwrap();
+        let mut refreshed = account("b");
+        refreshed.expires_at = 1234;
+        update_store_account(&mut store, refreshed.clone(), false).unwrap();
+        assert_eq!(store.active_account_id.as_deref(),Some("a"));
+        assert_eq!(store.accounts.iter().find(|account|account.id=="b").unwrap().expires_at,1234);
+        store.accounts.retain(|account|account.id!="b");
+        assert!(update_store_account(&mut store,refreshed,false).is_err());
+        assert_eq!(store.accounts.len(),1);
+    }
 }

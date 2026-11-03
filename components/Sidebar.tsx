@@ -8,8 +8,9 @@ import { useAppPreferences } from './AppPreferencesContext';
 import { UserProfile } from './sidebar/UserProfile';
 import { NavItem, TagItem } from './sidebar/SidebarNavItem';
 import { NavItemConfig, Tag } from '@/lib/types';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { listen } from '@tauri-apps/api/event';
+import { useAuth } from './AuthContext';
 
 // --- Types ---
 
@@ -150,7 +151,9 @@ const NAV_ITEMS: NavItemConfig[] = [
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, onCreateTagClick, onEditTagClick, onDeleteTagClick, currentFolder, onFolderSelect, unreadCounts }) => {
-    const { preferences } = useAppPreferences();
+
+    const invoke = useAccountInvoke();
+    const { user } = useAuth();    const { preferences } = useAppPreferences();
     const [tags, setTags] = useState<Tag[]>([]);
     const compactTags = React.useRef<HTMLDetailsElement>(null);
     React.useEffect(() => {
@@ -166,9 +169,9 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, onCreateTagClic
         let unlisten: (() => void) | undefined;
         const refresh = () => { void invoke<Tag[]>('get_all_tags').then(value => { if (active) setTags(value); }).catch(console.error); };
         refresh();
-        void listen('mail:tags_updated', refresh).then(stop => { if (active) unlisten = stop; else stop(); }).catch(console.error);
+        void listen<string>('mail:tags_updated', event => { if (event.payload === user?.id) refresh(); }).then(stop => { if (active) unlisten = stop; else stop(); }).catch(console.error);
         return () => { active = false; unlisten?.(); };
-    }, []);
+    }, [invoke, user?.id]);
     return <aside aria-label="Mailbox navigation" className={cn('mail-sidebar flex h-full shrink-0 flex-col', className)}>
         <div className="mail-pane-topbar gap-3 !justify-center"><Image src="/logo-transparent.svg" alt="" width={36} height={36} unoptimized className="shrink-0 -translate-y-[4px]" /><span className="mail-brand-label text-lg font-semibold tracking-tight">OrionMail</span></div>
         <div className="px-3 pb-5 pt-3"><button type="button" onClick={onCompose} aria-label="Compose a message" title="Compose a message (Ctrl+N)" className="mail-compose-button"><Pencil className="size-4 shrink-0" /><span className="mail-nav-label">Compose</span></button></div>

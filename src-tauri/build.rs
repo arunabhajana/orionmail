@@ -24,6 +24,17 @@ fn main() {
   // Re-run this build script if .env changes
   println!("cargo:rerun-if-changed=.env");
 
+  // Unit-test harnesses do not inherit Tauri's executable resources. rfd's
+  // TaskDialogIndirect import requires Common Controls v6 before main starts.
+  if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+      && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+    // The app binary already links Tauri's full manifest as resource ID 1.
+    // Disable linker-generated manifests for that target only, avoiding a
+    // duplicate resource while leaving the library test harness covered.
+    println!("cargo:rustc-link-arg-bin=app=/MANIFEST:NO");
+  }
   tauri_build::build()
 }
 

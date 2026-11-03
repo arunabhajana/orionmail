@@ -15,24 +15,7 @@ pub async fn wait_until_displayed() {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn hidden_history_sleeps_and_all_waiters_resume_on_show() {
-        DISPLAYED.store(false, Ordering::Relaxed);
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), wait_until_displayed()).await.is_err());
-        let resume = async {
-            tokio::task::yield_now().await;
-            DISPLAYED.store(true, Ordering::Relaxed);
-            VISIBLE.notify_waiters();
-        };
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            tokio::join!(wait_until_displayed(), wait_until_displayed(), resume);
-        }).await.unwrap();
-        DISPLAYED.store(false, Ordering::Relaxed);
-    }
-}
+
 
 pub fn is_displayed() -> bool {
     DISPLAYED.load(Ordering::Relaxed)
@@ -75,5 +58,24 @@ pub fn refresh(window: &tauri::WebviewWindow) {
         }
     }) {
         log::debug!("Could not update WebView2 memory target: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn hidden_history_sleeps_and_all_waiters_resume_on_show() {
+        DISPLAYED.store(false, Ordering::Relaxed);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), wait_until_displayed()).await.is_err());
+        let resume = async {
+            tokio::task::yield_now().await;
+            DISPLAYED.store(true, Ordering::Relaxed);
+            VISIBLE.notify_waiters();
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(wait_until_displayed(), wait_until_displayed(), resume);
+        }).await.unwrap();
+        DISPLAYED.store(false, Ordering::Relaxed);
     }
 }

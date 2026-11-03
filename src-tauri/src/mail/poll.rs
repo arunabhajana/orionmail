@@ -39,7 +39,3 @@ pub fn start_polling(app_handle: AppHandle, account: Account) {
 pub fn stop_account(account_id: &str) {
     if let Some(handle) = POLL_HANDLE.lock().unwrap().remove(account_id) { handle.abort(); }
 }
-
-pub fn stop_polling() {
-    // SHUTDOWN_TOKEN handles graceful exit now
-}

@@ -8,9 +8,10 @@ interface SessionExpiredPopupProps {
     isOpen: boolean;
     onClose: () => void;
     onLogin: () => void;
+    email?: string;
 }
 
-export function SessionExpiredPopup({ isOpen, onClose, onLogin }: SessionExpiredPopupProps) {
+export function SessionExpiredPopup({ isOpen, onClose, onLogin, email }: SessionExpiredPopupProps) {
     return (
         <AnimatePresence>
             {isOpen && (
@@ -47,7 +48,7 @@ export function SessionExpiredPopup({ isOpen, onClose, onLogin }: SessionExpired
 
                         <h2 className="text-2xl font-bold text-foreground mb-2 tracking-tight">Session Expired</h2>
                         <p className="text-sm text-muted-foreground mb-8">
-                            Your Google authentication token has expired. Please log in again to continue syncing your emails.
+                            Reconnect {email || 'this Google account'} to resume syncing. Your cached mail stays available, and your other accounts remain connected.
                         </p>
 
                         <button
@@ -58,8 +59,9 @@ export function SessionExpiredPopup({ isOpen, onClose, onLogin }: SessionExpired
                             className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-primary text-primary-foreground font-semibold rounded-xl hover:opacity-90 transition-opacity"
                         >
                             <LogIn className="w-5 h-5" />
-                            Login Again
+                            Reconnect account
                         </button>
+                        <button type="button" onClick={onClose} className="mt-3 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground">Keep browsing</button>
                     </motion.div>
                 </div>
             )}

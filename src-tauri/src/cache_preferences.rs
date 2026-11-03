@@ -60,9 +60,9 @@ pub fn kick(app:&AppHandle,force:bool){
 }
 
 #[tauri::command]
-pub async fn clear_body_cache(app_handle:AppHandle)->Result<(),String>{
+pub async fn clear_body_cache(app_handle:AppHandle, account_id:Option<String>)->Result<(),String>{
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    let account=crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?.id;
+    let account=crate::auth::scope::profile(&app_handle, account_id.as_deref())?.id;
     let _mutation=crate::mail::message_actions::MUTATION_LOCK.lock().await;
     tokio::task::spawn_blocking(move||{
         let mut conn=crate::mail::database::open_connection(&app_handle)?;

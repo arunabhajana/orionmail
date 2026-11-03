@@ -67,10 +67,10 @@ fn write_delta(
     let mut changed = 0;
     for key in keys {
         for id in removed {
-            changed+=database::execute_cached(&tx, "DELETE FROM message_tags WHERE account_id=?1 AND folder=?2 AND message_uid=?3 AND tag_id=?4",params![account,key.folder,key.uid,id]).map_err(|e|e.to_string())?;
+            changed+=database::execute_cached(tx, "DELETE FROM message_tags WHERE account_id=?1 AND folder=?2 AND message_uid=?3 AND tag_id=?4",params![account,key.folder,key.uid,id]).map_err(|e|e.to_string())?;
         }
         for id in added {
-            changed+=database::execute_cached(&tx, "INSERT OR IGNORE INTO message_tags(account_id,folder,message_uid,tag_id) VALUES(?1,?2,?3,?4)",params![account,key.folder,key.uid,id]).map_err(|e|e.to_string())?;
+            changed+=database::execute_cached(tx, "INSERT OR IGNORE INTO message_tags(account_id,folder,message_uid,tag_id) VALUES(?1,?2,?3,?4)",params![account,key.folder,key.uid,id]).map_err(|e|e.to_string())?;
         }
         if key
             .folder
@@ -90,6 +90,7 @@ fn write_delta(
     Ok(changed > 0)
 }
 
+#[expect(clippy::too_many_arguments, reason = "Keeps the complete validated mail identity and operation fields explicit at this boundary.")]
 pub fn apply_delta(
     app: &AppHandle,
     account: &str,
@@ -106,6 +107,7 @@ pub fn apply_delta(
     )
 }
 
+#[expect(clippy::too_many_arguments, reason = "Explicit account, folder and UID-validity fences accompany the complete atomic database mutation.")]
 fn apply_delta_conn(
     conn: &mut Connection,
     account: &str,
@@ -236,7 +238,7 @@ pub(crate) fn supersede_flags_in_tx(
         return Ok(());
     }
     for key in copies(tx, account, folder, uid, validity)? {
-        database::execute_cached(&tx, "DELETE FROM pending_message_actions WHERE account_id=?1 AND folder=?2 AND uid=?3 AND action=?4",params![account,key.folder,key.uid,action]).map_err(|e|e.to_string())?;
+        database::execute_cached(tx, "DELETE FROM pending_message_actions WHERE account_id=?1 AND folder=?2 AND uid=?3 AND action=?4",params![account,key.folder,key.uid,action]).map_err(|e|e.to_string())?;
     }
     Ok(())
 }

@@ -1,5 +1,6 @@
 //! Durable desired location per logical message. Provider UIDs stay in `source`;
 //! optimistic views never become provider identities.
+type LegacyTrashRow = (String, String, String, Option<String>, Option<String>, bool);
 use super::{discover, Session};
 use crate::{
     auth::account::Account,
@@ -78,7 +79,7 @@ pub fn init(conn: &Connection) -> Result<(), String> {
       UNIQUE(account_id,identity));
       CREATE INDEX IF NOT EXISTS idx_location_account_state ON mail_location_intents(account_id,phase,updated_at);").map_err(|e|e.to_string())?;
     // Preserve earlier Trash requests, including provider-confirmed cache repairs.
-    let legacy: Vec<(String, String, String, Option<String>, Option<String>, bool)> = {
+    let legacy: Vec<LegacyTrashRow> = {
         let mut stmt=tx.prepare("SELECT account_id,snapshot,action,remote_done,last_error,optimistic FROM pending_trash_actions ORDER BY id").map_err(|e|e.to_string())?;
         let rows = stmt
             .query_map([], |r| {
@@ -509,7 +510,7 @@ fn apply_confirmed(
             state.last_full_sync_at = 0;
             database::update_folder_sync_state(app, &state)?;
         }
-        database::insert_or_update_messages(app, account, &[header.clone()])?;
+        database::insert_or_update_messages(app, account, std::slice::from_ref(header))?;
         if let Some((body, attachments, extracted)) = body {
             database::update_message_body(
                 app,
@@ -639,7 +640,7 @@ pub async fn retry_pending(app: &AppHandle, account: &Account) {
     });
     if let Ok(ids) = ids {
         for (id, _) in &ids {
-            if let Err(error) = deliver(app, account, &id).await {
+            if let Err(error) = deliver(app, account, id).await {
                 if !error.starts_with("CONFLICT:") {
                     // A failed connection affects queued requests too. Revert
                     // their local projections in one pass rather than leaving
@@ -692,6 +693,7 @@ pub fn kick(app: &AppHandle) {
     WAKE.notify_one();
 }
 #[tauri::command]
+#[expect(clippy::too_many_arguments, reason = "Keeps the complete validated mail identity and operation fields explicit at this boundary.")]
 pub async fn trash_action(
     app_handle: AppHandle,
     account_id: String,

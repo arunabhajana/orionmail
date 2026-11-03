@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use tauri::AppHandle;
 use crate::contacts::contact_store::{upsert_contacts, ContactEntry};
 
-pub fn extract_and_store_contacts(app_handle: &AppHandle, headers_list: &[String]) -> Result<(), String> {
+pub fn extract_and_store_contacts(app_handle: &AppHandle, account: &str, headers_list: &[String]) -> Result<(), String> {
     let mut unique_emails = HashSet::new();
     let mut contacts = Vec::new();
 
@@ -47,12 +47,12 @@ pub fn extract_and_store_contacts(app_handle: &AppHandle, headers_list: &[String
         }
     }
 
-    upsert_contacts(app_handle, &contacts)?;
+    upsert_contacts(app_handle, account, &contacts)?;
 
     Ok(())
 }
 
-pub fn record_sent_emails(app_handle: &AppHandle, emails: Vec<String>) -> Result<(), String> {
+pub fn record_sent_emails(app_handle: &AppHandle, account: &str, emails: Vec<String>) -> Result<(), String> {
     let mut contacts = Vec::new();
     let mut clean_emails = Vec::new();
     
@@ -69,10 +69,10 @@ pub fn record_sent_emails(app_handle: &AppHandle, emails: Vec<String>) -> Result
     }
     
     // Ensure they exist
-    upsert_contacts(app_handle, &contacts)?;
+    upsert_contacts(app_handle, account, &contacts)?;
     
     // Increment usage
-    crate::contacts::contact_store::record_usage(app_handle, &clean_emails)?;
+    crate::contacts::contact_store::record_usage(app_handle, account, &clean_emails)?;
     
     Ok(())
 }

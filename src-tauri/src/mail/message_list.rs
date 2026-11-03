@@ -127,7 +127,7 @@ pub async fn get_inbox_messages(app_handle: &AppHandle, account: Account) -> Res
                 }
             }
 
-            messages.sort_by(|a, b| b.uid.cmp(&a.uid));
+            messages.sort_by_key(|message| std::cmp::Reverse(message.uid));
             
             // Save to local cache
             if let Err(e) = crate::mail::database::insert_or_update_messages(&app_handle_clone, &account_id, &messages) {

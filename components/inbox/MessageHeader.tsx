@@ -1,20 +1,21 @@
 "use client";
 import React, { memo, useEffect, useState } from 'react';
 import { ChevronDown, Copy } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { Email, Tag } from '@/lib/types';
 import { contactFromHeader, mailInitials, splitHeaderAddresses } from '@/lib/mail-display';
 import { toast } from 'sonner';
 export { AttachmentCard } from './AttachmentCard';
 
 export const MessageHeader = memo(({ email }: { email: Email }) => {
+    const invoke = useAccountInvoke();
     const [expanded, setExpanded] = useState(false);
     const [tags, setTags] = useState<Tag[]>([]);
     useEffect(() => {
         let active = true;
         invoke<Tag[]>('get_all_tags').then(value => { if (active) setTags(value); }).catch(() => {});
         return () => { active = false; };
-    }, []);
+    }, [invoke]);
     const sender = contactFromHeader(email.senderEmail || email.sender);
     const senderName = contactFromHeader(email.sender).name || sender.name;
     const recipients = splitHeaderAddresses(email.to || '').map(contactFromHeader);

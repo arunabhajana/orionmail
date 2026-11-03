@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, KeyboardEvent, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 
 export interface Contact {
     name: string;
@@ -9,6 +9,7 @@ export interface Contact {
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function useRecipientAutocomplete(initialRecipients: string[] = [], initialInput = '') {
+    const invoke = useAccountInvoke();
     const [recipients, setRecipients] = useState<string[]>(initialRecipients);
     const [inputValue, setInputValue] = useState(initialInput);
     const [selectedIndex, setSelectedIndex] = useState(0);
@@ -36,7 +37,7 @@ export function useRecipientAutocomplete(initialRecipients: string[] = [], initi
                 setFilteredContacts([]);
             }
         }
-    }, []);
+    }, [invoke]);
 
     // Debounce and fetch
     useEffect(() => {

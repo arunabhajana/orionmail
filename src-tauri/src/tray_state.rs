@@ -136,11 +136,7 @@ fn badge_pixels(count:u32)->Vec<u8>{
     pixels
 }
 
-#[cfg(test)]
-mod badge_tests{
-    use super::*;
-    #[test]fn unread_overlay_is_bounded_and_transparent_outside_circle(){for count in [1,9,10,99,100,u32::MAX]{let image=badge_pixels(count);assert_eq!(image.len(),4096);assert_eq!(image[3],0);assert!(image.chunks_exact(4).any(|pixel|pixel==[255,255,255,255]));}}
-}
+
 
 pub fn spawn_tray_update_loop(app: AppHandle) {
     init_from_db(&app);
@@ -167,4 +163,10 @@ pub fn spawn_tray_update_loop(app: AppHandle) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod badge_tests{
+    use super::*;
+    #[test]fn unread_overlay_is_bounded_and_transparent_outside_circle(){for count in [1,9,10,99,100,u32::MAX]{let image=badge_pixels(count);assert_eq!(image.len(),4096);assert_eq!(image[3],0);assert!(image.as_chunks::<4>().0.contains(&[255,255,255,255]));}}
 }

@@ -3,21 +3,14 @@
 import React, { useState, useEffect } from 'react';
 import { Terminal, BugPlay } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useDevToolsEnabled } from '@/hooks/useDevToolsEnabled';
 import { useSettings } from './SettingsContext';
 
 export function DeveloperSection() {
     const { registerSection, unregisterSection, markDirty } = useSettings();
-    const [originalDevToolsEnabled, setOriginalDevToolsEnabled] = useState(false);
-    const [devToolsEnabled, setDevToolsEnabled] = useState(false);
-
-    useEffect(() => {
-        // Hydrate from localStorage
-        const stored = localStorage.getItem("orion_dev_tools_enabled");
-        if (stored === "true") {
-            setOriginalDevToolsEnabled(true);
-            setDevToolsEnabled(true);
-        }
-    }, []);
+    const originalDevToolsEnabled = useDevToolsEnabled();
+    const [edited, setDevToolsEnabled] = useState<boolean | null>(null);
+    const devToolsEnabled = edited ?? originalDevToolsEnabled;
 
     // Register section
     useEffect(() => {
@@ -30,10 +23,10 @@ export function DeveloperSection() {
                 localStorage.setItem("orion_dev_tools_enabled", String(devToolsEnabled));
                 // Dispatch custom event so the Titlebar can react instantly
                 window.dispatchEvent(new CustomEvent("orion:dev_tools_toggled", { detail: devToolsEnabled }));
-                setOriginalDevToolsEnabled(devToolsEnabled);
+                setDevToolsEnabled(null);
             },
             reset: () => {
-                setDevToolsEnabled(originalDevToolsEnabled);
+                setDevToolsEnabled(null);
             }
         });
 

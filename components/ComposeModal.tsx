@@ -16,7 +16,7 @@ import {
   AlertTriangle,
   Loader2,
 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { cn } from "@/lib/utils";
 import { useRecipientAutocomplete } from "@/hooks/useRecipientAutocomplete";
 import RichTextEditor, {
@@ -237,9 +237,10 @@ export type ComposeWindowState = "normal" | "maximized" | "minimized" | "hidden"
 export type ComposeStatus = "draft" | "sending" | "sent" | "failed";
 
 export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSendFailure, windowRef, initialDraft, initialMessage }: ComposeModalProps) {
+    const invoke = useAccountInvoke();
   const { preferences } = useAppPreferences();
   const [showSignature, setShowSignature] = useState(false);
-  const { user } = useAuth();
+  const { user, registerAccountGuard } = useAuth();
   const titleId = useId();
   const contactsId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -288,6 +289,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
     isEmpty: !(initialDraft?.payload.plain || initialMessage?.plain)?.trim(),
   });
   const editorRef = useRef<Editor | null>(null);
+  const [toolbarEditor, setToolbarEditor] = useState<Editor | null>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
 
   // Link dialog state
@@ -323,6 +325,13 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
     attachments: attachments.map(file => ({ id: file.id, name: file.name, size: file.size, mime_type: file.mimeType, ...(file.handle ? { handle: file.handle } : {}) })),
   }), [recipients, inputValue, cc, bcc, subject, bodyEdited, initialDraft, editorValue.html, editorValue.plainText, attachments, preferences.composeFont, initialMessage]);
   const draft = useDraftComposer(user?.id, initialDraft, draftPayload, hasDraftContent, composeStatus === 'sending' || composeStatus === 'sent');
+  const { blocked: guardBlocked, unconfirmed: guardUnconfirmed, flush: guardFlush, release: guardRelease } = draft;
+  useEffect(() => registerAccountGuard(async () => {
+    if (sendGuard.current || composeStatus === 'sending' || isProcessingAttachmentsRef.current || isAttaching) throw new Error('Wait for sending or attachment processing to finish before changing accounts.');
+    if (guardBlocked || guardUnconfirmed) throw new Error('Resolve this draft before changing accounts.');
+    await guardFlush();
+    await guardRelease();
+  }), [registerAccountGuard, composeStatus, isAttaching, guardBlocked, guardUnconfirmed, guardFlush, guardRelease]);
 
   const validAddress = (value: string) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value.trim());
   const invalidRecipient = recipients.some(value => !validAddress(value));
@@ -515,7 +524,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
   useEffect(() => () => {
     const handles = attachmentsRef.current.map(file => file.handle);
     if (handles.length > 0) invoke("release_attachment_handles", { handles }).catch(() => {});
-  }, []);
+  }, [invoke]);
 
   // --------------------------------------------------------------------------
   // Toolbar: derive active states from editor
@@ -529,6 +538,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
 
   const handleEditorReady = useCallback((e: Editor) => {
     editorRef.current = e;
+    setToolbarEditor(e);
     if (!initialDraft && !initialMessage && preferences.signature.trim() && e.isEmpty) {
       e.commands.setContent(`<p></p>${signatureHtml(preferences.signature)}`);
       e.commands.setTextSelection(1);
@@ -1085,7 +1095,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
           <footer className="compose-footer">
             {draft.state === 'send_unknown' && <div className="mb-2 flex flex-wrap items-center gap-3 text-xs"><button type="button" disabled={draft.saving} onClick={() => { void resolveSend(true); }} className="font-medium text-primary">I found it in Sent</button><button type="button" disabled={draft.saving} onClick={() => { void resolveSend(false); }} className="font-medium text-primary">Not sent · return to draft</button></div>}
             {draft.error && <div role="alert" className="mb-2 flex flex-wrap items-center gap-2 text-xs text-amber-600 dark:text-amber-300"><span className="min-w-0 flex-1 break-words">{draft.error}</span><button type="button" onClick={() => { void draft.flush().catch(() => {}); }} className="font-medium underline">Retry save</button><button type="button" onClick={() => { void draft.saveCopy().catch(error => showToast(String(error))); }} className="font-medium underline">Save separate copy</button></div>}
-            <ComposeToolbar editor={editorRef.current} onLink={() => openLinkDialog()} disabled={editingDisabled} />
+            <ComposeToolbar editor={toolbarEditor} onLink={() => openLinkDialog()} disabled={editingDisabled} />
             <div className="compose-action-row">
               <button type="button" onClick={handleAttachFiles} disabled={editingDisabled || isAttaching} className="compose-attach-button" title="Attach files"><Paperclip className={cn('size-4', isAttaching && 'animate-pulse')} /><span className="hidden sm:inline">{isAttaching ? 'Preparing…' : 'Attach files'}</span></button>
               <button type="button" onClick={() => setShowSignature(value => !value)} disabled={editingDisabled} aria-label="Edit or insert signature" aria-expanded={showSignature} title="Signature" className={cn('compose-attach-button', showSignature && 'bg-primary/10 text-primary')}><Pencil className="size-4" /><span className="hidden md:inline">Signature</span></button>

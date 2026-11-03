@@ -130,9 +130,7 @@ async fn run_idle_loop(
                 imap::extensions::idle::WaitOutcome::MailboxChanged => {
                     log::info!("IMAP IDLE: MailboxChanged event received.");
                     
-                    loop {
-                        match session.unsolicited_responses.try_recv() {
-                            Ok(response) => {
+                    while let Ok(response) = session.unsolicited_responses.try_recv() {
                                 log::debug!("IMAP IDLE: Unsolicited response: {:?}", response);
                                 match response {
                                     imap::types::UnsolicitedResponse::Exists(count) => {
@@ -153,9 +151,6 @@ async fn run_idle_loop(
                                     _ => {}
                                 }
                             }
-                            Err(_) => break, // No more responses queued
-                        }
-                    }
 
                     // Always notify coordinator of a change just to be safe.
                     // The coordinator limits rapid-fire syncs and delegates to `sync_inbox`.
@@ -185,6 +180,10 @@ async fn finish_idle_worker(mut worker: JoinHandle<Result<u32,String>>, socket: 
     }
 }
 
+
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,10 +203,4 @@ mod tests {
         let result = tokio::time::timeout(Duration::from_secs(3),finish_idle_worker(worker,transport,cancel)).await.unwrap();
         assert_eq!(result.unwrap(),42);
     }
-}
-
-pub fn stop_idle_listener() {
-    // Actually we don't strictly need to abort manually anymore because 
-    // SHUTDOWN_TOKEN handles it gracefully, but we can keep it as a fallback.
-    // However, the caller now calls trigger_shutdown() instead of this.
 }

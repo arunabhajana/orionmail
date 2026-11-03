@@ -163,7 +163,7 @@ fn save_inner(
         let size = if let Some(size) = stored {
             size as usize
         } else {
-            match crate::mail::attachments::load_for_send(account,&[file.handle.clone()]){
+            match crate::mail::attachments::load_for_send(account,std::slice::from_ref(&file.handle)){
                 Ok(mut selected)=>{
                     let selected=selected.pop().ok_or("Attachment is unavailable")?;
                     file.name=selected.name; file.mime_type=selected.mime_type;

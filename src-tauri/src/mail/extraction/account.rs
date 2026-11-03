@@ -4,13 +4,11 @@ use crate::mail::patterns::regex as cached_regex;
 pub fn extract(_html: &str, text: &str) -> Vec<ExtractedEntity> {
     let entities = Vec::new();
     
-    let patterns = vec![
-        (r"(?i)\b(?:reset|forgot)\s+password\b", "PasswordReset"),
+    let patterns = [(r"(?i)\b(?:reset|forgot)\s+password\b", "PasswordReset"),
         (r"(?i)\bverify\s+(?:your\s+)?email\b", "EmailVerification"),
-        (r"(?i)\bnew\s+(?:device|sign-in|login)\b", "NewSignIn"),
-    ];
+        (r"(?i)\bnew\s+(?:device|sign-in|login)\b", "NewSignIn")];
 
-    for (_i, (p, _subtype)) in patterns.iter().enumerate() {
+    for (p, _subtype) in patterns.iter() {
         if let Ok(re) = cached_regex(p) {
             if let Some(_m) = re.find(text) {
                 // Return a generic "Link" type or a specific Account type?

@@ -19,7 +19,6 @@ import { SettingsProvider, useSettings } from '@/components/settings/SettingsCon
 import { UnsavedChangesBar } from '@/components/settings/UnsavedChangesBar';
 import { ConfirmNavigationDialog } from '@/components/settings/ConfirmNavigationDialog';
 import { useRouter } from 'next/navigation';
-import packageInfo from '@/package.json';
 import { toast } from 'sonner';
 
 // --- Main Page Component ---
@@ -31,14 +30,17 @@ function SettingsPageInner() {
     const [pendingSearchResult, setPendingSearchResult] = useState<SettingsSearchResult | null>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const contentRef = useRef<HTMLElement>(null);
-    const { user, logout } = useAuth();
+    const { user, accountBusy, logout, registerAccountGuard } = useAuth();
     const router = useRouter();
-    const { dirtySections, requestNavigation, hasUnsavedChanges, isSaving } = useSettings();
+    const { dirtySections, requestNavigation, hasUnsavedChanges, isSaving, canChangeAccount } = useSettings();
     const searchResults = useMemo(() => searchSettings(searchQuery), [searchQuery]);
     const isSearching = Boolean(searchQuery.trim());
     const visibleTabs = SETTINGS_TABS;
     const activeSection = SETTINGS_TABS.find(tab => tab.id === activeTab)!;
     const ActiveIcon = activeSection.icon;
+    useEffect(() => registerAccountGuard(async () => {
+        if (!canChangeAccount()) throw new Error('Save or discard your Settings changes before changing accounts.');
+    }), [registerAccountGuard, canChangeAccount]);
 
     useEffect(()=>{
         const navigate=()=>requestNavigation(()=>router.push('/inbox'));
@@ -86,7 +88,7 @@ function SettingsPageInner() {
             clearTimeout(waitTimer);
             target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
             target.classList.add('ring-2', 'ring-primary/50');
-            const focusable = target.matches('button, input, select, textarea') ? target : target.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)');
+            const focusable = target.matches('button, input, select, textarea, summary') ? target : target.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary');
             if (focusable) focusable.focus({ preventScroll: true });
             else { target.tabIndex = -1; target.focus({ preventScroll: true }); }
             highlightTimer = setTimeout(() => setPendingSearchResult(null), 1800);
@@ -129,7 +131,7 @@ function SettingsPageInner() {
     return (
         <div className="settings-shell flex h-full w-full text-foreground overflow-hidden">
             <aside className="settings-sidebar w-56 lg:w-64 shrink-0 flex flex-col border-r border-white/40 dark:border-white/[0.08]">
-                <div className="px-4 pt-6 pb-4">
+                <div className="shrink-0 px-4 pt-5 pb-3">
                     <div className="mb-5 flex items-center justify-between gap-3">
                         <h1 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Settings</h1>
                         <button type="button" aria-label="Back to Inbox" onClick={handleBackClick} className="flex items-center gap-1.5 rounded-lg border border-black/[0.07] dark:border-white/[0.08] px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors"><ChevronLeft className="size-3.5" /><span className="settings-nav-label">Back</span></button>
@@ -153,11 +155,11 @@ function SettingsPageInner() {
                         {searchQuery && <button type="button" aria-label="Clear settings search" onClick={() => { closeSearch(); searchInputRef.current?.focus(); }} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10"><X className="size-3.5" /></button>}
                     </div>
                 </div>
-                <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto space-y-1 px-3 pb-4 custom-scrollbar">
+                <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto space-y-1 px-3 pb-2 custom-scrollbar">
                     {visibleTabs.map(tab => {
                         const Icon = tab.icon;
                         const selected = !isSearching && activeTab === tab.id;
-                        return <button key={tab.id} type="button" aria-label={tab.label} title={tab.label} aria-current={selected ? 'page' : undefined} onClick={() => handleTabClick(tab.id)} className={cn('settings-nav-item w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left text-[13px] font-medium transition-colors', selected ? [tab.active, 'text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]'] : 'text-muted-foreground hover:bg-black/[0.035] dark:hover:bg-white/[0.04] hover:text-foreground')}>
+                        return <button key={tab.id} type="button" aria-label={tab.label} title={tab.label} aria-current={selected ? 'page' : undefined} onClick={() => handleTabClick(tab.id)} className={cn('settings-nav-item w-full flex items-center gap-3 rounded-xl px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors', selected ? [tab.active, 'text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]'] : 'text-muted-foreground hover:bg-black/[0.035] dark:hover:bg-white/[0.04] hover:text-foreground')}>
                             <span className={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-lg', tab.color)}><Icon className="size-[17px]" strokeWidth={1.8} /></span>
                             <span className="settings-nav-label flex-1">{tab.label}</span>
                             {selected && <ChevronRight className="settings-nav-label size-3.5 opacity-40" />}
@@ -165,10 +167,9 @@ function SettingsPageInner() {
                         </button>;
                     })}
                 </nav>
-                <div className="mx-4 border-t border-black/[0.07] dark:border-white/[0.07] py-4 space-y-2">
+                <div className="mx-4 shrink-0 border-t border-black/[0.07] dark:border-white/[0.07] pt-3 pb-2 space-y-1">
                     <button type="button" onClick={handleBackClick} className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-muted-foreground hover:text-foreground"><Inbox className="size-4" />Back to Inbox</button>
-                    <button type="button" onClick={() => requestNavigation(() => { if (user) void logout(user.id); })} className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/10"><LogOut className="size-4" />Sign out</button>
-                    <p className="px-2 pt-2 text-[10px] text-muted-foreground/70">OrionMail · {packageInfo.version}</p>
+                    <button type="button" onClick={() => requestNavigation(() => { if (user) void logout(user.id).catch(error => toast.error('Could not sign out', { description: String(error) })); })} className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/10"><LogOut className="size-4" />Sign out</button>
                 </div>
             </aside>
 
@@ -180,7 +181,7 @@ function SettingsPageInner() {
                         <div className="mb-5 flex items-center gap-2 text-[11px] text-muted-foreground"><span>Settings</span><ChevronRight className="size-3" /><span>{activeSection.label}</span><span className="ml-auto hidden lg:inline">{hasUnsavedChanges ? "Changes waiting to be saved" : "Preferences on this device"}</span></div>
                         <div className="flex items-start gap-4"><span className={cn("inline-flex size-11 shrink-0 items-center justify-center rounded-2xl border border-white/30 dark:border-white/5", activeSection.color)}><ActiveIcon className="size-5" /></span><div><h1 className="text-[28px] leading-tight font-semibold tracking-tight">{activeSection.label}</h1><p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">{activeSection.description}</p></div></div>
                     </header>
-                    <fieldset key={activeTab} disabled={isSaving} className="settings-section-enter min-w-0">
+                    <fieldset key={`${user?.id}:${activeTab}`} disabled={isSaving || accountBusy} className="settings-section-enter min-w-0">
                         {activeTab === 'account' && <AccountSection />}
                         {activeTab === 'appearance' && <AppearanceSection />}
                         {['compose', 'reading', 'notifications', 'smartactions', 'shortcuts'].includes(activeTab) && <PreferencesSection key={activeTab} section={activeTab} />}

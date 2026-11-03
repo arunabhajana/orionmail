@@ -37,7 +37,7 @@ pub async fn delete_message(app_handle: AppHandle,account_id:String,expected_uid
 }
 
 #[tauri::command]
-pub async fn get_messages_page(
+pub async fn get_messages_page(account_id: Option<String>,
     app_handle: AppHandle,
     folder: String,
     before_uid: Option<u32>,
@@ -45,10 +45,10 @@ pub async fn get_messages_page(
     limit: u32,
 ) -> Result<Vec<crate::mail::message_list::MessageHeader>, String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    let account = crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
+    let account = crate::auth::scope::profile(&app_handle, account_id.as_deref())?;
     let safe_limit = limit.min(100);
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
-    
+
     let app_handle_clone = app_handle.clone();
     let folder_clone = folder.clone();
     let account_id = account.id;
@@ -65,13 +65,13 @@ pub async fn get_messages_page(
 }
 
 #[tauri::command]
-pub async fn prefetch_messages(
+pub async fn prefetch_messages(account_id: Option<String>,
     app_handle: tauri::AppHandle,
     requests: Vec<crate::mail::body_prefetch_manager::BodyKey>,
 ) -> Result<(), String> {
     if !crate::window_activity::is_displayed() { return Ok(()); }
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    
+    let account = crate::auth::scope::account(&app_handle, account_id.as_deref()).await?;
+
     // Clear old background queue before queueing the new viewport items
     crate::mail::body_prefetch_manager::PREFETCH_MANAGER.clear_background_queue(&account.id).await;
 
@@ -87,11 +87,12 @@ pub async fn prefetch_messages(
             None,
         ).await;
     }
-    
+
     Ok(())
 }
 
 #[tauri::command]
+#[expect(clippy::too_many_arguments, reason = "Keeps the complete validated mail identity and operation fields explicit at this boundary.")]
 pub async fn download_attachment(
     app_handle: tauri::AppHandle,
     folder: String,
@@ -107,7 +108,7 @@ pub async fn download_attachment(
     let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
     let (folder,uid,_)=crate::mail::trash::source(&app_handle,&account.id,local_id.as_deref(),&folder,uid)?;
     if local_id.is_none() && expected_uid_validity.is_some_and(|expected| database::message_uid_validity(&app_handle,&account.id,&folder,uid).ok()!=Some(expected)) { return Err("Mailbox changed. Reopen the message.".into()); }
-    
+
     let first=crate::mail::message_body::fetch_attachment_part(&app_handle, &account, &folder, uid, &part_id).await;
     let bytes=match first {
         Ok(bytes)=>bytes,
@@ -118,28 +119,30 @@ pub async fn download_attachment(
             crate::mail::message_body::fetch_attachment_part(&app_handle, &account,&current_folder,current_uid,&part_id).await?
         }
     };
-    
+
     if crate::auth::session::get_active_profile(&app_handle).is_none_or(|active|active.id!=account.id) { return Err("Account changed before attachment completed".into()); }
     std::fs::write(&save_path, bytes).map_err(|e| e.to_string())?;
     Ok(save_path)
 }
 
 #[tauri::command]
-pub async fn pick_attachments(app_handle: AppHandle) -> Result<Vec<crate::mail::attachments::AttachmentMetadata>, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+pub async fn pick_attachments(account_id: Option<String>, app_handle: AppHandle) -> Result<Vec<crate::mail::attachments::AttachmentMetadata>, String> {
+    let account = crate::auth::scope::account(&app_handle, account_id.as_deref()).await?;
     tokio::task::spawn_blocking(move || crate::mail::attachments::pick_for_account(&app_handle, &account.id))
         .await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub async fn release_attachment_handles(app_handle: AppHandle, handles: Vec<String>) -> Result<(), String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    crate::mail::attachments::release_handles(&account.id, &handles);
+pub async fn release_attachment_handles(account_id: Option<String>, app_handle: AppHandle, handles: Vec<String>) -> Result<(), String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let owner = match account_id { Some(id) => id, None => crate::auth::scope::profile(&app_handle, None)?.id };
+    crate::mail::attachments::release_handles(&owner, &handles);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn send_message(
+#[expect(clippy::too_many_arguments, reason = "Keeps the complete validated mail identity and operation fields explicit at this boundary.")]
+pub async fn send_message(account_id: Option<String>,
     app_handle: AppHandle,
     to: Vec<String>,
     cc: Vec<String>,
@@ -150,9 +153,9 @@ pub async fn send_message(
     html_body: String,
     attachments: Vec<String>,
 ) -> Result<String, String> {
-    let mut account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+    let mut account = crate::auth::scope::account(&app_handle, account_id.as_deref()).await?;
     let attachment_data = crate::mail::attachments::load_for_send(&account.id, &attachments)?;
-    
+
     let res = crate::mail::smtp_client::send_email(
         &app_handle,
         &mut account,
@@ -168,7 +171,7 @@ pub async fn send_message(
     )
     .await
     .map_err(|e| e.to_string());
-    
+
     if res.is_ok() {
         crate::mail::attachments::release_handles(&account.id, &attachments);
     }
@@ -204,9 +207,9 @@ pub fn show_main_window(app_handle: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::collections::HashMap<String, u32>, String> {
+pub async fn get_unread_counts(account_id: Option<String>, app_handle: tauri::AppHandle) -> Result<std::collections::HashMap<String, u32>, String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    let account=crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
+    let account=crate::auth::scope::profile(&app_handle, account_id.as_deref())?;
     tokio::task::spawn_blocking(move || {
         let db_path = crate::mail::database::get_db_path(&app_handle)?;
         let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
@@ -221,10 +224,8 @@ pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::coll
             Ok((folder, count))
         }).unwrap();
 
-        for row in rows {
-            if let Ok((folder, count)) = row {
-                counts.insert(folder.to_lowercase(), count);
-            }
+        for (folder, count) in rows.flatten() {
+            counts.insert(folder.to_lowercase(), count);
         }
 
         let sql=format!("{} SELECT COUNT(DISTINCT identity) FROM visible_mail WHERE seen=0 AND flagged=1 AND folder<>'trash'",database::VISIBLE_MAIL_CTE);
@@ -239,6 +240,9 @@ pub async fn get_unread_counts(app_handle: tauri::AppHandle) -> Result<std::coll
 
 #[derive(serde::Serialize)]
 pub struct DiagnosticsSyncStatus {
+    pub inbox_last_sync_at: Option<i64>,
+    pub inbox_sync_in_progress: bool,
+    pub inbox_sync_error: Option<String>,
     pub unread_count: u32,
     pub sync_in_progress: bool,
     pub last_sync_at: Option<i64>,
@@ -248,8 +252,8 @@ pub struct DiagnosticsSyncStatus {
 }
 
 #[tauri::command]
-pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<DiagnosticsSyncStatus, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+pub async fn get_sync_diagnostics(account_id: Option<String>, app_handle: tauri::AppHandle) -> Result<DiagnosticsSyncStatus, String> {
+    let account = crate::auth::scope::profile(&app_handle, account_id.as_deref())?;
     tokio::task::spawn_blocking(move || {
         let global_state = crate::mail::database::get_global_sync_state(&app_handle, &account.id).unwrap_or_default();
         let unread = crate::mail::database::get_global_unread_count(&app_handle, &account.id).unwrap_or(0);
@@ -257,7 +261,11 @@ pub async fn get_sync_diagnostics(app_handle: tauri::AppHandle) -> Result<Diagno
             "SELECT EXISTS(SELECT 1 FROM folder_sync_state WHERE account_id = ?1 AND sync_in_progress = 1)",
             [&account.id], |row| row.get(0)).map_err(|e| e.to_string())?;
 
+        let inbox = database::get_folder_sync_state(&app_handle, &account.id, "inbox")?;
         Ok(DiagnosticsSyncStatus {
+            inbox_last_sync_at: inbox.as_ref().filter(|state|state.last_synced_at > 0).map(|state|state.last_synced_at),
+            inbox_sync_in_progress: inbox.as_ref().is_some_and(|state|state.sync_in_progress),
+            inbox_sync_error: inbox.and_then(|state|state.last_error),
             unread_count: unread,
             sync_in_progress,
             last_sync_at: global_state.last_sync_at,
@@ -349,8 +357,8 @@ pub struct SearchResponse {
 }
 
 #[tauri::command]
-pub async fn search_messages(app_handle: tauri::AppHandle, folder: String, query: String, search_id: Option<String>) -> Result<SearchResponse, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+pub async fn search_messages(account_id: Option<String>, app_handle: tauri::AppHandle, folder: String, query: String, search_id: Option<String>) -> Result<SearchResponse, String> {
+    let account = crate::auth::scope::account(&app_handle, account_id.as_deref()).await?;
     let (search_id, local_results, remote_search_state) = crate::mail::search::start_search(app_handle, account, folder, query, search_id).await?;
     Ok(SearchResponse {
         search_id,
@@ -360,20 +368,23 @@ pub async fn search_messages(app_handle: tauri::AppHandle, folder: String, query
 }
 
 #[tauri::command]
-pub async fn load_more_results(app_handle: tauri::AppHandle, search_id: String) -> Result<crate::mail::search::RemoteSearchState, String> {
+pub async fn load_more_results(app_handle: tauri::AppHandle, account_id: Option<String>, search_id: String) -> Result<crate::mail::search::RemoteSearchState, String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let owner = crate::auth::scope::profile(&app_handle, account_id.as_deref())?.id;
+    crate::mail::search::validate_owner(&search_id, &owner)?;
     crate::mail::search::load_more_results(app_handle, search_id).await
 }
 
 #[tauri::command]
-pub async fn clear_search(app_handle: tauri::AppHandle, search_id: String) -> Result<(), String> {
+pub async fn clear_search(app_handle: tauri::AppHandle, account_id: Option<String>, search_id: String) -> Result<(), String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
+    if let Some(owner) = account_id { crate::mail::search::validate_owner(&search_id, &owner)?; }
     crate::mail::search::clear_search(app_handle, search_id).await
 }
 
 #[tauri::command]
-pub async fn get_all_tags(app_handle: tauri::AppHandle) -> Result<Vec<crate::mail::database::Tag>, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+pub async fn get_all_tags(account_id: Option<String>, app_handle: tauri::AppHandle) -> Result<Vec<crate::mail::database::Tag>, String> {
+    let account = crate::auth::scope::profile(&app_handle, account_id.as_deref())?;
     let app_clone = app_handle.clone();
     tokio::task::spawn_blocking(move || {
         crate::mail::database::get_all_tags(&app_clone, &account.id)
@@ -381,8 +392,8 @@ pub async fn get_all_tags(app_handle: tauri::AppHandle) -> Result<Vec<crate::mai
 }
 
 #[tauri::command]
-pub async fn get_message_tags(app_handle: tauri::AppHandle, folder: String, message_uid: u32) -> Result<Vec<String>, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
+pub async fn get_message_tags(account_id: Option<String>, app_handle: tauri::AppHandle, folder: String, message_uid: u32) -> Result<Vec<String>, String> {
+    let account = crate::auth::scope::profile(&app_handle, account_id.as_deref())?;
     let app_clone = app_handle.clone();
     tokio::task::spawn_blocking(move || {
         crate::mail::database::get_message_tags(&app_clone, &account.id, &folder, message_uid)
@@ -404,9 +415,9 @@ pub async fn refresh_message_labels(app_handle:tauri::AppHandle,account_id:Strin
 }
 
 #[tauri::command]
-pub async fn get_cached_message_headers(app_handle:tauri::AppHandle,requests:Vec<crate::mail::tags::refresh::LabelTarget>)->Result<Vec<crate::mail::message_list::MessageHeader>,String>{
+pub async fn get_cached_message_headers(account_id: Option<String>, app_handle:tauri::AppHandle,requests:Vec<crate::mail::tags::refresh::LabelTarget>)->Result<Vec<crate::mail::message_list::MessageHeader>,String>{
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    let account=crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
+    let account=crate::auth::scope::profile(&app_handle, account_id.as_deref())?;
     if requests.len()>1000{return Err("Too many cached messages".into());}
     tokio::task::spawn_blocking(move||{
         let mut groups:std::collections::BTreeMap<String,Vec<u32>>=std::collections::BTreeMap::new();
@@ -419,9 +430,9 @@ pub async fn get_cached_message_headers(app_handle:tauri::AppHandle,requests:Vec
 
 /// Logical cached content sizes for the active account; excludes database indexes and free pages.
 #[tauri::command]
-pub async fn get_cache_summary(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+pub async fn get_cache_summary(account_id: Option<String>, app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    let account = crate::auth::session::get_active_profile(&app_handle).ok_or("No active account")?;
+    let account = crate::auth::scope::profile(&app_handle, account_id.as_deref())?;
     tokio::task::spawn_blocking(move || {
         let conn = crate::mail::database::open_connection(&app_handle)?;
         let (messages, bodies, headers): (i64, i64, i64) = conn.query_row(

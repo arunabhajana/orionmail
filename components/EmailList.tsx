@@ -9,7 +9,7 @@ import { SearchBar, FilterTabs, FilterType, SearchProgressData } from './inbox/E
 import { EmailListItem } from './inbox/EmailListItem';
 import { useVirtualEmailList } from '@/hooks/useVirtualEmailList';
 import OrbitLoader from './inbox/OrbitLoader';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { PendingSentMessage } from '@/hooks/usePendingSentMessages';
 import { PendingEmailListItem } from './inbox/PendingEmailListItem';
 import { EmailContextMenu, EmailContextMenuState } from './inbox/EmailContextMenu';
@@ -97,6 +97,9 @@ const EmailList: React.FC<EmailListProps> = ({
     onSearchLoadMore,
     onAddTags
 }) => {
+
+    const invoke = useAccountInvoke();
+    const {user}=useAuth();
     const { preferences } = useAppPreferences();
     const [currentFilter, setCurrentFilter] = React.useState<FilterType>('all');
     const [allTags, setAllTags] = React.useState<Record<string, import('@/lib/types').Tag>>({});
@@ -119,9 +122,9 @@ const EmailList: React.FC<EmailListProps> = ({
         let stop: (() => void) | undefined;
         const refresh = () => { void invoke<Tag[]>('get_all_tags').then(tags => { if (active) setAllTags(Object.fromEntries(tags.map(tag => [tag.id, tag]))); }).catch(console.error); };
         refresh();
-        void listen('mail:tags_updated', refresh).then(unlisten => { if (active) stop = unlisten; else unlisten(); }).catch(console.error);
+        void listen<string>('mail:tags_updated', event => { if (event.payload === user?.id) refresh(); }).then(unlisten => { if (active) stop = unlisten; else unlisten(); }).catch(console.error);
         return () => { active = false; stop?.(); };
-    }, []);
+    }, [invoke, user?.id]);
 
     const displayedEmails = React.useMemo(() => {
         const rows=preferences.conversationView ? groupConversations(emails) : emails;
@@ -144,7 +147,7 @@ const EmailList: React.FC<EmailListProps> = ({
         listRef,
         getItemKey,
     });
-    const {user}=useAuth();
+
     const viewportStart = rowVirtualizer.scrollOffset ?? 0;
     const viewportEnd = viewportStart + (rowVirtualizer.scrollRect?.height ?? 600);
     const visibleRows = virtualItems.filter(item => item.end >= viewportStart && item.start <= viewportEnd);
@@ -197,7 +200,7 @@ const EmailList: React.FC<EmailListProps> = ({
             document.removeEventListener('visibilitychange', visibility);
             window.removeEventListener('online', online);
         };
-    }, [prefetchSignature, user?.id, preferences.prefetchBodies, preferences.syncPaused]);
+    }, [prefetchSignature, user?.id, preferences.prefetchBodies, preferences.syncPaused, invoke]);
 
     const pullDistance = React.useRef(0);
     const touchStart = React.useRef(0);

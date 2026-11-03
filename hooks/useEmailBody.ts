@@ -40,7 +40,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     const [bodyContent, setBodyContent] = useState<string>("");
     const [attachments, setAttachments] = useState<Attachment[]>([]);
     const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
-    const [isLoadingBody, setIsLoadingBody] = useState<boolean>(false);
+    const [isLoadingBody, setIsLoadingBody] = useState<boolean>(Boolean(emailId));
     const [iframeHeight, setIframeHeight] = useState<number>(400);
     const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +48,18 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
     const loadedKey = useRef<string | null>(null);
     const [readyBody, setReadyBody] = useState<{ key: string } | null>(null);
     const retry = useCallback(() => retryRef.current(), []);
+    const messageKey = `${user?.id}:${folder}:${emailUid}:${uidValidity}:${emailId}`;
+    const [lastMessageKey, setLastMessageKey] = useState(messageKey);
+    if (lastMessageKey !== messageKey) {
+        setLastMessageKey(messageKey);
+        setBodyContent('');
+        setAttachments([]);
+        setExtractedData(null);
+        setError(null);
+        setIsLoadingBody(Boolean(emailId));
+        setIframeHeight(400);
+        setReadyBody(null);
+    }
 
     useEffect(() => {
         let active = true;
@@ -76,11 +88,6 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
             } catch (err) {
                 if (!active) return;
                 console.error("Failed to load message body:", err);
-                if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                    localStorage.removeItem("orion_user");
-                    window.location.href = "/";
-                    return;
-                }
                 if (loadedKey.current !== key) {
                     setError(String(err));
                     setBodyContent("");
@@ -95,13 +102,9 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
         retryRef.current = load;
         if (loadedKey.current !== key) {
             loadedKey.current = null;
-            setBodyContent("");
-            setAttachments([]);
-            setExtractedData(null);
         }
-        setError(null);
-        setIsLoadingBody(false);
-        void load();
+        // Cleanup can cancel this opening before its IPC work starts.
+        void Promise.resolve().then(load);
 
         const unlistenExtracted = listen<{
             accountId: string; folder: string; uid: number; extractedData: ExtractedData;
@@ -129,8 +132,7 @@ export function useEmailBody(emailId: string | undefined, emailUid: number | und
 
     const readCallback = useRef(onMarkAsRead);
     const unreadRef = useRef(emailUnread);
-    readCallback.current = onMarkAsRead;
-    unreadRef.current = emailUnread;
+    useEffect(() => { readCallback.current = onMarkAsRead; unreadRef.current = emailUnread; }, [onMarkAsRead, emailUnread]);
     const readAttempt = useRef<string | null>(null);
     useEffect(() => { readAttempt.current = null; }, [emailId, emailUid, folder, user?.id, uidValidity]);
     // A timer belongs to one opening; rerenders and an explicit unread action do not reopen it.

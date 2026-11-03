@@ -1,7 +1,7 @@
 "use client";
 import React, { memo, useRef, useState } from 'react';
 import { File, Download, FileText, Image as ImageIcon, FileArchive, FileCode, Presentation, FileSpreadsheet, FileAudio, FileVideo, FileType, Loader2 } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { save } from '@tauri-apps/plugin-dialog';
 import { Attachment } from '@/lib/types';
 import { useDownloads } from '@/components/DownloadContext';
@@ -79,6 +79,7 @@ const getTypeColor = (mime: string | undefined): string => {
 
 
 export const AttachmentCard = memo(({ uid, folder, attachment, localId, uidValidity }: { uid: number; folder: string; attachment: Attachment; localId?: string; uidValidity?: number }) => {
+    const invoke = useAccountInvoke();
     const { user } = useAuth();
     const [downloading, setDownloading] = useState(false);
     const busy = useRef(false);

@@ -73,7 +73,7 @@ pub async fn sync_tags(app_handle: &AppHandle, account: &Account) -> Result<(), 
     database::delete_missing_tags(app_handle, &account.id, &remote_ids)?;
 
     use tauri::Emitter;
-    let _ = app_handle.emit("mail:tags_updated", ());
+    let _ = app_handle.emit("mail:tags_updated", &account.id);
 
     // Update global sync state
     let mut state = database::get_global_sync_state(app_handle, &account.id).unwrap_or_default();
@@ -225,7 +225,7 @@ pub async fn update_tag(
     ).map_err(|e| e.to_string())?;
 
     use tauri::Emitter;
-    let _ = app_handle.emit("mail:tags_updated", ());
+    let _ = app_handle.emit("mail:tags_updated", &account.id);
 
     Ok(())
 }
@@ -283,7 +283,7 @@ pub async fn delete_tag(
     tx.commit().map_err(|e| e.to_string())?;
 
     use tauri::Emitter;
-    let _ = app_handle.emit("mail:tags_updated", ());
+    let _ = app_handle.emit("mail:tags_updated", &account.id);
 
     Ok(())
 }
@@ -353,7 +353,7 @@ pub async fn create_tag(
     database::upsert_tags(app_handle, &[db_tag])?;
 
     use tauri::Emitter;
-    let _ = app_handle.emit("mail:tags_updated", ());
+    let _ = app_handle.emit("mail:tags_updated", &account.id);
 
     Ok(())
 }

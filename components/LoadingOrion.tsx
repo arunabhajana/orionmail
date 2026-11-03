@@ -25,8 +25,8 @@ const LoadingOrion = ({
     useLayoutEffect(() => {
         const ctx = gsap.context(() => {
             // 1. Create a "warp" field of stars
-            const stars = Array.from({ length: 50 });
-            const tl = gsap.timeline({ repeat: -1 });
+
+
 
             // Animate Logo - subtle pulse and float
             gsap.to(logoRef.current, {

@@ -67,7 +67,7 @@ export function usePendingSentMessages() {
                     // dbMsg must have messageId parsed from IMAP now, but it's an Email type.
                     // We need to add messageId to Email type or use a hack.
                     // Let's assume Email will have messageId added.
-                    const dbMessageId = (dbMsg as any).messageId;
+                    const dbMessageId = dbMsg.messageId;
                     if (!dbMessageId) return false;
                     
                     return normalizeMessageId(dbMessageId) === pending.messageId;

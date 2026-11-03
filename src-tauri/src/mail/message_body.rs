@@ -46,7 +46,6 @@ struct MimeParts {
     best_html: Option<String>,
     best_text: Option<String>,
     cid_candidates: Vec<CidCandidate>,
-    attachments: Vec<MessageAttachment>,
     all_parts: Vec<Vec<u8>>, // store raw body bytes instead of lifetimes
 }
 
@@ -56,7 +55,6 @@ impl MimeParts {
             best_html: None,
             best_text: None,
             cid_candidates: Vec::new(),
-            attachments: Vec::new(),
             all_parts: Vec::new(),
         }
     }
@@ -356,9 +354,7 @@ fn generate_preview(html: &str) -> String {
     }
 }
 
-pub async fn fetch_and_cache_body_internal(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32) -> Result<MessageDetail, String> {
-    fetch_and_cache_body_with_session(app_handle, account, folder, uid, imap_session::SessionKind::Prefetch, None).await
-}
+
 
 pub async fn fetch_and_cache_body_with_session(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32, kind: imap_session::SessionKind, expected_validity: Option<u32>) -> Result<MessageDetail, String> {
     let app_handle_cache = app_handle.clone();
@@ -453,7 +449,7 @@ pub async fn fetch_and_cache_body_with_session(app_handle: &AppHandle, account: 
             Some(mb) => mb.to_string(),
             None => {
                 if let crate::mail::folder::MailFolder::Tag(ref tag_id) = mf {
-                    let tags = database::get_all_tags(&app_handle, &account.id).unwrap_or_default();
+                    let tags = database::get_all_tags(app_handle, &account.id).unwrap_or_default();
                     if let Some(tag) = tags.iter().find(|t| &t.id == tag_id) {
                         crate::mail::tags::assignment::encode_mailbox_name(&tag.name)?
                     } else {
@@ -608,9 +604,7 @@ pub async fn fetch_and_cache_body_with_session(app_handle: &AppHandle, account: 
     }).await.map_err(|error| format!("Message processing task failed: {error}"))?
 }
 
-pub async fn get_message_body(app_handle: &AppHandle, account: Account, folder: &str, uid: u32) -> Result<MessageDetail, String> {
-    fetch_and_cache_body_internal(app_handle, &account, folder, uid).await
-}
+
 
 pub async fn fetch_attachment_part(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {
     let part_id_clone = part_id.to_string();

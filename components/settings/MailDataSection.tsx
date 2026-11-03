@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {confirm} from '@tauri-apps/plugin-dialog';
@@ -10,6 +10,7 @@ import { SettingGroup, SettingRow, settingButton } from "./SettingsControls";
 interface SyncStatus { last_sync_at: number | null; sync_in_progress: boolean; }
 interface CacheSummary { messages: number; bodyBytes: number; headerBytes: number; }
 export function MailDataSection({ section }: { section: "sync" | "storage" }) {
+    const invoke = useAccountInvoke();
     const { user } = useAuth();
     const [status, setStatus] = useState<SyncStatus | null>(null);
     const [cache, setCache] = useState<CacheSummary | null>(null);
@@ -27,7 +28,7 @@ export function MailDataSection({ section }: { section: "sync" | "storage" }) {
         void refresh();
         const timer = setInterval(refresh, 15000);
         return () => { active = false; clearInterval(timer); };
-    }, [section, user?.id]);
+    }, [section, user?.id, invoke]);
     const formatBytes = (bytes: number) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
     return <div className="space-y-5">
         {section === "sync" ? <SettingGroup title="Your mailbox"><SettingRow id="sync.status" title={status?.sync_in_progress ? "Syncing mail…" : "Last sync"} description={error ? "Sync status is unavailable. Reopen Settings to retry." : status?.last_sync_at ? new Date(status.last_sync_at * 1000).toLocaleString() : "No sync recorded yet."}><button className={settingButton} disabled={busy || status?.sync_in_progress} onClick={async () => { setBusy(true); try { await invoke("sync_mail_folder", { folder: "inbox" }); setStatus(await invoke<SyncStatus>("get_sync_diagnostics")); toast.info("Inbox sync requested."); } catch { toast.error("Could not sync. Check your connection and try again."); } finally { setBusy(false); } }}><RefreshCw className={`size-3.5 ${busy ? "animate-spin" : ""}`} />{busy ? "Syncing…" : "Sync Now"}</button></SettingRow></SettingGroup> : <>
@@ -44,6 +45,8 @@ export function MailDataSection({ section }: { section: "sync" | "storage" }) {
             catch(error){toast.error('Could not clear cache',{description:String(error)});}
             finally{setBusy(false);}
         })();}}>Clear</button></SettingRow>)}</SettingGroup>}
+        {/* Cache deletion needs a full reload to discard the persistent inbox's in-memory rows. */}
+        {/* eslint-disable-next-line @next/next/no-location-assign-relative-destination */}
         {section === "storage" && <SettingGroup title="Manage local mail"><SettingRow id="storage.clear" title="Clear cached mail" description="Remove this account’s downloaded mail and sync state. Mail stays at Google. Save any open work first."><button className={`${settingButton} text-red-600 dark:text-red-400`} disabled={busy} onClick={() => toast("Clear cached mail for this account?", { description: "Mail will need to download again. Your Google mailbox is not deleted.", action: { label: "Clear cache", onClick: async () => { setBusy(true); try { await invoke("clear_local_cache"); window.location.assign("/inbox"); } catch (error) { toast.error("Could not clear cached mail.", { description: String(error) }); setBusy(false); } } }, cancel: { label: "Cancel", onClick: () => {} } })}>Clear cache</button></SettingRow></SettingGroup>}
     </div>;
 }

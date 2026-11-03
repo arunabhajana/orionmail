@@ -1,3 +1,12 @@
+#[cfg(test)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderCapabilities {
+    pub supports_gmail_raw: bool,
+    pub supports_server_or: bool,
+    pub supports_server_phrase: bool,
+    pub supports_label_search: bool,
+    pub supports_thread_search: bool,
+}
 use crate::auth::account::{Account, MailProvider};
 use crate::mail::database;
 use crate::mail::message_list::MessageHeader;
@@ -38,13 +47,7 @@ pub enum RemoteSearchState {
     Offline,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchRequest {
-    pub search_id: String,
-    pub account_id: String,
-    pub folder: String,
-    pub query: String,
-}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchProgress {
@@ -77,14 +80,7 @@ pub struct SearchMetrics {
     pub cancelled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ProviderCapabilities {
-    pub supports_gmail_raw: bool,
-    pub supports_server_or: bool,
-    pub supports_server_phrase: bool,
-    pub supports_label_search: bool,
-    pub supports_thread_search: bool,
-}
+
 
 pub trait LocalSearchEngine: Send + Sync {
     fn search(&self, app_handle: &AppHandle, account_id: &str, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String>;
@@ -98,13 +94,26 @@ impl LocalSearchEngine for FTS5SearchEngine {
 }
 
 pub trait SearchBackend: Send + Sync {
+    #[cfg(test)]
+    fn supports_feature(&self) -> ProviderCapabilities;
     fn search(&self, account: &Account, imap_mailbox: &str, query: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>>;
     fn load_more(&self, account: &Account, imap_mailbox: &str, query: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>>;
-    fn supports_feature(&self) -> ProviderCapabilities;
+
 }
 
 pub struct GmailSearchBackend;
 impl SearchBackend for GmailSearchBackend {
+    #[cfg(test)]
+    fn supports_feature(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            supports_gmail_raw: true,
+            supports_server_or: true,
+            supports_server_phrase: true,
+            supports_label_search: true,
+            supports_thread_search: true,
+        }
+    }
+
     fn search(&self, account: &Account, imap_mailbox: &str, query: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
         let account_clone = account.clone();
         let imap_mailbox_clone = imap_mailbox.to_string();
@@ -139,53 +148,12 @@ impl SearchBackend for GmailSearchBackend {
         })
     }
 
-    fn supports_feature(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            supports_gmail_raw: true,
-            supports_server_or: true,
-            supports_server_phrase: true,
-            supports_label_search: true,
-            supports_thread_search: true,
-        }
-    }
+
 }
 
 pub struct OutlookSearchBackend;
 impl SearchBackend for OutlookSearchBackend {
-    fn search(&self, account: &Account, imap_mailbox: &str, query: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
-        let account_clone = account.clone();
-        let imap_mailbox_clone = imap_mailbox.to_string();
-        let query_clone = query.to_string();
-        Box::pin(async move {
-            execute_with_session(&account_clone, SessionKind::Search, move |session| {
-                let imap_mailbox = imap_mailbox_clone.clone();
-                session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("TEXT \"{}\"", query_clone.replace('\\', "\\\\").replace('"', "\\\""));
-                let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
-                let mut uid_vec: Vec<u32> = uids.into_iter().collect();
-                uid_vec.sort_unstable_by(|a, b| b.cmp(a));
-                Ok(uid_vec)
-            }).await
-        })
-    }
-
-    fn load_more(&self, account: &Account, imap_mailbox: &str, query: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
-        let account_clone = account.clone();
-        let imap_mailbox_clone = imap_mailbox.to_string();
-        let query_clone = query.to_string();
-        Box::pin(async move {
-            execute_with_session(&account_clone, SessionKind::Search, move |session| {
-                let imap_mailbox = imap_mailbox_clone.clone();
-                session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
-                let search_query = format!("UID 1:{} TEXT \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('\\', "\\\\").replace('"', "\\\""));
-                let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
-                let mut uid_vec: Vec<u32> = uids.into_iter().collect();
-                uid_vec.sort_unstable_by(|a, b| b.cmp(a));
-                Ok(uid_vec)
-            }).await
-        })
-    }
-
+    #[cfg(test)]
     fn supports_feature(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             supports_gmail_raw: false,
@@ -195,10 +163,7 @@ impl SearchBackend for OutlookSearchBackend {
             supports_thread_search: false,
         }
     }
-}
 
-pub struct GenericImapSearchBackend;
-impl SearchBackend for GenericImapSearchBackend {
     fn search(&self, account: &Account, imap_mailbox: &str, query: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
         let account_clone = account.clone();
         let imap_mailbox_clone = imap_mailbox.to_string();
@@ -233,6 +198,12 @@ impl SearchBackend for GenericImapSearchBackend {
         })
     }
 
+
+}
+
+pub struct GenericImapSearchBackend;
+impl SearchBackend for GenericImapSearchBackend {
+    #[cfg(test)]
     fn supports_feature(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             supports_gmail_raw: false,
@@ -242,6 +213,42 @@ impl SearchBackend for GenericImapSearchBackend {
             supports_thread_search: false,
         }
     }
+
+    fn search(&self, account: &Account, imap_mailbox: &str, query: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
+        let account_clone = account.clone();
+        let imap_mailbox_clone = imap_mailbox.to_string();
+        let query_clone = query.to_string();
+        Box::pin(async move {
+            execute_with_session(&account_clone, SessionKind::Search, move |session| {
+                let imap_mailbox = imap_mailbox_clone.clone();
+                session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
+                let search_query = format!("TEXT \"{}\"", query_clone.replace('\\', "\\\\").replace('"', "\\\""));
+                let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
+                let mut uid_vec: Vec<u32> = uids.into_iter().collect();
+                uid_vec.sort_unstable_by(|a, b| b.cmp(a));
+                Ok(uid_vec)
+            }).await
+        })
+    }
+
+    fn load_more(&self, account: &Account, imap_mailbox: &str, query: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
+        let account_clone = account.clone();
+        let imap_mailbox_clone = imap_mailbox.to_string();
+        let query_clone = query.to_string();
+        Box::pin(async move {
+            execute_with_session(&account_clone, SessionKind::Search, move |session| {
+                let imap_mailbox = imap_mailbox_clone.clone();
+                session.select(&imap_mailbox).map_err(|e| format!("IMAP Select Error: {}", e))?;
+                let search_query = format!("UID 1:{} TEXT \"{}\"", cursor_uid.saturating_sub(1), query_clone.replace('\\', "\\\\").replace('"', "\\\""));
+                let uids = session.uid_search(&search_query).map_err(|e| format!("IMAP Search Error: {}", e))?;
+                let mut uid_vec: Vec<u32> = uids.into_iter().collect();
+                uid_vec.sort_unstable_by(|a, b| b.cmp(a));
+                Ok(uid_vec)
+            }).await
+        })
+    }
+
+
 }
 
 pub fn get_search_backend(provider: &MailProvider) -> Box<dyn SearchBackend> {
@@ -262,7 +269,7 @@ pub struct SearchCacheEntry {
     pub uids: Vec<u32>,
 }
 
-pub static SEARCH_CACHE: Lazy<DashMap<String, SearchCacheEntry>> = Lazy::new(|| DashMap::new());
+pub static SEARCH_CACHE: Lazy<DashMap<String, SearchCacheEntry>> = Lazy::new(DashMap::new);
 
 pub struct SearchContextState {
     pub pending: VecDeque<u32>,
@@ -283,7 +290,7 @@ pub struct SearchContext {
     pub state: Mutex<SearchContextState>,
 }
 
-pub static ACTIVE_SEARCHES: Lazy<DashMap<String, Arc<SearchContext>>> = Lazy::new(|| DashMap::new());
+pub static ACTIVE_SEARCHES: Lazy<DashMap<String, Arc<SearchContext>>> = Lazy::new(DashMap::new);
 
 pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32) -> Result<MessageDetail, String> {
     // Serialize header ingestion with confirmed moves. Otherwise an old
@@ -325,7 +332,7 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
             .ok_or("Could not retrieve message header.".to_string())
     }).await?;
 
-    database::insert_or_update_messages(app_handle, &account.id, &[fetch_res.clone()])?;
+    database::insert_or_update_messages(app_handle, &account.id, std::slice::from_ref(&fetch_res))?;
     if folder=="inbox" && matches!(account.provider,MailProvider::Google) {
         crate::mail::trash::inbox_headers(app_handle,&account.id,&[fetch_res])?;
     }
@@ -652,6 +659,17 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
     });
 
     Ok((search_id, local_results, RemoteSearchState::Running))
+}
+
+pub fn validate_owner(search: &str, account: &str) -> Result<(), String> {
+    if ACTIVE_SEARCHES.get(search).is_some_and(|entry|entry.account.id != account) { return Err("Search belongs to another account".into()); }
+    Ok(())
+}
+
+pub fn cancel_account(account: &str) {
+    ACTIVE_SEARCHES.retain(|_, entry| {
+        if entry.account.id == account { entry.cancellation_token.cancel(); false } else { true }
+    });
 }
 
 pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Result<RemoteSearchState, String> {

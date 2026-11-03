@@ -1,4 +1,5 @@
 //! Windows mail toasts use opaque snapshot IDs. Action scope stays in Rust.
+type PendingMailBatches = std::collections::HashMap<String, HashSet<(String,u32)>>;
 mod store;
 #[cfg(target_os = "windows")]
 mod windows;
@@ -239,7 +240,7 @@ fn render(app: &AppHandle, batch: &Batch, popup: bool) -> Result<(), String> {
     }
     Ok(())
 }
-static NEW_MAIL: Lazy<Mutex<std::collections::HashMap<String, HashSet<(String,u32)>>>> =
+static NEW_MAIL: Lazy<Mutex<PendingMailBatches>> =
     Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
 pub fn show_new_emails(app: &AppHandle, account: &str, folder: &str, new_emails: &[(String, String, u32)]) {
     let Ok(mut batches) = NEW_MAIL.lock() else {
@@ -461,12 +462,7 @@ fn report_error(app: &AppHandle, error: &str) {
 async fn mark_snapshot_read(app: &AppHandle, token: &str) -> Result<(), String> {
     crate::auth::app_lock::require_unlocked(app)?;
     let batch = store::find(app, token)?;
-    let account = crate::auth::bootstrap::ensure_active_account(app).await?;
-    if account.id != batch.account_id {
-        return Err(
-            "Switch to the account shown on this notification before acting on its mail.".into(),
-        );
-    }
+    let account = crate::auth::bootstrap::ensure_account(app, &batch.account_id).await?;
     let mut queued = 0;
     let mut conflicts = 0;
     {
@@ -528,6 +524,23 @@ pub struct Navigation {
     message: Option<crate::mail::message_list::MessageHeader>,
 }
 #[tauri::command]
+pub fn pending_notification_account(app_handle: AppHandle) -> Result<Option<String>, String> {
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let profiles = crate::auth::session::load_profile_metadata(&app_handle).0;
+    loop {
+        let next = PENDING.lock().map_err(|_| "Notification actions unavailable")?.front().cloned();
+        let Some((token, action)) = next else { return Ok(None); };
+        if let Ok(batch) = store::find(&app_handle, &token) {
+            if profiles.iter().any(|profile|profile.id == batch.account_id) {
+                return Ok(if action == "read" { None } else { Some(batch.account_id) });
+            }
+        }
+        // A signed-out account or expired snapshot must not block newer activations.
+        let mut pending = PENDING.lock().map_err(|_| "Notification actions unavailable")?;
+        if pending.front().is_some_and(|entry|entry.0 == token) { pending.pop_front(); }
+    }
+}
+#[tauri::command]
 pub async fn consume_notification_navigation(
     app_handle: AppHandle,
 ) -> Result<Option<Navigation>, String> {
@@ -548,6 +561,7 @@ pub async fn consume_notification_navigation(
         let active = crate::auth::session::get_active_account(&app_handle)
             .ok_or("Sign in to open this notification")?;
         if active.id != batch.account_id {
+            PENDING.lock().map_err(|_| "Notification actions unavailable")?.push_front((token, action));
             return Err(
                 "Switch to the account shown on this notification to open its mail.".into(),
             );
@@ -574,7 +588,7 @@ pub async fn show_background_notification(app_handle: AppHandle) -> Result<(), S
         .map_err(|e| e.to_string())?
 }
 fn background_notification_inner(app_handle: &AppHandle) -> Result<(), String> {
-    if !permitted(&app_handle) {
+    if !permitted(app_handle) {
         return Ok(());
     }
     #[cfg(target_os = "windows")]
@@ -593,8 +607,8 @@ pub async fn preview_notification(app_handle: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 fn preview_inner(app_handle: &AppHandle) -> Result<(), String> {
-    crate::auth::app_lock::require_unlocked(&app_handle)?;
-    if !permitted(&app_handle) {
+    crate::auth::app_lock::require_unlocked(app_handle)?;
+    if !permitted(app_handle) {
         return Err("Save your notification preferences and turn off Do Not Disturb or quiet hours before previewing.".into());
     }
     #[cfg(target_os = "windows")]
@@ -646,6 +660,16 @@ pub async fn open_notification_volume(app_handle:AppHandle)->Result<(),String>{
     {Err("Use your operating system sound settings.".into())}
 }
 
+
+
+pub fn snooze_returned(app:&AppHandle,account:&str){
+ if !permitted(app){return;}
+ let Some(profile)=crate::auth::session::load_profile_metadata(app).0.into_iter().find(|profile|profile.id==account) else{return;};
+ #[cfg(target_os="windows")]
+ if let Err(error)=windows::preview("Snoozed mail is back",&format!("{} · Your snoozed messages are available in Inbox again.",profile.email),crate::mail_preferences::load(app).notification_sound,&crate::mail_preferences::load(app).notification_tone){log::debug!("Snooze reminder unavailable: {}",error);}
+ #[cfg(not(target_os="windows"))] let _=profile;
+}
+
 #[cfg(test)]
 mod folder_snapshot_tests {
     use super::*;
@@ -655,10 +679,4 @@ mod folder_snapshot_tests {
         let restored:Item=serde_json::from_str(&serde_json::to_string(&Item{folder:"tag:Label_1".into(),identity:"unique".into(),..item}).unwrap()).unwrap();
         assert_eq!(restored.folder,"tag:Label_1");assert_eq!(restored.validity,9);
     }
-}
-
-pub fn snooze_returned(app:&AppHandle,account:&str){
- if !permitted(app)||crate::auth::session::get_active_profile(app).map(|value|value.id)!=Some(account.into()){return;}
- #[cfg(target_os="windows")]
- if let Err(error)=windows::preview("Snoozed mail is back","Your snoozed messages are available in Inbox again.",crate::mail_preferences::load(app).notification_sound,&crate::mail_preferences::load(app).notification_tone){log::debug!("Snooze reminder unavailable: {}",error);}
 }

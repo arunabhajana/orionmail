@@ -55,7 +55,7 @@ pub async fn start_google_login(app: tauri::AppHandle) -> Result<Account, String
         .add_scope(Scope::new("https://www.googleapis.com/auth/userinfo.profile".to_string()))
         .add_scope(Scope::new("https://mail.google.com/".to_string()))
         .add_extra_param("access_type", "offline")
-        .add_extra_param("prompt", "consent")
+        .add_extra_param("prompt", "consent select_account")
         .add_extra_param("include_granted_scopes", "true")
         .set_pkce_challenge(pkce_challenge)
         .url();
@@ -87,7 +87,7 @@ pub async fn start_google_login(app: tauri::AppHandle) -> Result<Account, String
     let expires_in = token_result.expires_in().map(|d| d.as_secs()).unwrap_or(3600);
     let expires_at = chrono::Utc::now().timestamp() + expires_in as i64;
 
-    let http_client = HttpClient::new();
+    let http_client = HttpClient::builder().timeout(Duration::from_secs(20)).build().map_err(|e|e.to_string())?;
     let user_info: Value = http_client
         .get("https://www.googleapis.com/oauth2/v2/userinfo")
         .bearer_auth(access_token)
@@ -104,7 +104,6 @@ pub async fn start_google_login(app: tauri::AppHandle) -> Result<Account, String
         .ok_or("Failed to identify user (missing id/sub)")?
         .to_string();
 
-    crate::auth::token_store::persist_tokens(&id, &access_token, &refresh_token)?;
 
 
     Ok(Account {
@@ -121,7 +120,11 @@ pub async fn start_google_login(app: tauri::AppHandle) -> Result<Account, String
     })
 }
 
-pub async fn refresh_google_token(account: &mut Account) -> anyhow::Result<()> {
+pub async fn refresh_google_token(app: &tauri::AppHandle, account: &mut Account) -> anyhow::Result<()> {
+    let _credentials = crate::auth::bootstrap::credential_guard(&account.id).await.map_err(anyhow::Error::msg)?;
+    *account = crate::auth::session::get_account(app, &account.id).ok_or_else(||anyhow::anyhow!("Account was removed"))?;
+    if account.needs_reauth { return Err(anyhow::anyhow!("Reconnect this account before sending")); }
+    if account.expires_at > chrono::Utc::now().timestamp() + 300 { return Ok(()); }
     dotenvy::dotenv().ok();
 
     let google_client_id = ClientId::new(
@@ -143,10 +146,12 @@ pub async fn refresh_google_token(account: &mut Account) -> anyhow::Result<()> {
         Some(token_url),
     );
 
-    let token_result = client
-        .exchange_refresh_token(&RefreshToken::new(account.refresh_token.clone()))
-        .request_async(oauth2::reqwest::async_http_client)
+    let refresh_token = RefreshToken::new(account.refresh_token.clone());
+    let token_result = tokio::time::timeout(Duration::from_secs(20), client
+        .exchange_refresh_token(&refresh_token)
+        .request_async(oauth2::reqwest::async_http_client))
         .await
+        .map_err(|_|anyhow::anyhow!("Google token refresh timed out"))?
         .map_err(|e| anyhow::anyhow!("Token exchange failed: {}", e))?;
 
     account.access_token = token_result.access_token().secret().to_string();
@@ -162,6 +167,7 @@ pub async fn refresh_google_token(account: &mut Account) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to persist refreshed tokens: {}", e))?;
         
     account.needs_reauth = false;
+    crate::auth::session::save_account(app, account.clone(), false).map_err(anyhow::Error::msg)?;
 
     Ok(())
 }

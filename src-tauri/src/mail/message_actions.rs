@@ -106,38 +106,7 @@ fn validate_uid_validity(expected: Option<u32>, actual: Option<u32>) -> Result<(
     } else { Ok(()) }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn queued_action_cannot_target_a_reused_uid_after_epoch_change() {
-        assert!(validate_uid_validity(Some(9), Some(9)).is_ok());
-        assert!(validate_uid_validity(Some(9), Some(10)).is_err());
-        assert!(validate_uid_validity(None, Some(9)).is_err());
-        assert!(validate_uid_validity(Some(0), Some(0)).is_err());
-    }
-
-    #[test]
-    fn read_and_star_actions_set_or_clear_the_provider_flag_idempotently() {
-        assert_eq!(flag_store_command("seen", Some(true)).unwrap(), "+FLAGS.SILENT (\\Seen)");
-        assert_eq!(flag_store_command("seen", Some(false)).unwrap(), "-FLAGS.SILENT (\\Seen)");
-        assert_eq!(flag_store_command("flagged", Some(true)).unwrap(), "+FLAGS.SILENT (\\Flagged)");
-        assert_eq!(flag_store_command("flagged", Some(false)).unwrap(), "-FLAGS.SILENT (\\Flagged)");
-        assert!(flag_store_command("seen", None).is_err());
-    }
-
-    #[test]
-    fn trash_destination_is_provider_specific() {
-        assert_eq!(trash_mailbox(&MailProvider::Google), "[Gmail]/Trash");
-        assert_eq!(trash_mailbox(&MailProvider::Outlook), "Deleted Items");
-        let custom = MailProvider::Custom {
-            imap: crate::auth::account::ImapConfig { host: "imap.example.test".into(), port: 993, tls: true },
-            smtp: crate::auth::account::SmtpConfig { host: "smtp.example.test".into(), port: 587, starttls: true },
-        };
-        assert_eq!(trash_mailbox(&custom), "Trash");
-    }
-}
 
 fn apply_local_action(app: &AppHandle, item: &database::PendingMessageAction, provider: &MailProvider) -> Result<(), String> {
     if matches!(provider,MailProvider::Google){
@@ -175,6 +144,7 @@ fn notify_action_applied(app: &AppHandle, item: &database::PendingMessageAction)
     crate::tray_state::refresh_unread_count_from_db(app);
 }
 
+#[expect(clippy::too_many_arguments, reason = "Keeps the complete validated mail identity and operation fields explicit at this boundary.")]
 pub async fn perform_for_location(app:&AppHandle,account:&Account,folder:&str,uid:u32,action:&str,desired:Option<bool>,expected:u32,local_id:Option<&str>)->Result<Option<crate::mail::trash::Pending>,String>{
     let _mutation=MUTATION_LOCK.lock().await;
     let (folder,uid,epoch)=crate::mail::trash::source(app,&account.id,local_id,folder,uid)?;
@@ -239,5 +209,38 @@ pub async fn retry_pending(app: &AppHandle, account: &Account) {
             log::info!("Reconciled pending message action {} for account {}", item.id, account.id);
             notify_action_applied(app, &item);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queued_action_cannot_target_a_reused_uid_after_epoch_change() {
+        assert!(validate_uid_validity(Some(9), Some(9)).is_ok());
+        assert!(validate_uid_validity(Some(9), Some(10)).is_err());
+        assert!(validate_uid_validity(None, Some(9)).is_err());
+        assert!(validate_uid_validity(Some(0), Some(0)).is_err());
+    }
+
+    #[test]
+    fn read_and_star_actions_set_or_clear_the_provider_flag_idempotently() {
+        assert_eq!(flag_store_command("seen", Some(true)).unwrap(), "+FLAGS.SILENT (\\Seen)");
+        assert_eq!(flag_store_command("seen", Some(false)).unwrap(), "-FLAGS.SILENT (\\Seen)");
+        assert_eq!(flag_store_command("flagged", Some(true)).unwrap(), "+FLAGS.SILENT (\\Flagged)");
+        assert_eq!(flag_store_command("flagged", Some(false)).unwrap(), "-FLAGS.SILENT (\\Flagged)");
+        assert!(flag_store_command("seen", None).is_err());
+    }
+
+    #[test]
+    fn trash_destination_is_provider_specific() {
+        assert_eq!(trash_mailbox(&MailProvider::Google), "[Gmail]/Trash");
+        assert_eq!(trash_mailbox(&MailProvider::Outlook), "Deleted Items");
+        let custom = MailProvider::Custom {
+            imap: crate::auth::account::ImapConfig { host: "imap.example.test".into(), port: 993, tls: true },
+            smtp: crate::auth::account::SmtpConfig { host: "smtp.example.test".into(), port: 587, starttls: true },
+        };
+        assert_eq!(trash_mailbox(&custom), "Trash");
     }
 }

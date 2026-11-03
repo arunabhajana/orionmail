@@ -1,6 +1,7 @@
 "use client";
 
-import React, { createContext, useContext, useState, ReactNode, Dispatch, SetStateAction } from 'react';
+import React, { createContext, useContext, useState, useCallback, ReactNode, Dispatch, SetStateAction } from 'react';
+import { useAuth } from './AuthContext';
 
 interface SyncContextType {
     isSyncing: boolean;
@@ -15,13 +16,26 @@ interface SyncContextType {
 
 const SyncContext = createContext<SyncContextType | undefined>(undefined);
 
-export function SyncProvider({ children }: { children: ReactNode }) {
-    const [isSyncing, setIsSyncing] = useState(false);
-    const [syncMessage, setSyncMessage] = useState<string | null>(null);
-    const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
-    const [syncTriggerCount, setSyncTriggerCount] = useState(0);
+function useAccountState<T>(owner: string, initial: T): [T, Dispatch<SetStateAction<T>>] {
+    const { accountEpoch, isAccountCurrent } = useAuth();
+    const [values, setValues] = useState<Record<string, T>>({});
+    const set = useCallback((update: SetStateAction<T>) => {
+        if (!isAccountCurrent(owner, accountEpoch)) return;
+        setValues(previous => ({ ...previous, [owner]: typeof update === 'function' ? (update as (value: T) => T)(previous[owner] ?? initial) : update }));
+    }, [owner, initial, accountEpoch, isAccountCurrent]);
+    return [values[owner] ?? initial, set];
+}
+const EMPTY_COUNTS: Record<string, number> = {};
 
-    const triggerSync = () => setSyncTriggerCount(c => c + 1);
+export function SyncProvider({ children }: { children: ReactNode }) {
+    const { user } = useAuth();
+    const owner = user?.id ?? '';
+    const [isSyncing, setIsSyncing] = useAccountState(owner, false);
+    const [syncMessage, setSyncMessage] = useAccountState<string | null>(owner, null);
+    const [unreadCounts, setUnreadCounts] = useAccountState(owner, EMPTY_COUNTS);
+    const [syncTriggerCount, setSyncTriggerCount] = useAccountState(owner, 0);
+
+    const triggerSync = useCallback(() => setSyncTriggerCount(c => c + 1), [setSyncTriggerCount]);
 
     return (
         <SyncContext.Provider value={{

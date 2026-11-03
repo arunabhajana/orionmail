@@ -63,7 +63,7 @@ export function useTrashOperations(accountId: string | undefined, onRollback: (e
                 toast.error(current.length > 1 ? `${current.length} mail changes need attention` : current[0].reverted ? 'Mail change reverted' : 'Could not finish updating mail', {
                     id: 'mail-location-failure',
                     description: current[0].error,
-                    action: { label: 'Retry', onClick: () => { void invoke('sync_mail_folder', { folder: 'inbox' }).catch(() => {}); } },
+                    action: { label: 'Retry', onClick: () => { void invoke('sync_mail_folder', { accountId, folder: 'inbox' }).catch(() => {}); } },
                 });
             } catch {
                 if (!disposed) failureTimer = setTimeout(() => { void flushFailures(); }, 1000);

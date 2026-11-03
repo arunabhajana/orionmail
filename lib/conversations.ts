@@ -4,7 +4,8 @@ import type { Email } from './types';
 export function groupConversations(emails: Email[]): Email[] {
     const groups = new Map<string, Email[]>();
     for (const email of emails) {
-        const key = email.locationId ? `location:${email.id}` : email.threadId || email.messageId || `row:${email.id}`;
+        const root = email.locationId ? `location:${email.id}` : email.threadId || email.messageId || `row:${email.id}`;
+        const key = JSON.stringify([email.accountId ?? '', root]);
         const items = groups.get(key) || [];
         items.push(email);
         groups.set(key, items);

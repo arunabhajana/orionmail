@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useSettings } from './SettingsContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle, Loader2 } from 'lucide-react';
@@ -27,7 +27,7 @@ export function ConfirmNavigationDialog({ pendingCallback, onResolve }: { pendin
             await saveAll();
             onResolve();
             pendingCallback();
-        } catch (e) {
+        } catch {
             // failed to save, keep dialog open or close it?
             // Usually if save fails, we close the dialog so they see the toast and stay on page.
             onResolve();

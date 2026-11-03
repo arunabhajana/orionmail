@@ -137,6 +137,7 @@ fn collect_batches(
     Ok(remote)
 }
 
+#[expect(clippy::too_many_arguments, reason = "Explicit account, folder and UID-validity fences accompany the complete atomic database mutation.")]
 fn apply_snapshot(
     conn: &mut Connection,
     account: &str,

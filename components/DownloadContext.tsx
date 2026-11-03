@@ -1,10 +1,12 @@
 "use client";
 
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { useAuth } from './AuthContext';
 
 export type DownloadStatus = 'downloading' | 'completed' | 'error';
 
 export interface DownloadItem {
+    accountId: string;
     id: string;
     filename: string;
     status: DownloadStatus;
@@ -25,13 +27,15 @@ interface DownloadContextType {
 const DownloadContext = createContext<DownloadContextType | undefined>(undefined);
 
 export function DownloadProvider({ children }: { children: ReactNode }) {
+    const { user } = useAuth();
+    const owner = user?.id ?? '';
     const [downloads, setDownloads] = useState<DownloadItem[]>([]);
 
     const addDownload = useCallback((filename: string) => {
-        const id = Math.random().toString(36).substring(2, 9);
-        setDownloads(prev => [{ id, filename, status: 'downloading', progress: 0 }, ...prev]);
+        const id = crypto.randomUUID();
+        setDownloads(prev => [{ id, accountId: owner, filename, status: 'downloading', progress: 0 }, ...prev]);
         return id;
-    }, []);
+    }, [owner]);
 
     const updateDownloadProgress = useCallback((id: string, progress: number) => {
         setDownloads(prev => prev.map(d => d.id === id ? { ...d, progress } : d));
@@ -46,14 +50,15 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const clearDownloads = useCallback(() => {
-        setDownloads([]);
-    }, []);
+        setDownloads(previous => previous.filter(item => item.accountId !== owner));
+    }, [owner]);
 
-    const activeCount = downloads.filter(d => d.status === 'downloading').length;
+    const visibleDownloads = downloads.filter(item => item.accountId === owner);
+    const activeCount = visibleDownloads.filter(d => d.status === 'downloading').length;
 
     return (
         <DownloadContext.Provider value={{
-            downloads,
+            downloads: visibleDownloads,
             addDownload,
             updateDownloadProgress,
             updateDownloadStatus,

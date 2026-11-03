@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useSyncExternalStore } from 'react';
 import { useTheme } from 'next-themes';
 
 export type AccentColorName = 'blue' | 'purple' | 'rose' | 'emerald' | 'orange';
@@ -18,22 +18,24 @@ export const colorMap: Record<AccentColorName, { light: string; dark: string }> 
     orange: { light: '#ea580c', dark: '#f97316' },
 };
 
+function subscribeAccent(update: () => void) {
+    window.addEventListener('storage', update); window.addEventListener('orion:accent_changed', update);
+    return () => { window.removeEventListener('storage', update); window.removeEventListener('orion:accent_changed', update); };
+}
+function accentSnapshot(): AccentColorName {
+    const value = localStorage.getItem('orbitmail_accent');
+    return value && Object.hasOwn(colorMap, value) ? value as AccentColorName : 'blue';
+}
+const serverAccent = (): AccentColorName => 'blue';
 const AccentColorContext = createContext<AccentColorContextType | undefined>(undefined);
 
 export function AccentColorProvider({ children }: { children: React.ReactNode }) {
-    const [accentColor, setAccentColorState] = useState<AccentColorName>('blue');
+    const accentColor = useSyncExternalStore(subscribeAccent, accentSnapshot, serverAccent);
     const { theme, resolvedTheme } = useTheme();
 
-    useEffect(() => {
-        const stored = localStorage.getItem('orbitmail_accent');
-        if (stored && colorMap[stored as AccentColorName]) {
-            setAccentColorState(stored as AccentColorName);
-        }
-    }, []);
-
     const setAccentColor = (color: AccentColorName) => {
-        setAccentColorState(color);
         localStorage.setItem('orbitmail_accent', color);
+        window.dispatchEvent(new Event('orion:accent_changed'));
     };
 
     useEffect(() => {

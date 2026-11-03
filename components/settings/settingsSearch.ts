@@ -17,6 +17,7 @@ export const SETTINGS_TABS = [
 ] as const;
 export interface SettingsSearchResult { id: string; title: string; section: SettingsTab; description: string; keywords: string; }
 const nativeEntries: [SettingsTab, string, string, string, string][] = [
+    ['account', 'connected', 'Connected accounts', 'Switch mailboxes or add another Google account.', 'multi account mailbox profile add google switch'],
     ['notifications', 'preview', 'Preview notification', 'Check the OrionMail name, icon, and Windows notification delivery.', 'test banner toast dev'],
     ['notifications', 'volume', 'Notification volume', 'Adjust notification loudness in the Windows volume mixer.', 'audio sound mixer loud quiet'],
     ['notifications', 'system', 'Windows notification settings', 'Manage banners, sounds, and lock screen previews in Windows.', 'permissions action center system'],
@@ -43,9 +44,10 @@ const nativeEntries: [SettingsTab, string, string, string, string][] = [
     ['shortcuts', 'save', 'Save settings', 'Press Ctrl+S to save pending changes.', 'keyboard'],
     ['shortcuts', 'search', 'Search settings', 'Press Ctrl+K to find a setting.', 'keyboard'],
     ['about', 'version', 'App version', 'Installed version of OrionMail.', 'release build'],
-    ['about', 'developer', 'Developed by Arunabhajana', 'About the developer.', 'credits'],
+    ['about', 'developer', 'Developed by Arunabha Jana', 'About the developer.', 'credits'],
     ['about', 'support', 'Contact and support', 'Email arunabhajana@gmail.com.', 'help feedback'],
-    ['about', 'changelog', 'Release notes', 'Browse versioned release notes and preview the What’s new tour.', 'updates changelog whats new preview tour'],
+    ['about', 'changelog', 'Release notes', 'Expand categorized release notes for each version.', 'updates changelog fixes history'],
+    ['about', 'updates', 'Update preview', 'Try the update popup, progress animation, and What’s new tour.', 'updates download install demo whats new preview tour'],
     ['about', 'privacy', 'Privacy policy and licenses', 'Public policies and notices are not published yet.', 'legal terms third party'],
 ];
 export const SETTINGS_SEARCH_INDEX: SettingsSearchResult[] = [

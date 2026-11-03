@@ -1,5 +1,8 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import cli from '@tauri-apps/cli';
+import path from 'node:path';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -33,7 +36,7 @@ if (command === 'dev' && fs.existsSync(devIconsDir)) {
 
 // Use the installed CLI in this process rather than retaining a wrapper,
 // a shell, and npx for the entire development session.
-const cli = require('@tauri-apps/cli');
+
 cli.run(args, 'npm run tauri').catch(error => {
     cli.logError(error.message);
     process.exitCode = 1;

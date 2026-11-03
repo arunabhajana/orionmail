@@ -8,9 +8,9 @@ const commands = {
     quick: [[node, ['scripts/release.mjs', 'versions']], [node, ['scripts/release.mjs', 'generate', '--check']], [node, ['node_modules/typescript/bin/tsc', '--noEmit']], [node, ['node_modules/eslint/bin/eslint.js', '.', '--max-warnings=0']], [node, ['scripts/check.mjs', 'tests']]],
     unit: [[node, ['--test', ...fs.readdirSync(path.join(ROOT, 'scripts')).filter(name => name.endsWith('.test.mjs')).sort().map(name => `scripts/${name}`)]]],
     tests: [[node, ['scripts/check.mjs', 'unit']], [node, ['node_modules/vitest/vitest.mjs', 'run']]],
-    desktop: [['cargo', ['check', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']], ['cargo', ['clippy', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--all-targets', '--', '-D', 'warnings']], ['cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--lib']]],
+    desktop: [['cargo', ['check', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']], ['cargo', ['clippy', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--all-targets', '--', '-D', 'warnings']], ['cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--lib']], ['cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--bin', 'app']]],
     all: [[node, ['scripts/check.mjs', 'quick']], [node, ['scripts/check.mjs', 'desktop']], [node, ['node_modules/next/dist/bin/next', 'build']]],
-    build: [[node, ['scripts/release.mjs', 'doctor', '--release']], [node, ['scripts/release.mjs', 'generate']], [node, ['scripts/release.mjs', 'release-check']], [node, ['scripts/tauri.js', 'build']]],
+    build: [[node, ['scripts/release.mjs', 'doctor', '--release']], [node, ['scripts/release.mjs', 'generate']], [node, ['scripts/release.mjs', 'release-check']], [node, ['scripts/tauri.mjs', 'build']]],
 };
 try {
     if (!commands[mode]) throw new Error(`Unknown check group: ${mode}`);

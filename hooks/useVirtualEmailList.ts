@@ -30,6 +30,8 @@ export function useVirtualEmailList({
         }
     }, [listRef]);
 
+    // Virtualizer owns mutable measurements; keep this hook outside compiler memoization.
+    // eslint-disable-next-line react-hooks/incompatible-library
     const rowVirtualizer = useVirtualizer({
         count: itemCount,
         getScrollElement: () => parentRef.current,

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { ArrowLeft, ArrowRight, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, X } from 'lucide-react';
 import type { Release } from '@/lib/release-types';
 import { currentRelease, releases } from '@/lib/generated/releases';
 import { settingButton } from './SettingsControls';
@@ -34,20 +34,22 @@ export function WhatsNewModal({ onClose, release = currentRelease }: { onClose: 
         </footer>
     </dialog>;
 }
-function ReleaseEntry({ release, onPreview }: { release: Release; onPreview: () => void }) {
+function ReleaseEntry({ release }: { release: Release }) {
     return <article className="p-5 sm:p-6" aria-label={`Version ${release.version} release notes`}>
         <div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-semibold tracking-tight">{release.title}</h3><span className="rounded-full border border-primary/15 bg-primary/[0.07] px-2 py-1 text-[10px] font-medium text-primary">{release.status === 'draft' ? release.sample ? 'Sample · Draft' : 'Draft' : release.status === 'ready' ? 'Release candidate' : 'Released'}</span></div>
         <p className="mt-2 text-xs text-muted-foreground">Version {release.version}{release.date ? ` · ${release.date}` : ' · Not published yet'}</p><p className="mt-3 text-xs leading-relaxed text-muted-foreground">{release.summary}</p>
         <div className="mt-6 space-y-6">{release.sections.map(section => <section key={section.category} aria-label={section.category}><h4 className="mb-3 text-xs font-semibold">{section.category}</h4><ul className="space-y-3 border-l border-black/[0.06] pl-4 dark:border-white/[0.08]">{section.items.map(item => <li key={item.title}><p className="text-xs font-medium">{item.title}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.text}</p></li>)}</ul></section>)}</div>
-        <button type="button" onClick={onPreview} className={settingButton + ' mt-5'}><Sparkles size={14} />What’s new in {release.version}</button>
     </article>;
 }
 export function ReleaseNotesPanel() {
-    const [preview, setPreview] = useState<Release | null>(null);
-    return <section data-setting-id="about.changelog" className="settings-group overflow-hidden">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-black/[0.05] bg-primary/[0.025] p-5 dark:border-white/[0.06]"><div><h2 className="text-sm font-semibold">Release notes</h2><p className="mt-1 text-xs text-muted-foreground">The little changes that make a better inbox.</p></div><button type="button" onClick={() => setPreview(currentRelease)} className={settingButton}><Sparkles size={14} />Preview What’s new</button></header>
-        <ReleaseEntry release={currentRelease} onPreview={() => setPreview(currentRelease)} />
-        {releases.filter(release => release.version !== currentRelease.version).map(release => <details key={release.version} className="border-t border-black/5 dark:border-white/10"><summary className="cursor-pointer px-5 py-4 text-xs font-medium">Version {release.version} · {release.title}</summary><ReleaseEntry release={release} onPreview={() => setPreview(release)} /></details>)}
-        {preview && <WhatsNewModal key={preview.version} release={preview} onClose={() => setPreview(null)} />}
-    </section>;
+    return <details data-setting-id="about.changelog" className="settings-group group/release-notes overflow-hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[19px] p-5 transition-colors hover:bg-primary/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+            <div><h2 className="text-sm font-semibold">Release notes</h2><p className="mt-1 text-xs text-muted-foreground">Version {currentRelease.version} · Changes, improvements, and fixes.</p></div>
+            <ChevronDown aria-hidden="true" size={17} className="shrink-0 text-muted-foreground transition-transform duration-150 group-open/release-notes:rotate-180 motion-reduce:transition-none" />
+        </summary>
+        <div className="border-t border-black/[0.05] dark:border-white/[0.06]">
+            <ReleaseEntry release={currentRelease} />
+            {releases.filter(release => release.version !== currentRelease.version).map(release => <details key={release.version} className="border-t border-black/5 dark:border-white/10"><summary className="cursor-pointer px-5 py-4 text-xs font-medium">Version {release.version} · {release.title}</summary><ReleaseEntry release={release} /></details>)}
+        </div>
+    </details>;
 }

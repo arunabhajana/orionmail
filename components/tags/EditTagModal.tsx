@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, Check, Loader2, Tag as TagIcon } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { toast } from 'sonner';
 import { Tag } from '@/lib/types';
 
@@ -45,29 +45,30 @@ interface EditTagModalProps {
 }
 
 export const EditTagModal: React.FC<EditTagModalProps> = ({ tag, onClose }) => {
-    const [name, setName] = useState('');
-    const [parentTag, setParentTag] = useState<string>('');
-    const [selectedColor, setSelectedColor] = useState<{ bg: string, text: string } | null>(null);
+    const invoke = useAccountInvoke();
+    const [name, setName] = useState(() => tag.name.split('/').at(-1) || '');
+    const [parentTag, setParentTag] = useState(() => tag.name.split('/').slice(0,-1).join('/'));
+    const [selectedColor, setSelectedColor] = useState<{ bg: string, text: string } | null>(() => tag.bg_color && tag.text_color ? {bg:tag.bg_color,text:tag.text_color} : null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [existingTags, setExistingTags] = useState<Tag[]>([]);
 
-    useEffect(() => {
+    const [lastTag, setLastTag] = useState(tag);
+    if (lastTag !== tag) {
+        setLastTag(tag);
         const parts = tag.name.split('/');
         const baseName = parts.pop() || '';
         const parent = parts.join('/');
         
         setName(baseName);
         setParentTag(parent);
-        if (tag.bg_color && tag.text_color) {
-            setSelectedColor({ bg: tag.bg_color, text: tag.text_color });
-        }
-    }, [tag]);
+        setSelectedColor(tag.bg_color && tag.text_color ? {bg:tag.bg_color,text:tag.text_color} : null);
+    }
 
     useEffect(() => {
         invoke<Tag[]>('get_all_tags')
             .then(setExistingTags)
             .catch(console.error);
-    }, []);
+    }, [invoke]);
 
     const trimmedName = name.trim();
     const fullName = parentTag ? `${parentTag}/${trimmedName}` : trimmedName;

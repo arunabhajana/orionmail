@@ -1,5 +1,6 @@
 pub mod account;
 pub mod session;
+pub mod scope;
 pub mod oauth;
 mod oauth_callback;
 pub mod bootstrap;

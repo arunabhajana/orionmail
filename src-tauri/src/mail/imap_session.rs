@@ -1,3 +1,4 @@
+type AccountSessions = HashMap<(String, SessionKind), Arc<ManagedSession>>;
 use crate::auth::account::Account;
 use once_cell::sync::Lazy;
 use std::sync::Mutex as StdMutex;
@@ -28,7 +29,7 @@ pub struct ManagedSession {
     pub session: Arc<AsyncMutex<Option<ImapSession>>>,
 }
 
-pub static SESSION_MANAGER: Lazy<StdMutex<HashMap<(String, SessionKind), Arc<ManagedSession>>>> = 
+pub static SESSION_MANAGER: Lazy<StdMutex<AccountSessions>> =
     Lazy::new(|| StdMutex::new(HashMap::new()));
 
 pub fn remove_account(account_id: &str) {
@@ -98,11 +99,11 @@ pub(crate) fn connect_with_transport(account: &Account, kind: SessionKind) -> Re
 
     // Custom Authenticator implementation for XOAUTH2
     struct XoAuth2 { auth_string: String }
-    
+
     impl imap::Authenticator for XoAuth2 {
         type Response = String;
-        fn process(&self, _: &[u8]) -> Self::Response { 
-            self.auth_string.clone() 
+        fn process(&self, _: &[u8]) -> Self::Response {
+            self.auth_string.clone()
         }
     }
 
@@ -139,7 +140,7 @@ where
     // 3. Move the owned guard into the blocking task to perform IMAP network I/O
     tokio::task::spawn_blocking(move || {
         // We now have exclusive mutable access to the Option<ImapSession>
-        
+
         let mut is_healthy = false;
         if let Some(s) = owned_guard.as_mut() {
             if s.created_at.elapsed().as_secs() > 1800 {
@@ -182,7 +183,7 @@ where
             log::warn!("[SessionStats] Session operation failed for {:?}. Attempting auto-recovery...", kind);
             let _ = imap_session_wrapper.session.logout(); // poison
             *owned_guard = None; // discard
-            
+
             // Recreate
             log::info!("[SessionStats] Recreating failed session for {:?}", kind);
             let mut new_session = match create_session(&account_clone, kind) {
@@ -202,7 +203,7 @@ where
         // Heartbeat update
         imap_session_wrapper.last_used = Instant::now();
         result
-        
+
         // owned_guard drops here, releasing the tokio async mutex naturally!
     }).await.map_err(|e| format!("Spawn blocking error: {}", e))?
 }

@@ -1,8 +1,8 @@
 "use client";
 
 import { usePathname } from 'next/navigation';
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Email, Tag } from '@/lib/types';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useEffectEvent } from 'react';
+import { Email, Tag, type NativeMessageHeader } from '@/lib/types';
 import { SnoozeDialog } from './inbox/SnoozeDialog';
 import { useSnoozedMail } from '@/hooks/useSnoozedMail';
 import { snoozeKey } from '@/lib/snooze';
@@ -11,7 +11,7 @@ import { pinIdentity, pinnedFirst } from '@/lib/mail-pins';
 import DOMPurify from 'isomorphic-dompurify';
 import { MessageTagPicker } from './inbox/MessageTagPicker';
 import { dedupeMail, sameMail,mailIdentity, reuseUnchangedMail } from '@/lib/mail-identity';
-import { formatEmailTime } from '@/lib/utils';
+import { formatNativeEmail } from '@/lib/mail-format';
 import { AlertCircle } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -23,8 +23,10 @@ import { useActiveFolderRefresh } from '@/hooks/useActiveFolderRefresh';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { plainTextHtml, signatureHtml } from '@/lib/app-preferences';
 import type { DraftPayload, MailDraft } from '@/lib/drafts';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { listen } from '@tauri-apps/api/event';
+import { waitForInitialMail } from '@/lib/initial-sync';
+import { createEventScope } from '@/lib/event-scope';
 import { useSync } from '@/components/SyncContext';
 import { useAuth } from '@/components/AuthContext';
 import LogoSpinner from '@/components/LogoSpinner';
@@ -54,7 +56,9 @@ const EMPTY_SEARCH_STATE: FolderSearchState = {
 interface LocalLocationChoice { accountId: string; email: Email; desired: 'inbox' | 'trash' | 'deleted'; token: number; requestId: string; }
 
 export default function MainLayout() {
-    const { user } = useAuth();
+    const invoke = useAccountInvoke();
+    const { user, accountBusy, switchAccount } = useAuth();
+    const formatEmailFromMessage = useCallback((message: NativeMessageHeader) => formatNativeEmail(message, user?.id), [user?.id]);
     const pathname=usePathname();
     const snoozes=useSnoozedMail(user?.id);
     const [showSnoozed,setShowSnoozed]=useState(false);
@@ -66,20 +70,22 @@ export default function MainLayout() {
     const pinRevision=useRef(0);
     useEffect(()=>{
         if(!user?.id)return;let active=true;let stop:(()=>void)|undefined;let timer:ReturnType<typeof setTimeout>|undefined;
-        const refresh=async()=>{const version=pinRevision.current;try{const rows=await invoke<any[]>('list_mail_pins',{accountId:user.id});if(active&&version===pinRevision.current&&!pinBusy.current.size)setPinRows(previous=>reuseUnchangedMail(previous,rows.map(formatEmailFromMessage).sort((a,b)=>a.id.localeCompare(b.id))));}catch(error){if(active)console.error('Could not load mail pins',error);}};
+        const refresh=async()=>{const version=pinRevision.current;try{const rows=await invoke<NativeMessageHeader[]>('list_mail_pins',{accountId:user.id});if(active&&version===pinRevision.current&&!pinBusy.current.size)setPinRows(previous=>reuseUnchangedMail(previous,rows.map(formatEmailFromMessage).sort((a,b)=>a.id.localeCompare(b.id))));}catch(error){if(active)console.error('Could not load mail pins',error);}};
         void listen<{account_id:string}>('mail:updated',event=>{if(event.payload.account_id!==user.id||timer)return;timer=setTimeout(()=>{timer=undefined;void refresh();},1500);}).then(fn=>{if(active){stop=fn;void refresh();}else fn();});
         return()=>{active=false;stop?.();clearTimeout(timer);};
-    },[user?.id]);
+    },[user?.id, invoke, formatEmailFromMessage]);
     const [detailTags,setDetailTags]=useState<{accountId:string;email:Email;tags:Tag[]}|null>(null);
     const { preferences, updatePreferences } = useAppPreferences();
     const preferencesRef = useRef(preferences);
-    preferencesRef.current = preferences;
+    useEffect(() => { preferencesRef.current = preferences; }, [preferences]);
     const activeAccountRef = useRef(user?.id);
     useEffect(() => { activeAccountRef.current = user?.id; }, [user?.id]);
     const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
     const [isComposeOpen, setIsComposeOpen] = useState(false);
-    const composeOpenRef=useRef(isComposeOpen);composeOpenRef.current=isComposeOpen;
-    const pathnameRef=useRef(pathname);pathnameRef.current=pathname;
+    const composeOpenRef=useRef(isComposeOpen);
+    useEffect(() => { composeOpenRef.current=isComposeOpen; }, [isComposeOpen]);
+    const pathnameRef=useRef(pathname);
+    useEffect(() => { pathnameRef.current=pathname; }, [pathname]);
     const [mailLink, setMailLink] = useState<{id:string;payload:DraftPayload}|null>(null);
     const mailLinkBusy=useRef(false);
     const [composeDraft, setComposeDraft] = useState<MailDraft | undefined>();
@@ -110,7 +116,7 @@ export default function MainLayout() {
         };
         void listen('mailto:pending',()=>{void consume();}).then(fn=>{if(active){stop=fn;void consume();}else fn();});
         return()=>{active=false;stop?.();};
-    },[user?.id,isComposeOpen,preferences.signature,preferences.defaultCc,preferences.defaultBcc,pathname]);
+    },[user?.id,isComposeOpen,preferences.signature,preferences.defaultCc,preferences.defaultBcc,pathname, invoke]);
     const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
     const [editingTag, setEditingTag] = useState<Tag | null>(null);
     const [deletingTag, setDeletingTag] = useState<Tag | null>(null);
@@ -125,6 +131,7 @@ export default function MainLayout() {
     const flagVersions=useRef(new Map<string,number>());
     const { isSyncing, setIsSyncing, setSyncMessage, unreadCounts, setUnreadCounts, syncTriggerCount, triggerSync } = useSync();
     const [isBootstrapping, setIsBootstrapping] = useState(true);
+    const [isFirstSync, setIsFirstSync] = useState(false);
     const [isLoadingFolder, setIsLoadingFolder] = useState(false); // Loading skeleton when switching folders
     const [syncError, setSyncError] = useState<string | null>(null);
     const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
@@ -142,7 +149,7 @@ export default function MainLayout() {
 
     const [folderSearchContexts, setFolderSearchContexts] = useState<Record<string, FolderSearchState>>({});
     const folderSearchRef=useRef(folderSearchContexts);
-    folderSearchRef.current=folderSearchContexts;
+    useEffect(() => { folderSearchRef.current=folderSearchContexts; }, [folderSearchContexts]);
 
     const activeSearchState = folderSearchContexts[currentFolder] || EMPTY_SEARCH_STATE;
     const { operations: pendingTrash, accept: acceptLocation } = useTrashOperations(user?.id, event => {
@@ -249,7 +256,7 @@ export default function MainLayout() {
             return folder === currentFolder;
         }));
         return { filteredEmails, visibleEmails: showSnoozed?[...filteredEmails].sort((a,b)=>(a.snoozedUntil||Infinity)-(b.snoozedUntil||Infinity)):pinnedFirst(filteredEmails) };
-    }, [emails, pinRows, snoozes.active, snoozes.returned, showSnoozed, snoozeSearch, pendingTagAdds, pendingFlags, locationChoices, pendingTrash, user?.id, currentFolder, activeSearchState.searchQuery, activeSearchState.searchResults]);
+    }, [emails, pinRows, snoozes.active, snoozes.returned, showSnoozed, snoozeSearch, pendingTagAdds, pendingFlags, locationChoices, pendingTrash, user?.id, currentFolder, activeSearchState.searchQuery, activeSearchState.searchResults, formatEmailFromMessage]);
     const conversationTargetRef = useRef<Email | null>(null);
     const selectedEmail = visibleEmails.find(e => e.id === selectedEmailId);
 
@@ -282,7 +289,7 @@ export default function MainLayout() {
             }
         })();
         return work.promise;
-    }, [setUnreadCounts]);
+    }, [setUnreadCounts, invoke]);
 
     const updateUnreadCount = (email: Email, delta: number) => {
         setUnreadCounts(prev => {
@@ -298,7 +305,7 @@ export default function MainLayout() {
 
     // --- Global State Sync ---
     useEffect(() => {
-        fetchUnreadCounts();
+        void fetchUnreadCounts();
     }, [fetchUnreadCounts]);
 
     // --- Handlers ---
@@ -334,7 +341,7 @@ export default function MainLayout() {
             for(const target of unique.values())await invoke('set_mail_pin',{accountId,folder:target.folder,uid:target.uid,expectedUidValidity:target.uidValidity??0,pinned:!pinned.length});
         }catch(error){toast.error('Could not update pin',{description:String(error)});}finally{
             pinBusy.current.delete(key);const version=++pinRevision.current;
-            if(!pinBusy.current.size){try{const rows=await invoke<any[]>('list_mail_pins',{accountId});if(activeAccountRef.current===accountId&&pinRevision.current===version)setPinRows(previous=>reuseUnchangedMail(previous,rows.map(formatEmailFromMessage).sort((a,b)=>a.id.localeCompare(b.id))));}catch(error){toast.error('Could not refresh pins',{description:String(error)});}}
+            if(!pinBusy.current.size){try{const rows=await invoke<NativeMessageHeader[]>('list_mail_pins',{accountId});if(activeAccountRef.current===accountId&&pinRevision.current===version)setPinRows(previous=>reuseUnchangedMail(previous,rows.map(formatEmailFromMessage).sort((a,b)=>a.id.localeCompare(b.id))));}catch(error){toast.error('Could not refresh pins',{description:String(error)});}}
         }
     };
     const newMessageToSender=(email:Email)=>{
@@ -416,11 +423,6 @@ export default function MainLayout() {
         } catch (err) {
             if(!edit.current())return;
             console.error("Failed to toggle star", err);
-            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                localStorage.removeItem("orion_user");
-                window.location.href = "/";
-                return;
-            }
             toast.error("Couldn't update star", { description: String(err) });
             // Rollback
             patchMessage(target,{starred:target.starred});
@@ -450,11 +452,6 @@ export default function MainLayout() {
         } catch (err) {
             if(!edit.current())return;
             console.error("Failed to toggle read", err);
-            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                localStorage.removeItem("orion_user");
-                window.location.href = "/";
-                return;
-            }
             toast.error("Couldn't update read status", { description: String(err) });
             // Rollback
             patchMessage(target,{unread:target.unread});
@@ -483,11 +480,6 @@ export default function MainLayout() {
         } catch (err) {
             if(!edit.current())return;
             console.error("Failed to mark as read", err);
-            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                localStorage.removeItem("orion_user");
-                window.location.href = "/";
-                return;
-            }
             toast.error("Couldn't mark message as read", { description: String(err) });
             // Rollback
             patchMessage(target,{unread:target.unread});
@@ -499,7 +491,7 @@ export default function MainLayout() {
         if (target) await performTrashAction(emailId, (target.displayFolder || target.folder) === 'trash' ? 'purge' : 'move');
     };
 
-    const dedupeEmails = dedupeMail;
+
     const performTrashAction = async (emailId: string, action: 'move' | 'restore' | 'purge') => {
         const target = (conversationTargetRef.current?.id === emailId ? conversationTargetRef.current : undefined) || visibleEmails.find(email => email.id === emailId);
         const accountId = user?.id;
@@ -558,41 +550,6 @@ export default function MainLayout() {
             if (locationChains.current.get(key) === work) locationChains.current.delete(key);
         }
     };
-    function formatEmailFromMessage(msg: any): Email {
-        let folder = msg.folder;
-        if (!folder) folder = "inbox";
-        else if (folder.toLowerCase() === "sent") folder = "sent";
-        // Preserve case for tags, standardize others
-        else if (!folder.toLowerCase().startsWith("tag:")) folder = folder.toLowerCase();
-        let senderName = msg.from.split('<')[0].trim();
-        if (!senderName) {
-            const emailMatch = msg.from.match(/<([^>]+)>/);
-            senderName = emailMatch ? emailMatch[1].split('@')[0] : msg.from;
-        }
-
-        return {
-            id: `${folder}-${msg.uid}`,
-            uid: msg.uid,
-            uidValidity:msg.uid_validity,
-            messageId: msg.message_id,
-            threadId: msg.thread_id,
-            sender: senderName,
-            senderEmail: msg.from,
-            to: msg.to || undefined,
-            subject: msg.subject || '(No Subject)',
-            preview: msg.snippet?.trim() || msg.subject?.substring(0, 100) || 'No preview available',
-            time: formatEmailTime(msg.date * 1000),
-            date: new Date(msg.date * 1000).toLocaleString(),
-            timestamp: msg.date * 1000,
-            unread: !msg.seen,
-            folder: folder,
-            tags: msg.tags || [],
-            starred: msg.flagged,
-            body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
-            attachments: [],
-        };
-    };
-
     const fetchCache = async (folderToFetch = currentFolderRef.current) => {
         const revision = cacheRevisionRef.current;
         if (folderToFetch === "drafts") {
@@ -602,7 +559,7 @@ export default function MainLayout() {
         }
 
         try {
-            const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
+            const cached: NativeMessageHeader[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
             if (revision !== cacheRevisionRef.current || folderToFetch !== currentFolderRef.current) return false;
             if (cached && cached.length > 0) {
                 const formattedEmails = cached.map(formatEmailFromMessage);
@@ -613,7 +570,7 @@ export default function MainLayout() {
                     pinned = rows.map(formatEmailFromMessage).filter(email => email.uidValidity === target.email.uidValidity);
                 }
                 if (revision !== cacheRevisionRef.current || folderToFetch !== currentFolderRef.current) return false;
-                const deduped = dedupeEmails([...formattedEmails, ...pinned]);
+                const deduped = dedupeMail([...formattedEmails, ...pinned]);
                 setEmails(previous => reuseUnchangedMail(previous, deduped));
                 reconcileWithDb(deduped);
                 setHasMore(cached.length === 50);
@@ -626,10 +583,6 @@ export default function MainLayout() {
             return false;
         } catch (error) {
             console.error("Failed to load cache", error);
-            if (String(error).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                localStorage.removeItem("orion_user");
-                window.location.href = "/";
-            }
             return false;
         }
     };
@@ -649,7 +602,7 @@ export default function MainLayout() {
                 if(disposed||accountId!==activeAccountRef.current||folder!==currentFolderRef.current||revision!==cacheRevisionRef.current)return;
                 const matchesView=(email:Email)=>folder==='starred'?email.starred:folder.startsWith('tag:')?email.tags.includes(folder.slice(4)):email.folder===folder;
                 const loadedIds=new Set(loaded.map(email=>email.id));
-                const next=dedupeEmails([...head.map(formatEmailFromMessage),...existing.map(formatEmailFromMessage).filter(email=>loadedIds.has(email.id))].filter(matchesView));
+                const next=dedupeMail([...head.map(formatEmailFromMessage),...existing.map(formatEmailFromMessage).filter(email=>loadedIds.has(email.id))].filter(matchesView));
                 setEmails(previous => reuseUnchangedMail(previous, next));
                 setSelectedEmailId(previous=>{
                     if(next.some(email=>email.id===previous))return previous;
@@ -659,9 +612,9 @@ export default function MainLayout() {
                 setFolderSearchContexts(prev=>Object.fromEntries(Object.entries(prev).map(([key,state])=>{
                     const map=new Map(existing.map(formatEmailFromMessage).map(email=>[email.id,email]));
                     const queried=new Set(requested.map(email=>email.id));
-                    return[key,{...state,searchResults:dedupeEmails(state.searchResults.flatMap(email=>map.has(email.id)?[map.get(email.id)!]:queried.has(email.id)?[]:[email])).filter(email=>key==='starred'?email.starred:key.startsWith('tag:')?email.tags.includes(key.slice(4)):email.folder===key)}];
+                    return[key,{...state,searchResults:dedupeMail(state.searchResults.flatMap(email=>map.has(email.id)?[map.get(email.id)!]:queried.has(email.id)?[]:[email])).filter(email=>key==='starred'?email.starred:key.startsWith('tag:')?email.tags.includes(key.slice(4)):email.folder===key)}];
                 })));
-                void fetchUnreadCounts();
+                void unreadFromEffect();
             }catch(error){console.error('Could not refresh cached label changes',error);}
         };
         void listen<string>('mail:labels_changed',event=>{
@@ -669,14 +622,14 @@ export default function MainLayout() {
             timer=setTimeout(()=>{void refresh(event.payload);},80);
         }).then(unlisten=>{if(disposed)unlisten();else stop=unlisten;}).catch(console.error);
         return()=>{disposed=true;if(timer)clearTimeout(timer);stop?.();};
-    },[]);
+    },[invoke, formatEmailFromMessage]);
 
     const refreshNewEmails = async (folderToFetch = currentFolderRef.current) => {
         const revision = cacheRevisionRef.current;
         if (folderToFetch === "drafts") return;
 
         try {
-            const cached: any[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
+            const cached: NativeMessageHeader[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
             if (revision !== cacheRevisionRef.current || folderToFetch !== currentFolderRef.current) return;
             if (!cached || cached.length === 0) {
                 setEmails([]);
@@ -701,7 +654,7 @@ export default function MainLayout() {
                     return prev;
                 }
                 const merged = [...formattedEmails, ...prev];
-                const deduped = dedupeEmails(merged);
+                const deduped = dedupeMail(merged);
                 reconcileWithDb(deduped);
                 return reuseUnchangedMail(prev, deduped);
             });
@@ -709,10 +662,6 @@ export default function MainLayout() {
             fetchUnreadCounts();
         } catch (error) {
             console.error("Failed to refresh new emails", error);
-            if (String(error).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                localStorage.removeItem("orion_user");
-                window.location.href = "/";
-            }
         }
     };
 
@@ -725,7 +674,7 @@ export default function MainLayout() {
             const lastEmail = currentEmails[currentEmails.length - 1];
             const beforeUid = lastEmail.uid;
 
-            const nextBatch: any[] = await invoke('get_folder_messages', { folder: currentFolder, beforeUid, beforeFolder: lastEmail.folder, limit: 50 });
+            const nextBatch: NativeMessageHeader[] = await invoke('get_folder_messages', { folder: currentFolder, beforeUid, beforeFolder: lastEmail.folder, limit: 50 });
             if (revision !== cacheRevisionRef.current || currentFolderRef.current !== currentFolder) return;
             if (nextBatch.length === 0) {
                 setHasMore(false);
@@ -734,7 +683,7 @@ export default function MainLayout() {
                 setEmails(prev => {
                     if (revision !== cacheRevisionRef.current || currentFolderRef.current !== currentFolder) return prev;
                     const merged = [...prev, ...formattedEmails];
-                    return reuseUnchangedMail(prev, dedupeEmails(merged));
+                    return reuseUnchangedMail(prev, dedupeMail(merged));
                 });
                 if (nextBatch.length < 50) {
                     setHasMore(false);
@@ -742,9 +691,6 @@ export default function MainLayout() {
             }
         } catch (err) {
             console.error("Failed to load more emails", err);
-            if (String(err).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                window.location.href = "/";
-            }
         } finally {
             setIsLoadingMore(false);
         }
@@ -766,7 +712,7 @@ export default function MainLayout() {
             setEmails(prev => {
                 const updated = update(prev);
                 if (currentFolderRef.current.startsWith('tag:') && assigned.includes(currentFolderRef.current.slice(4)) && !updated.some(item => sameMail(item,email))) {
-                    if (!removed.some(id => email.folder === `tag:${id}`)) return dedupeEmails([{ ...email, tags: assigned }, ...updated]);
+                    if (!removed.some(id => email.folder === `tag:${id}`)) return dedupeMail([{ ...email, tags: assigned }, ...updated]);
                 }
                 return updated;
             });
@@ -815,11 +761,6 @@ export default function MainLayout() {
             })
             .catch((e) => {
                 console.error("Failed to sync messages:", e);
-                if (String(e).match(/No active account|NEEDS_REAUTH|TOKEN_REFRESH_FAILED/)) {
-                    localStorage.removeItem("orion_user");
-                    window.location.href = "/";
-                    return;
-                }
                 if (!isBackground) {
                     setSyncError("Failed to sync messages. Please try again.");
                     setTimeout(() => setSyncError(null), 3000);
@@ -830,45 +771,44 @@ export default function MainLayout() {
             });
     };
     
-    const handleForceSync = () => {
-        triggerSync();
-    };
+    const syncFromEffect = useEffectEvent((background: boolean, folder?: string) => handleSync(background, folder));
+    const cacheFromEffect = useEffectEvent((folder?: string) => fetchCache(folder));
+    const unreadFromEffect = useEffectEvent(() => fetchUnreadCounts());
+    const refreshFromEffect = useEffectEvent((folder?: string) => refreshNewEmails(folder));
     useActiveFolderRefresh(!isBootstrapping && !preferences.syncPaused && currentFolder === 'trash', `${user?.id}:${currentFolder}`, () => handleSync(true, 'trash'));
 
     useEffect(() => {
+        let active = true;
         if (syncTriggerCount > 0) {
-            handleSync(false);
+            // Start external sync after the subscription effect has committed.
+            queueMicrotask(() => { if (active) syncFromEffect(false); });
         }
+        return () => { active = false; };
     }, [syncTriggerCount]);
 
-    // Calculate total unreads and update tray
-    useEffect(() => {
-        const total = Object.entries(unreadCounts).reduce((acc, [key, val]) => {
-            if (key === 'starred') return acc; // starred is a duplicate of unread state
-            return acc + (val || 0);
-        }, 0);
-    }, [unreadCounts]);
+
 
     // IMAP IDLE and the backend fallback poll own automatic sync. A second
     // renderer timer also ran while minimized and ignored the poll preference.
 
     useEffect(() => {
+        const subscriptions = createEventScope(listen);
         let unlistenSync: (() => void) | undefined;
         let unlistenCompose: (() => void) | undefined;
         let unlistenHidden: (() => void) | undefined;
 
         const setupTrayListeners = async () => {
-            unlistenSync = await listen('tray:sync_now', () => {
+            unlistenSync = await subscriptions.listen('tray:sync_now', () => {
                 console.log("tray:sync_now event received");
                 triggerSync(); // Use context trigger to avoid stale state in handleSync
             });
             
-            unlistenCompose = await listen('tray:compose', () => {
+            unlistenCompose = await subscriptions.listen('tray:compose', () => {
                 console.log("tray:compose event received");
                 setIsComposeOpen(true);
             });
             
-            unlistenHidden = await listen('window:hidden', async () => {
+            unlistenHidden = await subscriptions.listen('window:hidden', async () => {
                 const hintShown = localStorage.getItem("orion_tray_hint");
                 if (!hintShown) {
                     try {
@@ -881,63 +821,47 @@ export default function MainLayout() {
             });
         };
 
-        setupTrayListeners();
+        void setupTrayListeners().catch(console.error);
 
         return () => {
+            subscriptions.dispose();
             if (unlistenSync) unlistenSync();
             if (unlistenCompose) unlistenCompose();
             if (unlistenHidden) unlistenHidden();
         };
-    }, []);
-
-    const blockForInitialSync = async () => {
-        // Since AuthContext (or another component) might have already triggered `sync_inbox`,
-        // the Rust mutex might be locked. If the database is completely empty, 
-        // we must literally wait and poll the cache until the background sync thread finishes 
-        // pumping the first batch of SQLite messages to disk.
-        return new Promise<void>((resolve) => {
-            const pollInterval = setInterval(async () => {
-                try {
-                    const hasMessages = await fetchCache();
-                    if (hasMessages) {
-                        clearInterval(pollInterval);
-                        resolve();
-                    }
-                } catch (err) {
-                    // Ignore transient load errors
-                }
-            }, 500);
-
-            // Safety timeout
-            setTimeout(() => {
-                clearInterval(pollInterval);
-                resolve();
-            }, 120000); // 2 min max wait
-        });
-    };
+    }, [invoke, triggerSync]);
 
     useEffect(() => {
+        const controller = new AbortController();
+        const timers = new Set<ReturnType<typeof setTimeout>>();
+        const later = (work: () => void, ms: number) => { const timer = setTimeout(() => { timers.delete(timer); if (!controller.signal.aborted) work(); }, ms); timers.add(timer); };
         const loadCache = async () => {
             // Dedicated/placeholder views do not participate in IMAP bootstrap.
             if (currentFolderRef.current === 'drafts') {
                 setIsBootstrapping(false);
                 return;
             }
-            const hasCache = await fetchCache();
+            const hasCache = await cacheFromEffect();
+            if (controller.signal.aborted) return;
             const wasMinimized = await invoke<boolean>('was_launched_minimized').catch(() => false);
 
+            if (controller.signal.aborted) return;
             if (!wasMinimized) {
                 setSyncMessage("✓ Background sync active");
-                setTimeout(() => setSyncMessage(null), 2500);
+                later(() => setSyncMessage(null), 2500);
             }
 
             if (!hasCache && !preferencesRef.current.syncPaused && currentFolderRef.current === 'inbox') {
+                const localCache = await invoke<{ messages: number }>('get_cache_summary').catch(() => null);
+                if (controller.signal.aborted) return;
+                setIsFirstSync(localCache?.messages === 0);
                 // DB is empty, sync is likely already running in the background. Block and poll.
                 // If this is a fresh launch (not after login), we trigger sync ourselves.
-                handleSync(false);
-                await blockForInitialSync();
+                syncFromEffect(false);
+                await waitForInitialMail(() => cacheFromEffect(), () => invoke('get_sync_diagnostics'), controller.signal);
             }
 
+            if (controller.signal.aborted) return;
             // Drop bootstrap loader only after emails are available
             setIsBootstrapping(false);
 
@@ -948,17 +872,17 @@ export default function MainLayout() {
                 // Delay a background sync to grab new items to prevent layout jank.
                 // If launched via autostart, delay 10s to let VPN/WiFi connect.
                 if (hasCache) {
-                    let delay = wasMinimized ? 10000 : 500;
-                    setTimeout(() => {
-                        handleSync(true);
+                    const delay = wasMinimized ? 10000 : 500;
+                    later(() => {
+                        syncFromEffect(true);
                     }, delay);
                 }
             }
         };
 
-        loadCache();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        void loadCache().catch(error => { if (!controller.signal.aborted) { console.error('Mailbox setup failed', error); setIsBootstrapping(false); } });
+        return () => { controller.abort(); timers.forEach(clearTimeout); };
+    }, [invoke, setSyncMessage]);
 
     useEffect(() => {
         if (isBootstrapping) return;
@@ -978,12 +902,12 @@ export default function MainLayout() {
             setIsLoadingFolder(false);
             return;
         }
-        void fetchCache(folder).then(hasCache => {
+        void cacheFromEffect(folder).then(hasCache => {
             if (cancelled) return;
             setIsLoadingFolder(false);
             if (!preferencesRef.current.syncPaused) {
                 syncTimer = setTimeout(() => {
-                    if (!cancelled) void handleSync(true, folder);
+                    if (!cancelled) void syncFromEffect(true, folder);
                 }, hasCache ? 300 : 0);
             }
         }).catch(() => {
@@ -998,6 +922,7 @@ export default function MainLayout() {
     const [syncingFolders, setSyncingFolders] = useState<Set<string>>(new Set());
 
     useEffect(() => {
+        const subscriptions = createEventScope(listen);
         let unlistenUpdated: (() => void) | undefined;
         let unlistenStarted: (() => void) | undefined;
         let unlistenFinished: (() => void) | undefined;
@@ -1018,8 +943,8 @@ export default function MainLayout() {
                 refreshing = true;
                 try {
                     const folder = currentFolderRef.current;
-                    if (emailsRef.current.length === 0) await fetchCache(folder);
-                    else await refreshNewEmails(folder);
+                    if (emailsRef.current.length === 0) await cacheFromEffect(folder);
+                    else await refreshFromEffect(folder);
                 } finally {
                     refreshing = false;
                     if (refreshAgain) { refreshAgain = false; scheduleMailRefresh(); }
@@ -1028,7 +953,7 @@ export default function MainLayout() {
         };
 
         const setupListener = async () => {
-            unlistenReconciled = await listen<{ account_id: string; folder: string; updated_flags: { uid: number; seen: boolean; flagged: boolean }[]; removed_uids: number[] }>('mail:reconciled', event => {
+            unlistenReconciled = await subscriptions.listen<{ account_id: string; folder: string; updated_flags: { uid: number; seen: boolean; flagged: boolean }[]; removed_uids: number[] }>('mail:reconciled', event => {
                 if (event.payload.account_id !== activeAccountRef.current) return;
                 cacheRevisionRef.current += 1;
                 const { folder, updated_flags, removed_uids } = event.payload;
@@ -1043,13 +968,13 @@ export default function MainLayout() {
                 setEmails(reconcile);
                 setFolderSearchContexts(prev => Object.fromEntries(Object.entries(prev).map(([key, context]) => [key, { ...context, searchResults: reconcile(context.searchResults) }])));
                 setSelectedEmailId(previous => emailsRef.current.some(item => item.id === previous && item.folder === folder && removed.has(item.uid)) ? null : previous);
-                fetchUnreadCounts();
+                unreadFromEffect();
             });
-            unlistenConflict = await listen<{ account_id: string; error: string }>('mail:action_conflict', event => {
+            unlistenConflict = await subscriptions.listen<{ account_id: string; error: string }>('mail:action_conflict', event => {
                 if (event.payload.account_id !== activeAccountRef.current) return;
                 toast.error('A queued message action needs attention', { description: event.payload.error });
             });
-            unlistenUpdated = await listen<{ account_id: string; folder: string }>('mail:updated', (event) => {
+            unlistenUpdated = await subscriptions.listen<{ account_id: string; folder: string }>('mail:updated', (event) => {
                 if (event.payload.account_id !== activeAccountRef.current) return;
                 const syncedFolder = event.payload.folder;
                 const activeFolder = currentFolderRef.current;
@@ -1063,7 +988,7 @@ export default function MainLayout() {
                 scheduleMailRefresh();
             });
 
-            unlistenStarted = await listen<{ account_id: string; folder: string }>('mail:sync_started', (event) => {
+            unlistenStarted = await subscriptions.listen<{ account_id: string; folder: string }>('mail:sync_started', (event) => {
                 if (event.payload.account_id !== activeAccountRef.current) return;
                 const folder = event.payload.folder;
                 setSyncingFolders(prev => new Set(prev).add(folder));
@@ -1074,7 +999,7 @@ export default function MainLayout() {
                 });
             });
 
-            unlistenFinished = await listen<{ account_id: string; folder: string }>('mail:sync_finished', (event) => {
+            unlistenFinished = await subscriptions.listen<{ account_id: string; folder: string }>('mail:sync_finished', (event) => {
                 if (event.payload.account_id !== activeAccountRef.current) return;
                 setSyncingFolders(prev => {
                     const next = new Set(prev);
@@ -1086,7 +1011,7 @@ export default function MainLayout() {
                 // not query the list/counts again or reset a paginated view.
             });
             
-            unlistenError = await listen<{ account_id: string; folder: string; error: string }>('mail:sync_error', (event) => {
+            unlistenError = await subscriptions.listen<{ account_id: string; folder: string; error: string }>('mail:sync_error', (event) => {
                 if (event.payload.account_id !== activeAccountRef.current) return;
                 // Recoverable sync errors already have a retry banner. Keep
                 // Next.js's development error overlay out of that flow.
@@ -1103,9 +1028,10 @@ export default function MainLayout() {
             });
         };
 
-        setupListener();
+        void setupListener().catch(console.error);
 
         return () => {
+            subscriptions.dispose();
             if (unlistenUpdated) unlistenUpdated();
             disposed = true;
             if (refreshTimer) clearTimeout(refreshTimer);
@@ -1131,6 +1057,12 @@ export default function MainLayout() {
             try {
                 do {
                     rerun = false;
+                    const notificationAccount = await invoke<string | null>('pending_notification_account');
+                    if (disposed) return;
+                    if (notificationAccount && (notificationAccount !== user.id || pathname !== '/inbox')) {
+                        await switchAccount(notificationAccount, true);
+                        return; // The remounted account/route consumes the retained activation.
+                    }
                     const target = await invoke<{ account_id: string; message: Parameters<typeof formatEmailFromMessage>[0] | null } | null>('consume_notification_navigation');
                     if (disposed || !target || target.account_id !== activeAccountRef.current) continue;
                     const destination = target.message?.folder || 'inbox';
@@ -1143,7 +1075,7 @@ export default function MainLayout() {
                     setFolderSearchContexts(prev => { const next = { ...prev }; delete next[destination]; return next; });
                     const message = target.message ? formatEmailFromMessage(target.message) : null;
                     notificationTargetRef.current = message ? { accountId: target.account_id, email: message } : null;
-                    setEmails(dedupeEmails([...(message ? [message] : []), ...current.map(formatEmailFromMessage)]));
+                    setEmails(dedupeMail([...(message ? [message] : []), ...current.map(formatEmailFromMessage)]));
                     setSelectedEmailId(message?.id ?? null);
                     setHasMore(current.length === 50);
                     rerun = true;
@@ -1164,7 +1096,7 @@ export default function MainLayout() {
         };
         void setup().catch(console.error);
         return () => { disposed = true; stops.forEach(stop => stop()); };
-    }, [user?.id, isBootstrapping]);
+    }, [user?.id, isBootstrapping, pathname, switchAccount, invoke, formatEmailFromMessage]);
 
     const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const searchRevision = useRef(0);
@@ -1173,7 +1105,7 @@ export default function MainLayout() {
         if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     }, []);
 
-    const handleSearchQueryChange = (query: string) => {
+    function handleSearchQueryChange(query: string) {
         const folder = currentFolder;
         const revision = ++searchRevision.current;
         if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -1194,20 +1126,20 @@ export default function MainLayout() {
             try {
                 const searchId = crypto.randomUUID();
                 setFolderSearchContexts(prev => ({ ...prev, [folder]: { ...prev[folder], activeSearchId: searchId } }));
-                const res: any = await invoke('search_messages', { folder, query: query.trim(), searchId });
+                const res = await invoke<{search_id:string;local_results:NativeMessageHeader[];remote_search_state:string}>('search_messages', { folder, query: query.trim(), searchId });
                 if (revision !== searchRevision.current) {
                     void invoke('clear_search', { searchId: res.search_id }).catch(console.error);
                     return;
                 }
                 const localFormatted = res.local_results.map(formatEmailFromMessage);
-                const deduped = dedupeEmails(localFormatted);
+                const deduped = dedupeMail(localFormatted);
                 
                 setFolderSearchContexts(prev => ({
                     ...prev,
                     [folder]: {
                         ...(prev[folder] || { searchQuery: query, isLoadingMoreSearch: false }),
                         activeSearchId: res.search_id,
-                        searchResults: dedupeEmails([...deduped, ...(prev[folder]?.searchResults || [])]),
+                        searchResults: dedupeMail([...deduped, ...(prev[folder]?.searchResults || [])]),
                         hasMoreSearch: res.remote_search_state !== 'Offline' && res.remote_search_state !== 'Unsupported',
                         searchProgress: prev[folder]?.searchProgress || {
                             search_id: res.search_id,
@@ -1261,7 +1193,7 @@ export default function MainLayout() {
         }));
 
         try {
-            const state: any = await invoke('load_more_results', { searchId });
+            const state = await invoke<string>('load_more_results', { searchId });
             setFolderSearchContexts(prev => ({
                 ...prev,
                 [folder]: { 
@@ -1280,11 +1212,12 @@ export default function MainLayout() {
     };
 
     useEffect(() => {
+        const subscriptions = createEventScope(listen);
         let unlistenProgress: (() => void) | undefined;
         let unlistenIncremental: (() => void) | undefined;
 
         const setupSearchListeners = async () => {
-            unlistenProgress = await listen<SearchProgressData>('mail:search_progress', (event) => {
+            unlistenProgress = await subscriptions.listen<SearchProgressData>('mail:search_progress', (event) => {
                 const progress = event.payload;
                 setFolderSearchContexts(prev => {
                     const next = { ...prev };
@@ -1302,14 +1235,14 @@ export default function MainLayout() {
                 });
             });
 
-            unlistenIncremental = await listen<any>('mail:search_incremental', (event) => {
+            unlistenIncremental = await subscriptions.listen<{search_id:string;new_messages:NativeMessageHeader[]}>('mail:search_incremental', (event) => {
                 const payload = event.payload;
                 setFolderSearchContexts(prev => {
                     const next = { ...prev };
                     for (const [folder, context] of Object.entries(next)) {
                         if (context.activeSearchId === payload.search_id) {
                             const newEmails = payload.new_messages.map(formatEmailFromMessage);
-                            const merged = dedupeEmails([...newEmails,...context.searchResults]);
+                            const merged = dedupeMail([...newEmails,...context.searchResults]);
 
                             next[folder] = {
                                 ...context,
@@ -1323,17 +1256,17 @@ export default function MainLayout() {
             });
         };
 
-        setupSearchListeners();
+        void setupSearchListeners().catch(console.error);
 
         return () => {
+            subscriptions.dispose();
             if (unlistenProgress) unlistenProgress();
             if (unlistenIncremental) unlistenIncremental();
         };
-    }, []);
+    }, [formatEmailFromMessage]);
 
-    useEffect(() => {
-        const handler = (event: KeyboardEvent) => {
-            if (!preferences.shortcutsEnabled || event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+    const keyboardAction = useEffectEvent((event: KeyboardEvent) => {
+            if (accountBusy || !preferences.shortcutsEnabled || event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
             const target = event.target as HTMLElement;
             if (target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return;
             if (pathname!=='/inbox')return;
@@ -1341,16 +1274,21 @@ export default function MainLayout() {
             if (isComposeOpen) return;
             if (event.key.toLowerCase() === 'k' && !event.shiftKey) { event.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder*="Search"]')?.focus(); }
             if (event.key.toLowerCase() === 'u' && event.shiftKey && selectedEmailId) { event.preventDefault(); void toggleRead(selectedEmailId); }
-        };
+        });
+    useEffect(() => {
+        const handler = (event: KeyboardEvent) => keyboardAction(event);
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
-    }, [preferences.shortcutsEnabled, isComposeOpen, selectedEmailId, toggleRead, pathname]);
+    }, []);
 
     if (isBootstrapping) {
         return (
             <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
 
-                <LogoSpinner message="Syncing Inbox..." />
+                <div className="flex max-w-md flex-col items-center px-6 text-center" role="status" aria-live="polite">
+                    <LogoSpinner message={isFirstSync ? 'Setting up your mailbox' : 'Loading your inbox…'} />
+                    {isFirstSync && <p className="mt-5 text-sm leading-relaxed text-muted-foreground">Your first sync can take a little while, especially if you have a lot of mail. We’re loading your recent messages first; older emails will continue syncing in the background.</p>}
+                </div>
             </div>
         );
     }

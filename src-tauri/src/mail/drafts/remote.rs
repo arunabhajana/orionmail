@@ -1,3 +1,4 @@
+type PreparedDraft = (Payload, Vec<crate::mail::attachments::AttachmentData>, Option<(String, i64)>);
 use super::{changed, store, Draft, DraftFile, Payload, SYNC_LOCK};
 use crate::auth::account::Account;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -217,14 +218,7 @@ fn mime(app: &AppHandle, account: &Account, draft: &Draft) -> Result<(String, St
 }
 fn decode(
     value: &Value,
-) -> Result<
-    (
-        Payload,
-        Vec<crate::mail::attachments::AttachmentData>,
-        Option<(String, i64)>,
-    ),
-    String,
-> {
+) -> Result<PreparedDraft, String> {
     let raw = value
         .pointer("/message/raw")
         .and_then(Value::as_str)
@@ -763,7 +757,7 @@ pub async fn send(
             let message=marker(&draft);
             store::sent(app,&account.id,&draft)?;changed(app,&account.id);
             let mut recipients=draft.payload.to.clone();recipients.extend(addresses(&draft.payload.cc).unwrap_or_default());recipients.extend(addresses(&draft.payload.bcc).unwrap_or_default());
-            let _=crate::contacts::contact_indexer::record_sent_emails(app,recipients);Ok(message)},
+            let _=crate::contacts::contact_indexer::record_sent_emails(app,&account.id,recipients);Ok(message)},
         Err(error)=>{let uncertain=error.uncertain||error.missing;let message=if uncertain{"Gmail may have sent this message. Check Sent before attempting another send.".to_string()}else{error.message};
             store::status(app,&account.id,id,if uncertain{"send_unknown"}else{"synced"},Some(&message))?;changed(app,&account.id);Err(message)}
     }

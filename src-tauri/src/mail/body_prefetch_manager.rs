@@ -56,51 +56,7 @@ impl BodyPrefetchManagerState {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn job(account: &str, uid: u32, validity: u32) -> FetchJob {
-        FetchJob {
-            key: BodyKey { account_id:account.into(),folder:"inbox".into(),uid,uid_validity:validity },
-            account: Account { id:account.into(),email:"same@example.com".into(),provider:crate::auth::account::MailProvider::Google,access_token:String::new(),refresh_token:String::new(),needs_reauth:false,expires_at:0,last_sync:None,profile_name:String::new(),profile_picture:String::new() },
-            responders:vec![],
-        }
-    }
-    #[test]
-    fn foreground_lane_does_not_wait_for_unrelated_speculation() {
-        let mut state = BodyPrefetchManagerState::default();
-        state.background_queue.push_back(job("a",1,9));
-        state.immediate_queue.push_back(job("a",2,9));
-        let (background, _) = state.take_next(false).unwrap(); // Simulates slow in-flight body.
-        let (selected, priority) = state.take_next(true).unwrap();
-        assert_eq!(priority,PrefetchPriority::Immediate);
-        assert_eq!(selected.key.uid,2);
-        assert_ne!(selected.key,background.key);
-        assert_eq!(state.in_progress.len(),2);
-    }
-    #[test]
-    fn matching_uids_in_other_accounts_and_epochs_are_separate_jobs() {
-        let mut state = BodyPrefetchManagerState::default();
-        for item in [job("a",42,9),job("b",42,9),job("a",42,10)] { state.immediate_queue.push_back(item); }
-        for _ in 0..3 { state.take_next(true).unwrap(); }
-        assert_eq!(state.in_progress.len(),3);
-        assert!(state.take_next(false).is_none());
-    }
-    #[tokio::test]
-    async fn viewport_clearing_and_logout_only_remove_owned_jobs() {
-        let mut state = BodyPrefetchManagerState::default();
-        state.background_queue.extend([job("a",1,9),job("b",1,9)]);
-        state.immediate_queue.push_back(job("a",2,9));
-        let (tx,rx) = oneshot::channel();
-        state.immediate_queue[0].responders.push(tx);
-        let manager = BodyPrefetchManager { state:Mutex::new(state),notify:Notify::new(),foreground_notify:Notify::new() };
-        manager.clear_background_queue("a").await;
-        assert_eq!(manager.state.lock().await.background_queue[0].key.account_id,"b");
-        manager.remove_account("a").await;
-        assert!(rx.await.unwrap().is_err());
-        assert_eq!(manager.state.lock().await.background_queue.len(),1);
-    }
-}
+
 
 pub struct BodyPrefetchManager {
     state: Mutex<BodyPrefetchManagerState>,
@@ -419,5 +375,51 @@ impl BodyPrefetchManager {
                 for tx in responders.drain(..) { let _ = tx.send(Err("Account was removed".into())); }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn job(account: &str, uid: u32, validity: u32) -> FetchJob {
+        FetchJob {
+            key: BodyKey { account_id:account.into(),folder:"inbox".into(),uid,uid_validity:validity },
+            account: Account { id:account.into(),email:"same@example.com".into(),provider:crate::auth::account::MailProvider::Google,access_token:String::new(),refresh_token:String::new(),needs_reauth:false,expires_at:0,last_sync:None,profile_name:String::new(),profile_picture:String::new() },
+            responders:vec![],
+        }
+    }
+    #[test]
+    fn foreground_lane_does_not_wait_for_unrelated_speculation() {
+        let mut state = BodyPrefetchManagerState::default();
+        state.background_queue.push_back(job("a",1,9));
+        state.immediate_queue.push_back(job("a",2,9));
+        let (background, _) = state.take_next(false).unwrap(); // Simulates slow in-flight body.
+        let (selected, priority) = state.take_next(true).unwrap();
+        assert_eq!(priority,PrefetchPriority::Immediate);
+        assert_eq!(selected.key.uid,2);
+        assert_ne!(selected.key,background.key);
+        assert_eq!(state.in_progress.len(),2);
+    }
+    #[test]
+    fn matching_uids_in_other_accounts_and_epochs_are_separate_jobs() {
+        let mut state = BodyPrefetchManagerState::default();
+        for item in [job("a",42,9),job("b",42,9),job("a",42,10)] { state.immediate_queue.push_back(item); }
+        for _ in 0..3 { state.take_next(true).unwrap(); }
+        assert_eq!(state.in_progress.len(),3);
+        assert!(state.take_next(false).is_none());
+    }
+    #[tokio::test]
+    async fn viewport_clearing_and_logout_only_remove_owned_jobs() {
+        let mut state = BodyPrefetchManagerState::default();
+        state.background_queue.extend([job("a",1,9),job("b",1,9)]);
+        state.immediate_queue.push_back(job("a",2,9));
+        let (tx,rx) = oneshot::channel();
+        state.immediate_queue[0].responders.push(tx);
+        let manager = BodyPrefetchManager { state:Mutex::new(state),notify:Notify::new(),foreground_notify:Notify::new() };
+        manager.clear_background_queue("a").await;
+        assert_eq!(manager.state.lock().await.background_queue[0].key.account_id,"b");
+        manager.remove_account("a").await;
+        assert!(rx.await.unwrap().is_err());
+        assert_eq!(manager.state.lock().await.background_queue.len(),1);
     }
 }

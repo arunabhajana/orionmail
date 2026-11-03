@@ -7,7 +7,6 @@ pub mod sync;
 pub mod reconciliation;
 pub mod message_body;
 pub mod imap_session;
-pub mod body_cache;
 pub mod idle;
 pub mod poll;
 pub mod body_prefetch_manager;

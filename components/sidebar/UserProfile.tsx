@@ -1,19 +1,21 @@
 "use client";
 import React, { memo, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { ChevronUp, LogOut, Settings } from 'lucide-react';
+import { ChevronUp, LogOut, Settings, Plus } from 'lucide-react';
+import { MAX_CONNECTED_ACCOUNTS, ACCOUNT_LIMIT_MESSAGE } from '@/lib/account-policy';
+import { AccountList } from '@/components/accounts/AccountList';
 import Link from 'next/link';
 import { useAuth } from '@/components/AuthContext';
 import { mailInitials } from '@/lib/mail-display';
 import { toast } from 'sonner';
 export const UserProfile = memo(() => {
-    const { user, loading, logout } = useAuth();
+    const { user, accounts, accountBusy, loading, logout, addGoogleAccount } = useAuth();
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
     const trigger = useRef<HTMLButtonElement>(null);
     useEffect(() => {
         if (!open) return;
-        ref.current?.querySelector<HTMLAnchorElement>("[data-profile-popover] a")?.focus();
+        ref.current?.querySelector<HTMLElement>("[data-profile-popover] button[aria-current='true']")?.focus();
         const outside = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
         const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); } };
         document.addEventListener('pointerdown', outside);
@@ -24,9 +26,13 @@ export const UserProfile = memo(() => {
     if (!user) return <Link href="/" className="mail-nav-item justify-center">Sign in</Link>;
     return <div ref={ref} className="relative" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
         {open && <div data-profile-popover className="mail-profile-popover">
-            <p className="truncate px-3 pb-2 pt-1 text-[10px] text-muted-foreground" title={user.email}>{user.email}</p>
+            <p className="px-3 pb-2 pt-1 text-[10px] font-medium text-muted-foreground">Accounts · {accounts?.length || 1} / {MAX_CONNECTED_ACCOUNTS}</p>
+            <AccountList onSelected={() => setOpen(false)} />
+            {(accounts?.length ?? 0) >= MAX_CONNECTED_ACCOUNTS && <p className="px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">{ACCOUNT_LIMIT_MESSAGE}</p>}
+            <button type="button" disabled={accountBusy || (accounts?.length ?? 0) >= MAX_CONNECTED_ACCOUNTS} className="mail-profile-action mt-2" onClick={() => { void addGoogleAccount().then(() => setOpen(false)).catch(error => toast.error('Could not add account', { description: String(error) })); }}><Plus className="size-4" />Add Google account</button>
+            <div className="my-2 border-t border-black/[0.06] dark:border-white/[0.08]" />
             <Link href="/settings" onClick={() => setOpen(false)} className="mail-profile-action"><Settings className="size-4" />Settings</Link>
-            <button type="button" className="mail-profile-action !text-red-500" onClick={() => { setOpen(false); void logout(user.id).catch(() => toast.error('Could not sign out.')); }}><LogOut className="size-4" />Sign out</button>
+            <button type="button" disabled={accountBusy} className="mail-profile-action !text-red-500" onClick={() => { setOpen(false); void logout(user.id).catch(error => toast.error('Could not sign out', { description: String(error) })); }}><LogOut className="size-4" />Sign out of this account</button>
         </div>}
         <button ref={trigger} type="button" aria-expanded={open} aria-label={`Account: ${user.name || user.email}`} onClick={() => setOpen(value => !value)} className="mail-profile-trigger" title={user.email}>
             {user.picture ? <Image src={user.picture} alt="" width={32} height={32} unoptimized referrerPolicy="no-referrer" className="size-8 shrink-0 rounded-full object-cover" /> : <span className="mail-sender-avatar !size-8 !text-[10px]">{mailInitials(user.name || user.email)}</span>}

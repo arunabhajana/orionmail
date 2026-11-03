@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Tag } from '@/lib/types';
-import { invoke } from '@tauri-apps/api/core';
+import { useAccountInvoke } from '@/hooks/useAccountInvoke';
 import { X, Loader2, Trash2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 interface DeleteTagModalProps {
     tag: Tag;
@@ -11,6 +11,7 @@ interface DeleteTagModalProps {
 }
 
 export const DeleteTagModal: React.FC<DeleteTagModalProps> = ({ tag, onClose, onSuccess }) => {
+    const invoke = useAccountInvoke();
     const [isDeleting, setIsDeleting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -20,7 +21,7 @@ export const DeleteTagModal: React.FC<DeleteTagModalProps> = ({ tag, onClose, on
         try {
             await invoke('delete_tag', { tagId: tag.id });
             onSuccess();
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Failed to delete tag", err);
             setError(err?.toString() || "Failed to delete tag");
             setIsDeleting(false);

@@ -2,16 +2,16 @@ import type { Email } from './types';
 
 export function mailIdentity(email: Email): string {
     return email.messageId?.trim()
-        ? JSON.stringify(['message', email.messageId.trim(), email.timestamp, email.senderEmail, email.subject])
-        : JSON.stringify(['source', email.folder, email.uid]);
+        ? JSON.stringify([email.accountId ?? '', 'message', email.messageId.trim(), email.timestamp, email.senderEmail, email.subject])
+        : JSON.stringify([email.accountId ?? '', 'source', email.folder, email.uid]);
 }
 
 export function sameMail(a: Email, b: Email): boolean {
-    return a.id === b.id || mailIdentity(a) === mailIdentity(b);
+    return a.accountId === b.accountId && (a.id === b.id || mailIdentity(a) === mailIdentity(b));
 }
 
 const MAIL_SCALARS = [
-    'id', 'uid', 'uidValidity', 'messageId', 'threadId', 'sender', 'senderEmail', 'to',
+    'accountId', 'id', 'uid', 'uidValidity', 'messageId', 'threadId', 'sender', 'senderEmail', 'to',
     'subject', 'preview', 'date', 'time', 'timestamp', 'unread', 'starred', 'pinned', 'snoozedUntil', 'resurfacedAt',
     'folder', 'avatar', 'body', 'tagsPending', 'locationId', 'displayFolder',
 ] as const satisfies readonly (keyof Email)[];

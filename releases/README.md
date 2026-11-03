@@ -14,7 +14,7 @@ Each version has one source file: `releases/<version>.json`. About → Release n
 - `sections`: text-only categories, each appearing at most once: `Added`, `Improved`, `Fixed`, `Known issues`. Each category contains `items` with a `title` and `text`.
 - `whatsNew`: 1–10 slides, in presentation order. Each has a unique slug `id`, `eyebrow`, `title`, `text`, and `image` with `src` and descriptive `alt`. Paths must start with `/releases/<version>/`. Supported images: SVG, PNG, WebP, JPG and JPEG. Prefer a 2:1 illustration, about 720 × 360 pixels. Author trusted local SVGs; external URLs and directory traversal are rejected.
 
-The illustrated tour has Next/Done, Previous, clickable pagination dots, arrow-key navigation and Escape to close. Opening it again starts at slide one. Release notes render only categorized text. Older versions are available in expandable history entries. This prepares the same modal for an updater later; it does not automatically open on launch yet.
+The illustrated tour has Next/Done, Previous, clickable pagination dots, arrow-key navigation and Escape to close. Opening it again starts at slide one. Release notes render only categorized text, collapsed by default; older versions have expandable history entries. There is no tour-preview button in release notes. About → App updates → Preview update opens the simulated update flow, whose completion screen can open the tour. The simulation reuses current release artwork/text with a demo version; it does not modify release content or the installed version. This prepares the same modal for an updater later; it does not automatically open on launch yet.
 
 ## Editing
 
