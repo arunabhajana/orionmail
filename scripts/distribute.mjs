@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {ROOT,checkVersions,loadReleases,requirePublishable} from './release/lib.mjs';
+import {validateReleaseTag} from './release/git-tag.mjs';
 const [command,file]=process.argv.slice(2);
 const git=(...args)=>execFileSync('git',['-c',`safe.directory=${ROOT}`,...args],{cwd:ROOT,encoding:'utf8'}).trim();
 try{
@@ -10,7 +11,7 @@ try{
   const tag=process.env.GITHUB_REF_NAME;
   if(tag!==`v${version}`)throw new Error('Tag does not match application version.');
   git('merge-base','--is-ancestor','HEAD','origin/master');
-  if(git('cat-file','-t',`refs/tags/${tag}`)!=='tag')throw new Error('Use an annotated release tag.');
+  validateReleaseTag(ROOT,tag,{refresh:process.env.GITHUB_ACTIONS==='true'});
   const release=loadReleases().find(r=>r.version===version);if(!release)throw new Error('Missing release notes');requirePublishable(release);
  }else if(command==='config'){
   for(const name of ['TAURI_SIGNING_PRIVATE_KEY','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET'])if(!process.env[name])throw new Error(`Missing release secret: ${name}`);
