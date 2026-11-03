@@ -46,9 +46,9 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AccentColorProvider>
-            <AppPreferencesProvider>
+            <AuthProvider>
               <BackgroundTasksProvider>
-                <AuthProvider>
+                <AppPreferencesProvider>
                   <SyncProvider>
                     <DownloadProvider>
                       <AppLockGate>
@@ -67,9 +67,9 @@ export default function RootLayout({
                       </AppLockGate>
                     </DownloadProvider>
                   </SyncProvider>
-                </AuthProvider>
+                </AppPreferencesProvider>
               </BackgroundTasksProvider>
-            </AppPreferencesProvider>
+            </AuthProvider>
           </AccentColorProvider>
         </ThemeProvider>
       </body>

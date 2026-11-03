@@ -21,7 +21,7 @@ pub async fn visible(
     requests: Vec<LabelTarget>,
 ) -> Result<(), String> {
     if !matches!(account.provider, MailProvider::Google)
-        || crate::mail_preferences::load(app).sync_paused
+        || crate::mail_preferences::load_for(app, &account.id).sync_paused
     {
         return Ok(());
     }

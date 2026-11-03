@@ -2,6 +2,14 @@
 
 Validated on Windows with Node 26.12.1 and Rust 1.99.1. The declared Rust minimum is 1.88, matching the locked `time` dependency; this run does not certify the minimum toolchain.
 
+## Account settings follow-up
+
+Implemented inheritable account preferences, identity controls and account health. See [Account settings](ACCOUNT-SETTINGS.md) for behaviour and storage. The full `npm run check:all` gate passes with these features, including native executable linking and production export. A follow-up startup ownership guard also passes TypeScript, strict ESLint and all 9 account component tests.
+
+## Compose and unread follow-up
+
+Implemented a custom From selector with account-owned draft/attachment copies, reply sender locking, and recoverable activation failures. Added per-account and total unread counts in the account picker plus optional combined taskbar counts. The full gate passes; final additions also pass strict frontend checks and `check:desktop`, including attachment ownership/state regressions. No live mail was sent. See [Account settings](ACCOUNT-SETTINGS.md).
+
 ## Fixes in this pass
 
 - Windows native test startup: `rfd` imports `TaskDialogIndirect`, which requires Common Controls v6. Embed the activation manifest for Windows MSVC test harnesses. The app binary uses Tauri's existing embedded manifest, with linker-generated manifests disabled for that binary to avoid duplicate resource ID 1. Native tests now execute, rather than merely compiling.
@@ -17,10 +25,10 @@ Validated on Windows with Node 26.12.1 and Rust 1.99.1. The declared Rust minimu
 
 | Check | Result |
 | --- | --- |
-| `npm run check:all` | Passed after the final linker refinement: versions/catalog, TypeScript, strict global ESLint, all 67 frontend tests, Cargo check, strict all-target Clippy, all 87 Windows native tests, executable linking and production static export |
+| `npm run check:all` | Passed after the final linker refinement: versions/catalog, TypeScript, strict global ESLint, all 78 frontend tests, Cargo check, strict all-target Clippy, all 91 Windows native tests, executable linking and production static export |
 | Node unit tests | 42 passed |
-| Vitest tests | 25 passed, including 3 additional reader isolation regressions |
-| Windows native library tests | 87 passed; no ignored tests |
+| Vitest tests | 36 passed, including account settings, sender handoff failure cases and unread overview event updates |
+| Windows native library tests | 91 passed; no ignored tests |
 | `npm ls --depth=0` | Passed; no invalid direct dependency tree |
 | `npm audit --omit=dev` | Zero advisories |
 | `git diff --check` | Passed |

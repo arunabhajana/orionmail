@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { createPortal } from 'react-dom';
-export function ActionTooltip({ label, children }: { label:string;children:(description:string|undefined)=>ReactNode }) {
+export function ActionTooltip({ label, children, className='', side='bottom' }: { label:string;children:(description:string|undefined)=>ReactNode;className?:string;side?:'bottom'|'right' }) {
     const pathname=usePathname();
     const [previousPath,setPreviousPath]=useState(pathname);
     const id=useId();const anchor=useRef<HTMLSpanElement>(null);const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -22,10 +22,10 @@ export function ActionTooltip({ label, children }: { label:string;children:(desc
         const bottom=Math.min(window.innerHeight,app?.bottom??window.innerHeight)-8;
         node.style.maxWidth=Math.max(0,Math.min(224,right-left))+'px';
         const box=node.getBoundingClientRect();
-        const center=target.left+target.width/2;
+        const center=side==='right' ? (target.right+8+box.width<=right ? target.right+8+box.width/2 : target.left-8-box.width/2) : target.left+target.width/2;
         node.style.left=Math.max(left+box.width/2,Math.min(center,right-box.width/2))+'px';
-        const preferred=target.bottom+8;
+        const preferred=side==='right' ? target.top+(target.height-box.height)/2 : target.bottom+8;
         node.style.top=Math.max(top,Math.min(preferred+box.height<=bottom?preferred:target.top-box.height-8,bottom-box.height))+'px';
     };
-    return <span ref={anchor} className="inline-flex" onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide} onClick={hide} onKeyDown={event=>{if(event.key==='Escape')hide();}}>{children(position?id:undefined)}{position&&createPortal(<span ref={placeTooltip} id={id} role="tooltip" style={position} className="mail-action-tooltip pointer-events-none fixed z-[90] w-max max-w-56 -translate-x-1/2 rounded-lg border border-white/10 bg-[#242730]/95 px-3 py-2 text-[11px] font-medium text-white shadow-lg backdrop-blur-xl">{label}</span>,document.body)}</span>;
+    return <span ref={anchor} data-action-tooltip className={`inline-flex ${className}`} onMouseEnter={event=>{if((event.target as Element).closest('[data-action-tooltip]')===event.currentTarget)show();}} onMouseLeave={hide} onFocus={event=>{if((event.target as Element).closest('[data-action-tooltip]')===event.currentTarget)show();}} onBlur={hide} onClick={hide} onContextMenu={hide} onKeyDown={event=>{if(event.key==='Escape')hide();}}>{children(position?id:undefined)}{position&&createPortal(<span ref={placeTooltip} id={id} role="tooltip" style={position} className="mail-action-tooltip pointer-events-none fixed z-[90] w-max max-w-56 -translate-x-1/2 rounded-lg border border-white/10 bg-[#242730]/95 px-3 py-2 text-[11px] font-medium text-white shadow-lg backdrop-blur-xl">{label}</span>,document.body)}</span>;
 }

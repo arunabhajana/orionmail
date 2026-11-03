@@ -29,6 +29,7 @@ import { waitForInitialMail } from '@/lib/initial-sync';
 import { createEventScope } from '@/lib/event-scope';
 import { useSync } from '@/components/SyncContext';
 import { useAuth } from '@/components/AuthContext';
+import {takeCompose} from '@/lib/compose-handoff';
 import LogoSpinner from '@/components/LogoSpinner';
 import Sidebar from '@/components/Sidebar';
 import EmailList from '@/components/EmailList';
@@ -89,6 +90,7 @@ export default function MainLayout() {
     const [mailLink, setMailLink] = useState<{id:string;payload:DraftPayload}|null>(null);
     const mailLinkBusy=useRef(false);
     const [composeDraft, setComposeDraft] = useState<MailDraft | undefined>();
+    useEffect(()=>{let active=true;queueMicrotask(()=>{if(!active||!user?.id)return;const handoff=takeCompose(user.id);if(!handoff)return;void (async()=>{try{const restored=handoff.draft ? await invoke<MailDraft>('open_draft',{id:handoff.draft.id}) : undefined;if(active){setComposeDraft(restored);setMailLink(null);setIsComposeOpen(true);}}catch(error){if(active)toast.error('Your copy is saved in Drafts. Could not open it.',{description:String(error)});}})();});return()=>{active=false;};},[user?.id,invoke]);
     const [locationChoices, setLocationChoices] = useState<Record<string, LocalLocationChoice>>({});
     const locationChoicesRef = useRef<Record<string, LocalLocationChoice>>({});
     const locationSerial = useRef(0);

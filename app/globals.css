@@ -427,6 +427,16 @@ html, body {
 .compose-window { color: var(--color-foreground); background: rgb(252 253 255 / .95); border: 1px solid rgb(255 255 255 / .85); backdrop-filter: blur(36px) saturate(135%); -webkit-backdrop-filter: blur(36px) saturate(135%); box-shadow: 0 24px 90px rgb(20 35 65 / .18), 0 2px 10px rgb(20 35 65 / .05); }
 .dark .compose-window { background: rgb(26 29 37 / .96); border-color: rgb(255 255 255 / .11); box-shadow: 0 24px 90px rgb(0 0 0 / .3), inset 0 1px 0 rgb(255 255 255 / .025); }
 .compose-header { background: linear-gradient(110deg, color-mix(in srgb, var(--color-primary) 4%, transparent), transparent 70%); }
+.mail-sidebar :is(.mail-nav-item,.mail-tag-row,.mail-profile-action,.mail-profile-trigger,.mail-compose-button,.mail-icon-button) { transition: background-color 160ms ease, color 160ms ease, transform 160ms ease, box-shadow 160ms ease; }
+.mail-sidebar :is(.mail-nav-item,.mail-tag-row,.mail-profile-action):hover { transform: translateX(2px); }
+.mail-sidebar :is(.mail-nav-item,.mail-profile-action,.mail-compose-button,.mail-icon-button):active { transform: scale(.98); }
+.mail-sidebar :is(.mail-nav-item,.mail-compose-button,.mail-profile-action) svg { transition: transform 160ms ease; }
+.mail-sidebar :is(.mail-nav-item,.mail-compose-button,.mail-profile-action):hover svg { transform: translateY(-1px); }
+.mail-tag-row:has(.mail-tag-collapse) .mail-tag-select { padding-left: 0; }
+.mail-tag-actions { transition: opacity 140ms ease; }
+@media (prefers-reduced-motion: reduce) {
+  .mail-sidebar :is(button,a,.mail-tag-row), .mail-sidebar svg { transition: none !important; transform: none !important; }
+}
 .compose-address-row { display: flex; min-width: 0; min-height: 50px; align-items: center; gap: 12px; padding: 10px 24px; border-bottom: 1px solid rgb(35 48 70 / .055); transition: background 120ms; }
 .dark .compose-address-row { border-bottom-color: rgb(255 255 255 / .055); }
 .compose-address-row:focus-within { background: color-mix(in srgb, var(--color-primary) 2.5%, transparent); }

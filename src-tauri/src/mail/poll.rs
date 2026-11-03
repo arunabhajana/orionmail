@@ -18,7 +18,7 @@ pub fn start_polling(app_handle: AppHandle, account: Account) {
     let handle = tokio::spawn(async move {
         log::info!("[POLL] Starting fallback poll loop...");
         loop {
-            let seconds = crate::mail_preferences::load(&app_handle).poll_interval.parse::<u64>().unwrap_or(180);
+            let seconds = crate::mail_preferences::load_for(&app_handle, &account.id).poll_interval.parse::<u64>().unwrap_or(180);
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(seconds)) => {}
                 _ = crate::mail::shutdown::POLL_TOKEN.cancelled() => { break; }

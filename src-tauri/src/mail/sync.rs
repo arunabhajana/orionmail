@@ -247,7 +247,7 @@ pub async fn sync_folder_with_options(
                 }
 
                 if batch_count > 0
-                    && !is_bootstrap && crate::mail_preferences::load(&app_handle_clone).folder_notifications_allowed(&folder_clone.to_string()) {
+                    && !is_bootstrap && crate::mail_preferences::load_for(&app_handle_clone, &account_clone.id).folder_notifications_allowed(&folder_clone.to_string()) {
                         let mut notif_batch = Vec::new();
                         for msg in messages.iter().filter(|msg| msg.uid > sync_state.last_uid) {
                             notif_batch.push((msg.from.clone(), msg.subject.clone(), msg.uid));
@@ -347,7 +347,7 @@ pub async fn sync_folder_with_options(
 
     // Quiet syncs must not keep crawling older uncached bodies while the user
     // is idle. The settled viewport already prefetches messages being browsed.
-    let preferences = crate::mail_preferences::load(app_handle);
+    let preferences = crate::mail_preferences::load_for(app_handle, &account.id);
     if !history_pass && new_messages_count > 0 && crate::window_activity::is_displayed()
         && preferences.prefetch_bodies && !preferences.sync_paused
     {

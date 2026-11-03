@@ -8,6 +8,7 @@ static CACHE: once_cell::sync::OnceCell<std::sync::RwLock<MailPreferences>> = on
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct MailPreferences {
+    pub account_overrides: std::collections::HashMap<String, serde_json::Value>,
     pub notify_inbox: bool,
     pub notify_sent: bool,
     pub notify_labels: bool,
@@ -17,6 +18,7 @@ pub struct MailPreferences {
     pub cache_retention: String,
     pub cache_budget: String,
     pub taskbar_badge: bool,
+    pub taskbar_badge_scope: String,
     pub dnd_enabled: bool,
     pub desktop_notifications: bool,
     pub notification_sound: bool,
@@ -29,7 +31,7 @@ pub struct MailPreferences {
     pub prefetch_bodies: bool,
 }
 impl Default for MailPreferences {
-    fn default() -> Self { Self { notify_inbox:true,notify_sent:false,notify_labels:false,important_only:false,notification_tone:"mail".into(),download_folder:String::new(),cache_retention:"30".into(),cache_budget:"512".into(),taskbar_badge:true,dnd_enabled: false, desktop_notifications: true, notification_sound: true,
+    fn default() -> Self { Self { account_overrides: Default::default(), notify_inbox:true,notify_sent:false,notify_labels:false,important_only:false,notification_tone:"mail".into(),download_folder:String::new(),cache_retention:"30".into(),cache_budget:"512".into(),taskbar_badge:true,taskbar_badge_scope:"active".into(),dnd_enabled: false, desktop_notifications: true, notification_sound: true,
         hide_notification_content: false, quiet_hours: false, quiet_start: "22:00".into(), quiet_end: "08:00".into(),
         sync_paused: false, poll_interval: "180".into(), prefetch_bodies: true } }
 }
@@ -55,6 +57,7 @@ impl MailPreferences {
         match folder { "inbox"=>self.notify_inbox,"sent"=>self.notify_sent, value if value.starts_with("tag:")=>self.notify_labels,_=>false }
     }
     fn validate(&self) -> Result<(), String> {
+        if !["active","all"].contains(&self.taskbar_badge_scope.as_str()){return Err("Invalid badge scope".into());}
         if !["mail","default","im","reminder"].contains(&self.notification_tone.as_str()){return Err("Invalid notification tone".into());}
         if !["0","7","30","90"].contains(&self.cache_retention.as_str()) || !["0","256","512","1024"].contains(&self.cache_budget.as_str()) { return Err("Invalid cache policy".into()); }
         if !self.download_folder.is_empty() {
@@ -77,12 +80,51 @@ pub fn load(app: &AppHandle) -> MailPreferences {
 }
 #[tauri::command]
 pub fn get_mail_preferences(app_handle: AppHandle) -> MailPreferences { load(&app_handle) }
+pub fn load_selected(app: &AppHandle) -> MailPreferences {
+    crate::auth::session::get_active_profile(app).map(|a|load_for(app,&a.id)).unwrap_or_else(||load(app))
+}
+pub fn load_for(app: &AppHandle, account: &str) -> MailPreferences {
+    let base = load(app);
+    merge(&base, base.account_overrides.get(account)).unwrap_or(base)
+}
+fn merge(base: &MailPreferences, patch: Option<&serde_json::Value>) -> Result<MailPreferences,String> {
+    let mut value = serde_json::to_value(base).map_err(|e|e.to_string())?;
+    if let Some(patch) = patch.and_then(|p|p.as_object()) {
+        let object = value.as_object_mut().unwrap();
+        for (key, val) in patch { if key != "accountOverrides" && object.contains_key(key) { object.insert(key.clone(),val.clone()); } }
+    }
+    let result: MailPreferences = serde_json::from_value(value).map_err(|e|e.to_string())?;
+    result.validate()?;
+    Ok(result)
+}
 #[tauri::command]
-pub fn set_mail_preferences(app_handle: AppHandle, preferences: MailPreferences) -> Result<(), String> {
+pub fn set_account_preferences(app_handle: AppHandle, account_id: String, overrides: serde_json::Value) -> Result<(),String> {
+    crate::auth::scope::profile(&app_handle, Some(&account_id))?;
+    let patch = overrides.as_object().ok_or("Invalid account preferences")?;
+    if patch.len()>80 || serde_json::to_vec(patch).map_err(|e|e.to_string())?.len()>32000 { return Err("Account preferences too large".into()); }
+    let _guard = WRITE_LOCK.lock().map_err(|_|"Preferences unavailable")?;
+    let mut base = load(&app_handle);
+    let effective = merge(&base,Some(&overrides))?;
+    if !effective.download_folder.is_empty() && !std::path::Path::new(&effective.download_folder).is_dir() { return Err("Choose an existing download folder".into()); }
+    if patch.is_empty() { base.account_overrides.remove(&account_id); } else { base.account_overrides.insert(account_id,overrides); }
+    let target = path(&app_handle);
+    if let Some(parent)=target.parent(){std::fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
+    let temp = target.with_extension("json.tmp");
+    std::fs::write(&temp,serde_json::to_vec(&base).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    std::fs::rename(temp,target).map_err(|e|e.to_string())?;
+    *CACHE.get().unwrap().write().unwrap_or_else(|p|p.into_inner())=base;
+    crate::mail::notifications::refresh_policy(&app_handle);
+    crate::cache_preferences::kick(&app_handle,true);
+    crate::tray_state::update_tray_now(&app_handle);
+    Ok(())
+}
+#[tauri::command]
+pub fn set_mail_preferences(app_handle: AppHandle, mut preferences: MailPreferences) -> Result<(), String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
     preferences.validate()?;
     if !preferences.download_folder.is_empty() && preferences.download_folder!=load(&app_handle).download_folder && !std::path::Path::new(&preferences.download_folder).is_dir(){return Err("Choose an existing download folder".into());}
     let _guard = WRITE_LOCK.lock().map_err(|_| "Preferences unavailable")?;
+    preferences.account_overrides = load(&app_handle).account_overrides;
     let path = path(&app_handle);
     if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
     let temp = path.with_extension("json.tmp");
@@ -100,9 +142,10 @@ pub fn set_mail_preferences(app_handle: AppHandle, preferences: MailPreferences)
 }
 
 #[tauri::command]
-pub fn get_download_folder(app_handle:AppHandle)->Result<String,String>{
+pub fn get_download_folder(app_handle:AppHandle, account_id:Option<String>)->Result<String,String>{
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    let chosen=load(&app_handle).download_folder;
+    let owner=crate::auth::scope::profile(&app_handle,account_id.as_deref())?;
+    let chosen=load_for(&app_handle,&owner.id).download_folder;
     if !chosen.is_empty()&&std::path::Path::new(&chosen).is_dir(){return Ok(chosen);}
     app_handle.path().download_dir().map(|path|path.to_string_lossy().into_owned()).map_err(|e|e.to_string())
 }
@@ -110,6 +153,23 @@ pub fn get_download_folder(app_handle:AppHandle)->Result<String,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn badge_scope_defaults_to_active_and_accepts_only_known_modes(){
+        let mut prefs:MailPreferences=serde_json::from_str("{}").unwrap();assert_eq!(prefs.taskbar_badge_scope,"active");
+        prefs.taskbar_badge_scope="all".into();assert!(prefs.validate().is_ok());
+        prefs.taskbar_badge_scope="unknown".into();assert!(prefs.validate().is_err());
+    }
+    #[test] fn account_overrides_inherit_and_validate() {
+        let mut base=MailPreferences::default();
+        base.account_overrides.insert("a".into(),serde_json::json!({"syncPaused":true,"pollInterval":"60","signature":"A"}));
+        let a=merge(&base,base.account_overrides.get("a")).unwrap();
+        assert!(a.sync_paused);assert_eq!(a.poll_interval,"60");assert!(a.notify_inbox);
+        assert!(!merge(&base,base.account_overrides.get("b")).unwrap().sync_paused);
+        base.notify_inbox=false;
+        assert!(!merge(&base,base.account_overrides.get("a")).unwrap().notify_inbox);
+        base.account_overrides.remove("a");
+        assert!(!merge(&base,base.account_overrides.get("a")).unwrap().sync_paused);
+        assert!(merge(&base,Some(&serde_json::json!({"pollInterval":"1"}))).is_err());
+    }
     #[test]fn notification_policy_handles_midnight_boundaries_and_manual_override(){
         let mut prefs=MailPreferences{quiet_hours:true,..Default::default()};
         assert!(!prefs.notifications_allowed_at(22*60));assert!(!prefs.notifications_allowed_at(0));

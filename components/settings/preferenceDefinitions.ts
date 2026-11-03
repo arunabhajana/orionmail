@@ -33,7 +33,8 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
         ] },
     ],
     system: [{ title: "Taskbar", items: [
-        item("taskbarBadge", "Taskbar unread badge", "Show the current account’s unread message count (excluding Trash) on the Windows taskbar icon, up to 99+. The badge clears when there are no unread messages. Save changes to apply."),
+        item("taskbarBadgeScope", "Taskbar count", "Choose which connected accounts contribute to the taskbar badge.", "select", [["active","Current account"],["all","All connected accounts"]]),
+        item("taskbarBadge", "Taskbar unread badge", "Show unread messages (excluding Trash) on the Windows taskbar icon, up to 99+. The badge clears when there are no unread messages. Save changes to apply."),
     ] }],
     notifications: [
         { title: "Incoming mail", description: "Choose which new messages can interrupt you. Windows notification permissions also apply.", items: [

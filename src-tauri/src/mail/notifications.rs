@@ -80,7 +80,7 @@ fn refresh_policy_inner(app: &AppHandle) {
         let _guard = WRITE_LOCK.lock().map_err(|_| "Notifications unavailable")?;
         for account in crate::auth::session::load_profile_metadata(app).0 {
             if let Some(batch) = store::latest(app, &account.id)? {
-                if permitted(app) {
+                if permitted_for(app, &account.id) {
                     let items = store::unread(app, &account.id, batch.items.clone())?;
                     let batch = Batch {
                         token: uuid::Uuid::new_v4().simple().to_string(),
@@ -171,16 +171,19 @@ fn permitted(app: &AppHandle) -> bool {
     crate::mail_preferences::load(app).notifications_allowed()
         && crate::auth::app_lock::require_unlocked(app).is_ok()
 }
+fn permitted_for(app: &AppHandle, account: &str) -> bool {
+    crate::mail_preferences::load_for(app,account).notifications_allowed() && crate::auth::app_lock::require_unlocked(app).is_ok()
+}
 fn render(app: &AppHandle, batch: &Batch, popup: bool) -> Result<(), String> {
     if batch.items.is_empty() {
         #[cfg(target_os = "windows")]
         windows::remove(&batch.display_tag)?;
         return Ok(());
     }
-    if !permitted(app) {
+    if !permitted_for(app, &batch.account_id) {
         return Ok(());
     }
-    let prefs = crate::mail_preferences::load(app);
+    let prefs = crate::mail_preferences::load_for(app, &batch.account_id);
     let count = batch.items.len();
     let title = if prefs.hide_notification_content {
         if count == 1 {
@@ -280,7 +283,7 @@ pub fn show_new_emails(app: &AppHandle, account: &str, folder: &str, new_emails:
     });
 }
 fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[(String,u32)]) {
-    if !permitted(app) {
+    if !permitted_for(app, account) {
         return;
     }
     if !crate::auth::session::load_profile_metadata(app).0.iter().any(|profile|profile.id==account){return;}
@@ -300,7 +303,7 @@ fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[(String,u32)]) 
         } else {
             Vec::new()
         };
-        let prefs=crate::mail_preferences::load(app);
+        let prefs=crate::mail_preferences::load_for(app,account);
         let tags=database::get_all_tags(app, account)?;
         let important:HashSet<String>=tags.into_iter().filter(|tag| tag.tag_type == "system" && (tag.name.eq_ignore_ascii_case("important") || tag.id.eq_ignore_ascii_case("IMPORTANT"))).map(|tag|tag.id).collect();
         let mut folders=std::collections::HashMap::<String,Vec<u32>>::new();
@@ -618,8 +621,8 @@ fn preview_inner(app_handle: &AppHandle) -> Result<(), String> {
             "{} will show new mail here. Incoming messages include Open and Mark as read actions.",
             display_name()
         ),
-        crate::mail_preferences::load(app_handle).notification_sound,
-        &crate::mail_preferences::load(app_handle).notification_tone,
+        crate::mail_preferences::load_selected(app_handle).notification_sound,
+        &crate::mail_preferences::load_selected(app_handle).notification_tone,
     )?;
     #[cfg(not(target_os = "windows"))]
     {
@@ -663,10 +666,10 @@ pub async fn open_notification_volume(app_handle:AppHandle)->Result<(),String>{
 
 
 pub fn snooze_returned(app:&AppHandle,account:&str){
- if !permitted(app){return;}
+ if !permitted_for(app,account){return;}
  let Some(profile)=crate::auth::session::load_profile_metadata(app).0.into_iter().find(|profile|profile.id==account) else{return;};
  #[cfg(target_os="windows")]
- if let Err(error)=windows::preview("Snoozed mail is back",&format!("{} · Your snoozed messages are available in Inbox again.",profile.email),crate::mail_preferences::load(app).notification_sound,&crate::mail_preferences::load(app).notification_tone){log::debug!("Snooze reminder unavailable: {}",error);}
+ if let Err(error)=windows::preview("Snoozed mail is back",&format!("{} · Your snoozed messages are available in Inbox again.",profile.email),crate::mail_preferences::load_for(app,account).notification_sound,&crate::mail_preferences::load_for(app,account).notification_tone){log::debug!("Snooze reminder unavailable: {}",error);}
  #[cfg(not(target_os="windows"))] let _=profile;
 }
 

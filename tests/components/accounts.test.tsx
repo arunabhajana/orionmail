@@ -6,7 +6,7 @@ import type { User } from '@/components/AuthContext';
 const native = vi.hoisted(() => ({ invoke: vi.fn(), events: new Map<string, (event: { payload: { account_id: string } }) => void>(), router: { push: vi.fn() } }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async (name: string, callback: (event: { payload: { account_id: string } }) => void) => { native.events.set(name, callback); return () => native.events.delete(name); }) }));
-vi.mock('next/navigation', () => ({ useRouter: () => native.router }));
+vi.mock('next/navigation', () => ({ useRouter: () => native.router, usePathname: () => '/inbox' }));
 vi.mock('@/components/SessionExpiredPopup', () => ({ SessionExpiredPopup: ({ isOpen, email }: { isOpen: boolean; email?: string }) => isOpen ? <p>Reconnect {email}</p> : null }));
 import { AuthProvider, useAuth } from '@/components/AuthContext';
 import { SyncProvider, useSync } from '@/components/SyncContext';
@@ -23,6 +23,7 @@ function Probe() {
 function Guard({ run }: { run: () => Promise<void> }) { const { registerAccountGuard } = useAuth(); useEffect(() => registerAccountGuard(run), [registerAccountGuard, run]); return null; }
 function App({ guard }: { guard?: () => Promise<void> }) { return <AuthProvider><SyncProvider>{guard && <Guard run={guard} />}<Probe /></SyncProvider></AuthProvider>; }
 beforeEach(() => {
+    localStorage.removeItem('orion_account_identity');
     profiles = [profile('a'), profile('b')]; active = 'a'; native.events.clear(); native.invoke.mockReset(); native.router.push.mockReset();
     native.invoke.mockImplementation(async (name: string, args?: { accountId?: string }) => {
         if (name === 'get_app_settings') return { app_lock_enabled: false };
@@ -33,6 +34,17 @@ beforeEach(() => {
         if (name === 'logout_user') { profiles = profiles.filter(p => p.id !== args?.accountId); if (active === args?.accountId) active = profiles[0]?.id ?? null; return profiles.find(p => p.id === active) ?? null; }
         throw new Error(`Unexpected native command: ${name}`);
     });
+});
+
+it('uses the preferred startup account once and preserves later selections on reconnect', async () => {
+    localStorage.setItem('orion_account_identity',JSON.stringify({startup:'b'}));
+    render(<App/>);
+    await screen.findByText('Active: b');
+    await act(async()=>auth.switchAccount('a'));
+    expect(auth.user?.id).toBe('a');
+    act(()=>window.dispatchEvent(new Event('online')));
+    await waitFor(()=>expect(native.invoke.mock.calls.filter(([name])=>name==='bootstrap_accounts')).toHaveLength(2));
+    expect(auth.user?.id).toBe('a');
 });
 
 it('bootstraps once in Strict Mode and switches using the custom account picker', async () => {

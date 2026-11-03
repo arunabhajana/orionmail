@@ -59,7 +59,7 @@ pub fn save(app: &AppHandle, batch: &Batch) -> Result<(), String> {
 }
 pub fn unread(app: &AppHandle, account: &str, items: Vec<Item>) -> Result<Vec<Item>, String> {
     let conn = database::open_connection(app)?;
-    let prefs=crate::mail_preferences::load(app);
+    let prefs=crate::mail_preferences::load_for(app, account);
     let mut folders=std::collections::HashMap::<String,Vec<&Item>>::new();
     for item in &items {if prefs.folder_notifications_allowed(&item.folder){folders.entry(item.folder.clone()).or_default().push(item);}}
     let mut present=std::collections::HashSet::new();

@@ -169,7 +169,7 @@ pub async fn sync_inbox(account_id: Option<String>, app_handle: AppHandle) -> Re
 #[command]
 pub async fn sync_mail_folder(account_id: Option<String>, app_handle: AppHandle, folder: String, automatic: Option<bool>) -> Result<u32, String> {
     let automatic = automatic.unwrap_or(false);
-    if automatic && crate::mail_preferences::load(&app_handle).sync_paused { return Ok(0); }
+    if automatic && crate::mail_preferences::load_for(&app_handle, &crate::auth::scope::profile(&app_handle, account_id.as_deref())?.id).sync_paused { return Ok(0); }
     // Drafts has its own durable Gmail/local store, rather than an IMAP
     // MailFolder. Keep legacy callers on that same authenticated sync path.
     if folder.eq_ignore_ascii_case("drafts") {

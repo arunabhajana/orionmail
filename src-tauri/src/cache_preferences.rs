@@ -44,10 +44,10 @@ pub fn kick(app:&AppHandle,force:bool){
         let result=(||->Result<(),String>{
             crate::auth::app_lock::require_unlocked(&app)?;
             let _mutation=crate::mail::message_actions::MUTATION_LOCK.blocking_lock();
-            let prefs=crate::mail_preferences::load(&app);
             let mut conn=crate::mail::database::open_connection(&app)?;
             let tx=conn.transaction().map_err(|e|e.to_string())?;
             for profile in crate::auth::session::load_profile_metadata(&app).0 {
+                let prefs=crate::mail_preferences::load_for(&app, &profile.id);
                 if pending(&tx,&profile.id)?{continue;}
                 evict(&tx,&profile.id,prefs.cache_retention.parse().unwrap_or(0),prefs.cache_budget.parse::<i64>().unwrap_or(0)*1024*1024,now)?;
             }

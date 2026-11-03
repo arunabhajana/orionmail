@@ -1,6 +1,6 @@
 export const defaultPreferences = {
     conversationView: true,
-    downloadFolder: "", cacheRetention: "30", cacheBudget: "512", taskbarBadge: true,
+    downloadFolder: "", cacheRetention: "30", cacheBudget: "512", taskbarBadge: true, taskbarBadgeScope: "active",
     notifyInbox: true, notifySent: false, notifyLabels: false, importantOnly: false, notificationTone: "mail",
     dndEnabled: false,
     smartActionsGlobal: true, smartActionsOtp: true, smartActionsMeetings: true, smartActionsCommerce: true, smartActionsTravel: true,
@@ -14,6 +14,7 @@ export const defaultPreferences = {
 };
 export type AppPreferences = typeof defaultPreferences;
 const choices: Partial<Record<keyof AppPreferences, readonly string[]>> = {
+    taskbarBadgeScope: ["active","all"],
     cacheRetention: ["0","7","30","90"], cacheBudget: ["0","256","512","1024"],
     notificationTone: ["mail", "default", "im", "reminder"],
     composeFont: ["system", "serif", "monospace"], readingFontSize: ["14", "16", "18", "20"],

@@ -36,7 +36,7 @@ pub async fn enqueue_sync_with_force(
     folder: MailFolder,
     force: bool,
 ) {
-    if !force && crate::mail_preferences::load(&app).sync_paused { return; }
+    if !force && crate::mail_preferences::load_for(&app, &account.id).sync_paused { return; }
     let key = (account.id.clone(), folder.clone());
     let wake = Arc::new(tokio::sync::Notify::new());
     {
@@ -87,7 +87,7 @@ pub async fn enqueue_sync_with_force(
                 request.dirty = false;
                 (force, history_only)
             };
-            if (!force && crate::mail_preferences::load(&app).sync_paused) || crate::auth::app_lock::require_unlocked(&app).is_err() {
+            if (!force && crate::mail_preferences::load_for(&app, &account.id).sync_paused) || crate::auth::app_lock::require_unlocked(&app).is_err() {
                 SYNC_QUEUE.lock().await.remove(&key);
                 return;
             }

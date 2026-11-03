@@ -6,12 +6,18 @@ import {toast} from 'sonner';
 import { NotificationSystemControls, NotificationFocusStatus } from "./NotificationSystemControls";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { useAppPreferences } from "@/components/AppPreferencesContext";
+import {useAuth} from '../AuthContext';
 import { AppPreferences, parseAddressList } from "@/lib/app-preferences";
 import { useSettings } from "./SettingsContext";
 import { preferenceGroups } from "./preferenceDefinitions";
 import { SettingGroup, SettingRow, SettingSelect, SettingToggle, SettingTimePicker, settingButton } from "./SettingsControls";
 export function PreferencesSection({ section }: { section: string }) {
-    const { preferences, updatePreferences } = useAppPreferences();
+    const {user} = useAuth();
+    const { devicePreferences, overrides, saveAccountPreferences, updateDevicePreferences } = useAppPreferences();
+    const [scope,setScope]=useState('device');
+    const accountId=user?.id;
+    const preferences=useMemo(()=>scope==='account' && accountId ? {...devicePreferences,...overrides[accountId]} : devicePreferences,[scope,accountId,devicePreferences,overrides]);
+    const updatePreferences=React.useCallback((patch:Partial<AppPreferences>)=>scope==='account' && accountId ? saveAccountPreferences(accountId,patch) : updateDevicePreferences(patch),[scope,accountId,saveAccountPreferences,updateDevicePreferences]);
     const [draft, setDraft] = useState(preferences);
     const [baseline, setBaseline] = useState(preferences);
     // Keep externally changed controls (for example the titlebar bell) in sync,
@@ -33,13 +39,13 @@ export function PreferencesSection({ section }: { section: string }) {
             if (section === "notifications" && draft.desktopNotifications && !preferences.desktopNotifications && isTauri()) {
                 if (!await isPermissionGranted() && await requestPermission() !== "granted") throw new Error("Allow OrionMail notifications in Windows Settings first.");
             }
-            const patch = Object.fromEntries(keys.map(key => [key, draft[key]])) as Partial<AppPreferences>;
+            const patch = Object.fromEntries(keys.filter(key=>scope!=='account' || draft[key]!==preferences[key]).map(key => [key, draft[key]])) as Partial<AppPreferences>;
             await updatePreferences(patch);
         }, reset: () => setDraft(preferences) });
         return () => unregisterSection(section);
-    }, [section, draft, preferences, dirty, keys, registerSection, unregisterSection, updatePreferences]); // keys are determined by section
+    }, [section, draft, preferences, dirty, keys, scope, registerSection, unregisterSection, updatePreferences]); // keys are determined by section
     const set = (key: keyof AppPreferences, value: string | boolean) => setDraft(prev => ({ ...prev, [key]: value }));
-    return <div className="space-y-5">{section === 'notifications' && <NotificationFocusStatus />}{groups.map(group => <SettingGroup key={group.title} title={group.title} description={group.description}>{group.items.map(item => {
+    return <div className="space-y-5"><SettingGroup title="Preference scope" description="Device defaults apply to every account. Account overrides affect only this mailbox; other preferences continue to inherit device defaults."><SettingRow id="preferences.scope" title="Edit preferences for" description="Save changes below to apply them to this scope."><SettingSelect label="Preference scope" value={scope} disabled={dirty} options={[["device","This device"],...(accountId ? [["account",user?.email || "This account"] as const] : [])]} onChange={setScope}/></SettingRow>{scope==='account' && accountId && <SettingRow id="preferences.inherit" title="Use device defaults" description={keys.some(key=>Object.hasOwn(overrides[accountId]||{},key))?'This section has account overrides. Resetting removes them.':'This section currently inherits device preferences.'}><button className={settingButton} disabled={dirty} onClick={()=>{void saveAccountPreferences(accountId,{},keys).catch(error=>toast.error('Could not reset preferences',{description:String(error)}));}}>Reset this section</button></SettingRow>}</SettingGroup>{section === 'notifications' && <NotificationFocusStatus />}{groups.map(group => <SettingGroup key={group.title} title={group.title} description={group.description}>{group.items.map(item => {
         const key = item.key;
         const disabled = (key === "notificationTone" && !draft.notificationSound) || (key?.startsWith("smartActions") && key !== "smartActionsGlobal" && !draft.smartActionsGlobal) || ((key === "quietStart" || key === "quietEnd") && !draft.quietHours);
         return <SettingRow key={item.id} id={`${section}.${item.id}`} title={item.title} description={item.description} unavailable={item.type === "unavailable"}>

@@ -101,13 +101,12 @@ pub fn start_worker(app: &AppHandle) {
                     loop { tokio::select!{_=tokio::time::sleep_until(deadline)=>break,
                         result=tokio::time::timeout(std::time::Duration::from_secs(2),WAKE.notified())=>if result.is_err(){break}} }
                 },_=tokio::time::sleep(std::time::Duration::from_secs(60))=>{}}
-                if crate::mail_preferences::load(&app).sync_paused
-                    || crate::auth::app_lock::require_unlocked(&app).is_err()
+                if crate::auth::app_lock::require_unlocked(&app).is_err()
                 {
                     continue;
                 }
                 for profile in crate::auth::session::load_profile_metadata(&app).0 {
-                    if profile.needs_reauth { continue; }
+                    if profile.needs_reauth || crate::mail_preferences::load_for(&app, &profile.id).sync_paused { continue; }
                     if let Ok(account) = crate::auth::bootstrap::ensure_account(&app, &profile.id).await {
                         if matches!(account.provider, crate::auth::account::MailProvider::Google) { let _ = remote::sync(&app, &account).await; }
                     }

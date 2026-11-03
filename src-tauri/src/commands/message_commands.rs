@@ -240,6 +240,7 @@ pub async fn get_unread_counts(account_id: Option<String>, app_handle: tauri::Ap
 
 #[derive(serde::Serialize)]
 pub struct DiagnosticsSyncStatus {
+    pub sync_paused: bool,
     pub inbox_last_sync_at: Option<i64>,
     pub inbox_sync_in_progress: bool,
     pub inbox_sync_error: Option<String>,
@@ -254,6 +255,20 @@ pub struct DiagnosticsSyncStatus {
 #[tauri::command]
 pub async fn get_sync_diagnostics(account_id: Option<String>, app_handle: tauri::AppHandle) -> Result<DiagnosticsSyncStatus, String> {
     let account = crate::auth::scope::profile(&app_handle, account_id.as_deref())?;
+    get_account_health(account.id, app_handle).await
+}
+pub fn account_unread_counts(app:&tauri::AppHandle)->Result<std::collections::HashMap<String,u32>,String>{
+    crate::auth::session::load_profile_metadata(app).0.into_iter().map(|p|database::get_global_unread_count(app,&p.id).map(|count|(p.id,count))).collect()
+}
+#[tauri::command]
+pub async fn get_account_unread_counts(app_handle:tauri::AppHandle)->Result<std::collections::HashMap<String,u32>,String>{
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    tokio::task::spawn_blocking(move||account_unread_counts(&app_handle)).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+pub async fn get_account_health(account_id:String, app_handle:tauri::AppHandle)->Result<DiagnosticsSyncStatus,String>{
+    crate::auth::app_lock::require_unlocked(&app_handle)?;
+    let account=crate::auth::session::load_profile_metadata(&app_handle).0.into_iter().find(|p|p.id==account_id).ok_or("Account not connected")?;
     tokio::task::spawn_blocking(move || {
         let global_state = crate::mail::database::get_global_sync_state(&app_handle, &account.id).unwrap_or_default();
         let unread = crate::mail::database::get_global_unread_count(&app_handle, &account.id).unwrap_or(0);
@@ -263,6 +278,7 @@ pub async fn get_sync_diagnostics(account_id: Option<String>, app_handle: tauri:
 
         let inbox = database::get_folder_sync_state(&app_handle, &account.id, "inbox")?;
         Ok(DiagnosticsSyncStatus {
+            sync_paused: crate::mail_preferences::load_for(&app_handle,&account.id).sync_paused,
             inbox_last_sync_at: inbox.as_ref().filter(|state|state.last_synced_at > 0).map(|state|state.last_synced_at),
             inbox_sync_in_progress: inbox.as_ref().is_some_and(|state|state.sync_in_progress),
             inbox_sync_error: inbox.and_then(|state|state.last_error),

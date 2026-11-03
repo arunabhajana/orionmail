@@ -5,6 +5,7 @@ import { Inbox, Send, File, Trash2, Clock, Star, Pencil, Plus, ChevronDown, Tags
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { useAppPreferences } from './AppPreferencesContext';
+import {SidebarHint} from './sidebar/SidebarHint';
 import { UserProfile } from './sidebar/UserProfile';
 import { NavItem, TagItem } from './sidebar/SidebarNavItem';
 import { NavItemConfig, Tag } from '@/lib/types';
@@ -107,12 +108,12 @@ const TagTreeNode = ({ node, currentFolder, onFolderSelect, onEditTagClick, onDe
             ) : (
                 // Virtual parent
                 <div className="w-full flex items-center pr-2 py-1.5 pl-1.5 rounded-lg text-sm font-medium text-muted-foreground dark:text-white/60">
-                    <button type="button" aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${node.basename}`} aria-expanded={!isCollapsed}
+                    <SidebarHint label={`${isCollapsed ? "Expand" : "Collapse"} ${node.basename}`}><button type="button" aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${node.basename}`} aria-expanded={!isCollapsed}
                         className="flex items-center justify-center w-4 h-4 shrink-0 rounded hover:bg-black/10 dark:hover:bg-white/20 transition-colors mr-1 cursor-pointer" 
                         onClick={() => setIsCollapsed(!isCollapsed)}
                     >
                         <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-200", isCollapsed && "-rotate-90")} />
-                    </button>
+                    </button></SidebarHint>
                     <span className="w-2.5 h-2.5 rounded-full ring-1 ring-black/5 shrink-0 bg-transparent" />
                     <span className="truncate flex-1 text-left ml-2" title={node.fullPath}>{node.basename}</span>
                 </div>
@@ -174,12 +175,12 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, onCreateTagClic
     }, [invoke, user?.id]);
     return <aside aria-label="Mailbox navigation" className={cn('mail-sidebar flex h-full shrink-0 flex-col', className)}>
         <div className="mail-pane-topbar gap-3 !justify-center"><Image src="/logo-transparent.svg" alt="" width={36} height={36} unoptimized className="shrink-0 -translate-y-[4px]" /><span className="mail-brand-label text-lg font-semibold tracking-tight">OrionMail</span></div>
-        <div className="px-3 pb-5 pt-3"><button type="button" onClick={onCompose} aria-label="Compose a message" title="Compose a message (Ctrl+N)" className="mail-compose-button"><Pencil className="size-4 shrink-0" /><span className="mail-nav-label">Compose</span></button></div>
-        <details ref={compactTags} className="mail-compact-tags"><summary aria-label="Browse tags" title="Browse tags"><Tags className="size-[18px]" /></summary><div className="mail-compact-tag-popover"><p className="mb-2 px-3 text-xs font-medium">Tags</p>{tags.some(tag => tag.tag_type === 'user') ? <TagTreeList nodes={buildTagTree(tags.filter(tag => tag.tag_type === 'user'))} currentFolder={currentFolder} onFolderSelect={folder => { if (compactTags.current) compactTags.current.open = false; onFolderSelect?.(folder); }} onEditTagClick={onEditTagClick} onDeleteTagClick={onDeleteTagClick} /> : <p className="px-3 py-2 text-xs text-muted-foreground">No tags yet.</p>}<button type="button" onClick={() => { if (compactTags.current) compactTags.current.open = false; onCreateTagClick?.(); }} className="mail-profile-action mt-2"><Plus className="size-4" />Create tag</button></div></details>
+        <div className="px-3 pb-5 pt-3"><SidebarHint label="Compose a message (Ctrl+N)" className="w-full"><button type="button" onClick={onCompose} aria-label="Compose a message" title="Compose a message (Ctrl+N)" className="mail-compose-button"><Pencil className="size-4 shrink-0" /><span className="mail-nav-label">Compose</span></button></SidebarHint></div>
+        <SidebarHint label="Browse tags" className="w-full"><details ref={compactTags} className="mail-compact-tags min-w-0 flex-1"><summary aria-label="Browse tags"><Tags className="size-[18px]" /></summary><div className="mail-compact-tag-popover"><p className="mb-2 px-3 text-xs font-medium">Tags</p>{tags.some(tag => tag.tag_type === 'user') ? <TagTreeList nodes={buildTagTree(tags.filter(tag => tag.tag_type === 'user'))} currentFolder={currentFolder} onFolderSelect={folder => { if (compactTags.current) compactTags.current.open = false; onFolderSelect?.(folder); }} onEditTagClick={onEditTagClick} onDeleteTagClick={onDeleteTagClick} /> : <p className="px-3 py-2 text-xs text-muted-foreground">No tags yet.</p>}<SidebarHint label="Create tag" className="w-full"><button type="button" onClick={() => { if (compactTags.current) compactTags.current.open = false; onCreateTagClick?.(); }} className="mail-profile-action mt-2"><Plus className="size-4" />Create tag</button></SidebarHint></div></details></SidebarHint>
         <nav aria-label="Mail folders" className="mail-sidebar-scroll min-h-0 flex-1 overflow-y-auto px-3 custom-scrollbar">
             <p className="mail-nav-caption mb-2 px-3 text-[10px] font-medium text-muted-foreground">Mailboxes</p>
             <div className="space-y-1">{NAV_ITEMS.map(item => <NavItem key={item.id} {...item} badge={preferences.showUnreadCount ? unreadCounts?.[item.id] : undefined} highlight={currentFolder === item.id} onClick={() => onFolderSelect?.(item.id)} />)}</div>
-            <div className="mail-tags-section mt-7"><div className="mb-2 flex items-center justify-between pl-3"><h2 className="text-[10px] font-medium text-muted-foreground">Tags</h2><button type="button" onClick={onCreateTagClick} disabled={!onCreateTagClick} className="mail-icon-button !size-6" aria-label="Create tag" title="Create tag"><Plus className="size-3.5" /></button></div>
+            <div className="mail-tags-section mt-7"><div className="mb-2 flex items-center justify-between pl-3"><h2 className="text-[10px] font-medium text-muted-foreground">Tags</h2><SidebarHint label="Create tag" className=""><button type="button" onClick={onCreateTagClick} disabled={!onCreateTagClick} className="mail-icon-button !size-6" aria-label="Create tag" title="Create tag"><Plus className="size-3.5" /></button></SidebarHint></div>
                 {tags.some(tag => tag.tag_type === 'user') ? <TagTreeList nodes={buildTagTree(tags.filter(tag => tag.tag_type === 'user'))} currentFolder={currentFolder} onFolderSelect={onFolderSelect} onEditTagClick={onEditTagClick} onDeleteTagClick={onDeleteTagClick} /> : <p className="px-3 py-2 text-[11px] text-muted-foreground/70">Your tags will appear here.</p>}
             </div>
         </nav>

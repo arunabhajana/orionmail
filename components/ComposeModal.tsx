@@ -29,6 +29,8 @@ import { useAppPreferences } from "./AppPreferencesContext";
 import { parseAddressList, signatureHtml } from "@/lib/app-preferences";
 import { SignaturePanel } from './compose/SignaturePanel';
 import { ComposeToolbar } from "./compose/ComposeToolbar";
+import {changeComposeSender} from '@/lib/compose-handoff';
+import {ComposeSenderRow} from './ComposeSenderRow';
 import { useAuth } from "./AuthContext";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useDraftComposer } from '@/hooks/useDraftComposer';
@@ -240,7 +242,10 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
     const invoke = useAccountInvoke();
   const { preferences } = useAppPreferences();
   const [showSignature, setShowSignature] = useState(false);
-  const { user, registerAccountGuard } = useAuth();
+  const { user, accounts, accountBusy, switchAccount, registerAccountGuard } = useAuth();
+  const [changingSender,setChangingSender]=useState(false);
+  const changingSenderRef=useRef(false);
+  const senderSwitchReady=useRef(false);
   const titleId = useId();
   const contactsId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -327,12 +332,23 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
   const draft = useDraftComposer(user?.id, initialDraft, draftPayload, hasDraftContent, composeStatus === 'sending' || composeStatus === 'sent');
   const { blocked: guardBlocked, unconfirmed: guardUnconfirmed, flush: guardFlush, release: guardRelease } = draft;
   useEffect(() => registerAccountGuard(async () => {
+    if(changingSenderRef.current && !senderSwitchReady.current) throw new Error('Wait for the sender change to finish.');
     if (sendGuard.current || composeStatus === 'sending' || isProcessingAttachmentsRef.current || isAttaching) throw new Error('Wait for sending or attachment processing to finish before changing accounts.');
     if (guardBlocked || guardUnconfirmed) throw new Error('Resolve this draft before changing accounts.');
     await guardFlush();
     await guardRelease();
   }), [registerAccountGuard, composeStatus, isAttaching, guardBlocked, guardUnconfirmed, guardFlush, guardRelease]);
 
+  const changeSender=async(target:string)=>{
+    if(changingSenderRef.current||target===user?.id)return;
+    changingSenderRef.current=true;setChangingSender(true);
+    try{
+      await changeComposeSender(target,draft.flush,
+        saved=>invoke<MailDraft>('copy_draft_to_account',{targetAccountId:target,id:saved.id,expectedRevision:saved.revision}),
+        async()=>{senderSwitchReady.current=true;await switchAccount(target,true);});
+    }catch(error){showToast(String(error));}
+    finally{changingSenderRef.current=false;senderSwitchReady.current=false;setChangingSender(false);}
+  };
   const validAddress = (value: string) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value.trim());
   const invalidRecipient = recipients.some(value => !validAddress(value));
   const pendingRecipient = Boolean(inputValue.trim());
@@ -552,10 +568,11 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
   }, [preferences.signature, initialDraft, initialMessage]);
 
   const isSending = composeStatus === 'sending';
-  const editingDisabled = isSending || composeStatus === 'sent' || draft.blocked;
+  const editingDisabled = changingSender || isSending || composeStatus === 'sent' || draft.blocked;
   const isSendDisabled = editingDisabled || draft.unconfirmed || isAttaching || recipients.length === 0 || editorValue.isEmpty || invalidRecipient || pendingRecipient || copiesInvalid;
   const sendDisabledReason = isSending ? 'Sending message…' : composeStatus === 'sent' ? 'Message sent' : isAttaching ? 'Preparing attachments…' : invalidRecipient || copiesInvalid ? 'Check the recipient addresses' : pendingRecipient ? 'Press Enter to add the recipient' : recipients.length === 0 ? 'Add a recipient to get started' : editorValue.isEmpty ? 'Write a message before sending' : '';
   const requestClose = useCallback(async () => {
+    if(changingSenderRef.current)return;
     if (closingRef.current || sendGuard.current && composeStatus !== 'sent') {
       if (composeStatus === 'sending') setComposeWindowState('minimized');
       return;
@@ -782,7 +799,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
             ) : (
               <>
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Pencil className="size-4" /></span>
-                <div className="min-w-0"><h1 className="truncate text-[13px] font-semibold">{isMinimized ? subject || 'New message' : (initialDraft?.payload.in_reply_to || initialMessage?.in_reply_to) ? 'Reply' : 'New message'}</h1>{!isMinimized && user?.email && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">From {user.email}</p>}</div>
+                <div className="min-w-0"><h1 className="truncate text-[13px] font-semibold">{isMinimized ? subject || 'New message' : (initialDraft?.payload.in_reply_to || initialMessage?.in_reply_to) ? 'Reply' : 'New message'}</h1></div>
               </>
             )}
           </div>
@@ -827,6 +844,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
             </button>
           </div>
         </header>
+        {!isMinimized && composeStatus!=='sent' && user && <ComposeSenderRow user={user} accounts={accounts} disabled={editingDisabled||accountBusy||draft.unconfirmed||isAttaching} reply={Boolean(initialDraft?.payload.in_reply_to||initialMessage?.in_reply_to)} changing={changingSender} onChange={target=>{void changeSender(target);}}/>}
 
         <motion.div
           animate={{

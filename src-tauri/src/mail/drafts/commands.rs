@@ -192,6 +192,34 @@ pub async fn fork_draft(
     result
 }
 #[tauri::command]
+pub async fn copy_draft_to_account(app_handle:AppHandle,account_id:String,target_account_id:String,id:String,expected_revision:i64)->Result<Draft,String>{
+    authorize(&app_handle,&account_id)?;
+    if account_id==target_account_id || !crate::auth::session::load_profile_metadata(&app_handle).0.iter().any(|p|p.id==target_account_id){return Err("Choose another connected account".into());}
+    let app=app_handle.clone();let target=target_account_id.clone();
+    let result=tokio::task::spawn_blocking(move||{
+        let source=store::get(&app,&account_id,&id)?;
+        validate_sender_copy(source.revision,expected_revision,&source.state,source.conflict,source.payload.in_reply_to.is_some())?;
+        let new=uuid::Uuid::new_v4().to_string();
+        let mut payload=source.payload;
+        for file in &mut payload.attachments{file.handle.clear();}
+        copy_sender_files(&store::db(&app)?,&account_id,&id,&target,&new)?;
+        let result=(||{let draft=store::save(&app,&target,&new,0,payload)?;
+            store::db(&app)?.execute("UPDATE compose_drafts SET editing=0 WHERE account_id=?1 AND id=?2",params![target,new]).map_err(|e|e.to_string())?;
+            Ok(draft)})();
+        if result.is_err(){let _=store::remove(&app,&target,&new);}
+        result
+    }).await.map_err(|e|e.to_string())?;
+    changed(&app_handle,&target_account_id);
+    kick(&app_handle);
+    result
+}
+fn validate_sender_copy(revision:i64,expected:i64,state:&str,conflict:bool,reply:bool)->Result<(),String>{
+    if revision!=expected || conflict || !["queued","synced"].contains(&state) || reply{return Err("This draft cannot change sender. Refresh or resolve its status first.".into());}Ok(())
+}
+fn copy_sender_files(conn:&rusqlite::Connection,source:&str,id:&str,target:&str,new:&str)->Result<(),String>{
+    conn.execute("INSERT INTO draft_files(account_id,draft_id,id,name,mime_type,bytes) SELECT ?3,?4,id,name,mime_type,bytes FROM draft_files WHERE account_id=?1 AND draft_id=?2",params![source,id,target,new]).map(|_|()).map_err(|e|e.to_string())
+}
+#[tauri::command]
 pub async fn recover_draft(
     app_handle: AppHandle,
     account_id: String,
@@ -220,4 +248,26 @@ pub async fn recover_draft(
     changed(&app_handle, &account_id);
     kick(&app_handle);
     result
+}
+
+#[cfg(test)]
+mod sender_tests {
+    use super::*;
+    #[test] fn sender_copy_rejects_replies_uncertain_sends_and_stale_revisions(){
+        assert!(validate_sender_copy(3,3,"queued",false,false).is_ok());
+        assert!(validate_sender_copy(3,3,"synced",false,false).is_ok());
+        for state in ["sending","send_unknown","checking","deleting","needs_attachments"]{assert!(validate_sender_copy(3,3,state,false,false).is_err());}
+        assert!(validate_sender_copy(3,2,"queued",false,false).is_err());
+        assert!(validate_sender_copy(3,3,"queued",true,false).is_err());
+        assert!(validate_sender_copy(3,3,"queued",false,true).is_err());
+    }
+    #[test] fn sender_files_are_copied_to_new_ownership_without_mutating_originals(){
+        let conn=rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE draft_files(account_id TEXT,draft_id TEXT,id TEXT,name TEXT,mime_type TEXT,bytes BLOB,PRIMARY KEY(account_id,draft_id,id)); INSERT INTO draft_files VALUES('a','source','file','photo.png','image/png',X'010203'); INSERT INTO draft_files VALUES('other','source','file','secret.png','image/png',X'FF');").unwrap();
+        copy_sender_files(&conn,"a","source","b","copy").unwrap();
+        let read=|account:&str,id:&str|conn.query_row("SELECT bytes FROM draft_files WHERE account_id=?1 AND draft_id=?2",params![account,id],|r|r.get::<_,Vec<u8>>(0)).unwrap();
+        assert_eq!(read("b","copy"),vec![1,2,3]);
+        conn.execute("DELETE FROM draft_files WHERE account_id='b'",[]).unwrap();
+        assert_eq!(read("a","source"),vec![1,2,3]);assert_eq!(read("other","source"),vec![255]);
+    }
 }

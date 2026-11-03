@@ -84,6 +84,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [sessionExpired, setSessionExpired] = useState(false);
     const [appLockStatus, setAppLockStatus] = useState<AuthContextType['appLockStatus']>('checking');
     const [appLockError, setAppLockError] = useState<string | null>(null);
+    const startupSelected = useRef(false);
     const initializationRef = useRef<Promise<void> | null>(null);
     const active = useRef<User | null>(null);
     const activeEpoch = useRef(0);
@@ -124,9 +125,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         try {
             const result = await invoke<{ user: User | null; needs_refresh: boolean }>('bootstrap_accounts');
             if (revision !== generation.current) return;
-            commit(result.user, result.needs_refresh);
+            let selected=result.user;
+            try { const preferred=JSON.parse(localStorage.getItem('orion_account_identity')||'{}').startup;
+                if(!startupSelected.current && preferred && preferred!==selected?.id) { const profiles=await invoke<User[]>('list_accounts'); if(revision!==generation.current)return; if(profiles.some(p=>p.id===preferred)) selected=await invoke<User>('switch_account',{accountId:preferred}); }
+            } catch(error) { console.error('Could not select startup account',error); }
+            if(revision!==generation.current)return;
+            startupSelected.current=true;
+            commit(selected, selected?.id===result.user?.id ? result.needs_refresh : Boolean(selected?.needs_reauth));
             await refreshAccounts();
-            if (!result.user) router.push('/');
+            if (!selected) router.push('/');
         } catch (error) {
             console.error('Auth: Bootstrap failed', error);
             // Do not remove any accounts for a network or transient native error.

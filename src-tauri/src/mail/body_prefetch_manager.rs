@@ -90,7 +90,7 @@ impl BodyPrefetchManager {
     ) {
         if priority == PrefetchPriority::Background {
             if !crate::window_activity::is_displayed() { return; }
-            let prefs = crate::mail_preferences::load(&app_handle);
+            let prefs = crate::mail_preferences::load_for(&app_handle, &account.id);
             if !prefs.prefetch_bodies || prefs.sync_paused { return; }
         }
         let folder = if folder.to_lowercase().starts_with("tag:") { folder } else { folder.to_lowercase() };
@@ -246,6 +246,16 @@ impl BodyPrefetchManager {
                     }
                 };
 
+                let policy=crate::mail_preferences::load_for(&app_handle,&job.account.id);
+                if priority == PrefetchPriority::Background && (!policy.prefetch_bodies || policy.sync_paused) {
+                    let mut state=manager.state.lock().await;
+                    // take_next moves responders into in_progress. A reader
+                    // may also have joined since the background job was taken.
+                    if state.in_progress.get(&job.key).is_none_or(Vec::is_empty) {
+                        state.in_progress.remove(&job.key);
+                        continue;
+                    }
+                }
                 // If background fetch, strictly reserve 1 permit for UI fast-paths
                 if priority != PrefetchPriority::Immediate && message_body::CONCURRENT_FETCH_LIMIT.available_permits() <= 1 {
                     // Re-enqueue and yield to avoid starving user

@@ -54,8 +54,8 @@ pub fn set_last_sync_time(app: &AppHandle, account_id: &str) {
             let mut state = STATE.lock().unwrap();
             state.last_sync_timestamp = Some(now);
         }
-        update_tray_now(app);
     }
+    update_tray_now(app);
 }
 
 fn format_time_ago(timestamp: Option<i64>) -> String {
@@ -88,6 +88,9 @@ pub fn update_tray_now(app: &AppHandle) {
         let state = STATE.lock().unwrap();
         (state.unread_count, state.last_sync_timestamp)
     };
+    let count=if crate::mail_preferences::load_selected(app).taskbar_badge_scope=="all" {
+        crate::commands::message_commands::account_unread_counts(app).map(|counts|counts.values().fold(0u32,|sum,n|sum.saturating_add(*n))).unwrap_or(count)
+    }else{count};
     update_taskbar_badge(app,count);
     
     if let Some(tray) = app.tray_by_id("main") {
@@ -106,7 +109,7 @@ pub fn update_tray_now(app: &AppHandle) {
 fn update_taskbar_badge(app:&AppHandle,count:u32){
     use std::sync::atomic::{AtomicU32,Ordering};
     static LAST:AtomicU32=AtomicU32::new(u32::MAX);
-    let count=if crate::mail_preferences::load(app).taskbar_badge {count}else{0};
+    let count=if crate::auth::session::get_active_profile(app).map(|a|crate::mail_preferences::load_for(app,&a.id)).unwrap_or_else(||crate::mail_preferences::load(app)).taskbar_badge {count}else{0};
     if let Some(window)=app.get_webview_window("main"){
         if LAST.load(Ordering::Relaxed)==count{return;}
         #[cfg(target_os="windows")]
@@ -144,14 +147,14 @@ pub fn spawn_tray_update_loop(app: AppHandle) {
     
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
-        let mut notifications_allowed = crate::mail_preferences::load(&app).notifications_allowed();
+        let mut notifications_allowed = crate::mail_preferences::load_selected(&app).notifications_allowed();
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     update_tray_now(&app);
                     let snooze_app=app.clone();
                     tauri::async_runtime::spawn_blocking(move||crate::snooze::tick(&snooze_app));
-                    let allowed = crate::mail_preferences::load(&app).notifications_allowed();
+                    let allowed = crate::mail_preferences::load_selected(&app).notifications_allowed();
                     if allowed != notifications_allowed {
                         notifications_allowed = allowed;
                         crate::mail::notifications::refresh_policy(&app);
