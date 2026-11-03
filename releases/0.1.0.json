@@ -1,26 +1,62 @@
 {
   "schemaVersion": 1,
   "version": "0.1.0",
-  "status": "draft",
-  "sample": true,
-  "date": null,
-  "title": "A calmer everyday inbox",
-  "summary": "A first look at OrionMail: connected conversations, useful message actions, and an inbox that works at your pace.",
+  "status": "ready",
+  "sample": false,
+  "date": "2026-11-03",
+  "title": "Welcome to OrionMail",
+  "summary": "The first OrionMail release brings your Google accounts together in a customizable Windows desktop workspace, with conversations, Smart Actions and control over how you read, organize and send mail.",
   "sections": [
     {
       "category": "Added",
       "items": [
         {
-          "title": "Conversations and composing",
-          "text": "Read linked replies together. Reply, reply all, forward attachments, or start a fresh message to a sender."
+          "title": "Google accounts and unified inbox",
+          "text": "Connect up to three Google accounts. Switch accounts from the sidebar or read All inboxes with account, unread and starred filters. Account markers identify each message’s owner."
         },
         {
-          "title": "Pins, tags and snooze",
-          "text": "Pin important messages, manage tags, and snooze Inbox conversations with preset or custom return times."
+          "title": "Account identities and preferences",
+          "text": "Set account aliases, colours and startup selection; review account health and unread totals. Use device preferences with account-specific overrides where supported."
         },
         {
-          "title": "Notification controls",
-          "text": "Choose alert folders, Windows tones, Important-only alerts, Do not disturb, and scheduled quiet hours."
+          "title": "Conversations",
+          "text": "Group linked replies into expandable message cards, with quoted history hidden until requested. Reply metadata keeps unrelated messages and accounts separate."
+        },
+        {
+          "title": "Compose and drafts",
+          "text": "Compose formatted mail with attachments, contact suggestions, signatures and default Cc/Bcc preferences. Save drafts, choose a sending account, reply, reply all, forward, or start a fresh message to a sender."
+        },
+        {
+          "title": "Tags, pins, stars and snooze",
+          "text": "Create and edit tags, organize messages, pin or star important mail, and snooze messages until a preset or custom date and time. Quick actions are available in the reader toolbar and context menus."
+        },
+        {
+          "title": "Smart Actions",
+          "text": "Locally extract verification codes, meeting links and invitations, order and delivery details, and travel information from supported message formats. Choose which action categories appear."
+        },
+        {
+          "title": "Themes and reading layouts",
+          "text": "Choose light, dark or system theme, an accent colour, and side-by-side, stacked or Minimal layout. Minimal keeps two panes and opens messages in the full second pane. Customize density, previews, avatars, dates and reading text size."
+        },
+        {
+          "title": "Notifications and focus",
+          "text": "Configure desktop alerts, sounds, notification previews, folder alerts, Important-only alerts, Do not disturb and scheduled quiet hours. Show unread counts on the taskbar for the active account or all accounts."
+        },
+        {
+          "title": "Local mail and storage",
+          "text": "Read downloaded content offline, configure body retention and cache budgets, choose an attachment download folder, inspect measured storage usage, and clear downloaded content. Read/star changes persist locally for retry when connectivity returns."
+        },
+        {
+          "title": "Windows integration",
+          "text": "Use the system tray, startup preferences and mailto links. Register OrionMail as a Windows mail app. Windows Hello app lock, remote-content blocking and external-link confirmation provide additional controls."
+        },
+        {
+          "title": "Updates and release information",
+          "text": "Check for updates at launch and hourly while running, or manually from About. Choose Update now or Later; verified Tauri update signatures protect the update download. Browse categorized release notes and a paginated What’s New tour."
+        },
+        {
+          "title": "Privacy, terms and open source",
+          "text": "Access themed Privacy, Terms, MIT License and third-party notices pages from the app. Original OrionMail code is released under the MIT License."
         }
       ]
     },
@@ -28,12 +64,12 @@
       "category": "Improved",
       "items": [
         {
-          "title": "Your workspace",
-          "text": "Preview interface themes and accent colors, customize reading preferences, and edit signatures from Settings or Compose."
+          "title": "Navigation and responsiveness",
+          "text": "A virtualized message list, local caching and bounded background fetching keep navigation responsive. Sidebar tooltips, keyboard shortcuts and account folder shortcuts help you reach common actions."
         },
         {
-          "title": "Everyday navigation",
-          "text": "Return from Settings without rebuilding the inbox. Open email links directly in OrionMail and register it as a Windows mail app."
+          "title": "Message rendering",
+          "text": "Conversation cards use compact spacing and direct dark-mode text for simple replies. Quoted history stays collapsed and rich message layouts retain their own rendering path."
         }
       ]
     },
@@ -41,12 +77,12 @@
       "category": "Fixed",
       "items": [
         {
-          "title": "A cleaner reader",
-          "text": "Quoted reply history stays tucked away, and simple conversation messages blend into their cards in dark mode."
+          "title": "Unread state and offline intent",
+          "text": "Read/star changes save their local state together with a durable queue entry, notify unread-count consumers, and survive transport failures. Stale account-switch responses cannot update another mailbox."
         },
         {
-          "title": "Clearer sign-in",
-          "text": "Browser sign-in explains the connection status and brings OrionMail forward after a successful connection."
+          "title": "Account boundaries",
+          "text": "Message bodies, actions, drafts, tags, pins and snoozes retain their account ownership. Unsaved-work guards protect account changes and update installation."
         }
       ]
     },
@@ -54,45 +90,123 @@
       "category": "Known issues",
       "items": [
         {
-          "title": "Device-local organization",
-          "text": "Pins and snoozes are saved per account on this device. Snooze does not sync to Gmail; overdue mail returns when OrionMail next runs."
+          "title": "Windows and Google only",
+          "text": "This release supports Windows and Google accounts, with a maximum of three connected accounts. Other platforms and providers are not available."
         },
         {
-          "title": "Preview release",
-          "text": "Automatic updates are not configured yet. Release notes and this tour are supplied by local versioned release files."
+          "title": "Local organization and offline limits",
+          "text": "Pins and snoozes are device-local; snooze does not sync to Gmail. Overdue messages return when OrionMail runs. Uncached bodies, new attachments and sending require connectivity. All inboxes searches downloaded headers and previews."
+        },
+        {
+          "title": "Unsigned Windows publisher",
+          "text": "The installer has no Windows publisher certificate and may show Unknown publisher or SmartScreen warnings. Tauri updater signatures are separate and remain required."
+        },
+        {
+          "title": "Features still to come",
+          "text": "Settings marked Coming Soon are not implemented, including automatic idle/session locking, sender blocking controls, date-limited sync, automatic attachment downloads and custom shortcut bindings."
         }
       ]
     }
   ],
   "whatsNew": [
     {
+      "id": "accounts",
+      "eyebrow": "One home for your accounts",
+      "title": "Meet your new inbox.",
+      "text": "Connect up to three Google accounts, switch by alias and colour, or bring them together in All inboxes. Read with account markers and account, unread and starred filters.",
+      "image": {
+        "src": "/releases/0.1.0/accounts.svg",
+        "alt": "OrionMail one home for your accounts interface illustration."
+      }
+    },
+    {
       "id": "conversations",
-      "eyebrow": "A clearer conversation",
+      "eyebrow": "Follow the conversation",
       "title": "Every reply, in its place.",
-      "text": "Follow linked replies in a tidy conversation. Reply, reply all, or forward the message you choose without losing your place.",
+      "text": "Read linked replies together, expand individual messages and reveal quoted history only when you need it. Reply, reply all and forward stay tied to the message you choose.",
       "image": {
         "src": "/releases/0.1.0/conversations.svg",
-        "alt": "Three connected message cards with the newest reply expanded."
+        "alt": "OrionMail follow the conversation interface illustration."
+      }
+    },
+    {
+      "id": "compose",
+      "eyebrow": "From draft to sent",
+      "title": "Write from the right account.",
+      "text": "Use formatted text, attachments, contact suggestions and signatures. Choose the sender when several accounts are connected; replies use the account that received the message. Draft-saving guards protect your work.",
+      "image": {
+        "src": "/releases/0.1.0/compose.svg",
+        "alt": "OrionMail from draft to sent interface illustration."
+      }
+    },
+    {
+      "id": "organize",
+      "eyebrow": "A place for everything",
+      "title": "Tag it. Pin it. Snooze it.",
+      "text": "Organize with tags and stars, pin important mail and snooze messages until a time you choose. Reach actions through the reader toolbar, right-click menus and sidebar folder shortcuts.",
+      "image": {
+        "src": "/releases/0.1.0/organize.svg",
+        "alt": "OrionMail a place for everything interface illustration."
       }
     },
     {
       "id": "smart-actions",
-      "eyebrow": "Less copying. More doing.",
-      "title": "Useful details, ready to go.",
-      "text": "Verification codes, meeting links, and delivery details appear as Smart Actions above the message, ready when you need them.",
+      "eyebrow": "Useful details at a glance",
+      "title": "Less copying. More doing.",
+      "text": "Copy verification codes, open meeting links and find supported order, delivery and travel details in locally extracted Smart Actions. Turn individual categories on or off.",
       "image": {
         "src": "/releases/0.1.0/smart-actions.svg",
-        "alt": "A Smart Actions card displaying a verification code and a copy control."
+        "alt": "OrionMail useful details at a glance interface illustration."
+      }
+    },
+    {
+      "id": "layouts",
+      "eyebrow": "Make it yours",
+      "title": "Your theme. Your layout.",
+      "text": "Choose light, dark or system theme and an accent colour. Read side by side, below the list, or in Minimal mode, where a full-width message replaces the list until you go back.",
+      "image": {
+        "src": "/releases/0.1.0/layouts.svg",
+        "alt": "OrionMail make it yours interface illustration."
       }
     },
     {
       "id": "focus",
-      "eyebrow": "Your inbox, at your pace",
+      "eyebrow": "Mail at your pace",
       "title": "Make room for focus.",
-      "text": "Schedule quiet hours or snooze an Inbox conversation until later. Your mail keeps syncing while alerts take a break.",
+      "text": "Choose alert folders, notification previews and sounds. Enable Do not disturb or set daily quiet hours. Keep track of unread mail with per-account counts and a Windows taskbar badge.",
       "image": {
         "src": "/releases/0.1.0/focus.svg",
-        "alt": "A quiet-hours schedule from 22:00 to 08:00 beside a snoozed message card."
+        "alt": "OrionMail mail at your pace interface illustration."
+      }
+    },
+    {
+      "id": "offline",
+      "eyebrow": "Local and responsive",
+      "title": "Keep downloaded mail close.",
+      "text": "Cached mail stays readable offline. Read and star changes are saved locally for later sync. Adjust cache retention and budgets, view measured storage usage and choose where attachments are saved.",
+      "image": {
+        "src": "/releases/0.1.0/offline.svg",
+        "alt": "OrionMail local and responsive interface illustration."
+      }
+    },
+    {
+      "id": "privacy",
+      "eyebrow": "Clear controls",
+      "title": "Decide what your mail can load.",
+      "text": "Block remote content until you allow it, confirm external links and use Windows Hello app lock. Read the Privacy Policy, Terms, MIT License and bundled third-party notices in About.",
+      "image": {
+        "src": "/releases/0.1.0/privacy.svg",
+        "alt": "OrionMail clear controls interface illustration."
+      }
+    },
+    {
+      "id": "updates",
+      "eyebrow": "Ready for what’s next",
+      "title": "Stay up to date, on your terms.",
+      "text": "OrionMail checks for updates on launch and hourly while running. Choose Update now or Later. After an update, take the What’s New tour and browse the full release notes in About.",
+      "image": {
+        "src": "/releases/0.1.0/updates.svg",
+        "alt": "OrionMail ready for what’s next interface illustration."
       }
     }
   ]

@@ -7,6 +7,7 @@ import { MailtoNavigation } from "@/components/MailtoNavigation";
 import { AuthProvider } from "@/components/AuthContext";
 import {MailboxViewProvider} from "@/components/MailboxViewContext";
 import { SyncProvider } from "@/components/SyncContext";
+import {PublicPageBoundary,DesktopRouteContent} from "@/components/PublicPageBoundary";
 import {UpdateProvider} from "@/components/UpdateProvider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AccentColorProvider } from "@/components/AccentColorProvider";
@@ -48,7 +49,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AccentColorProvider>
-            <AuthProvider>
+            <PublicPageBoundary desktop={<AuthProvider>
               <BackgroundTasksProvider>
                 <AppPreferencesProvider>
                   <MailboxViewProvider><SyncProvider>
@@ -61,7 +62,7 @@ export default function RootLayout({
                           <TitlebarWrapper />
                           <div className="pt-[30px] h-full w-full overflow-hidden">
                             <PersistentInbox />
-                            {children}
+                            <DesktopRouteContent>{children}</DesktopRouteContent>
                           </div>
                           <Toaster theme="system" richColors position="top-center" />
                         </div>
@@ -71,7 +72,7 @@ export default function RootLayout({
                   </SyncProvider></MailboxViewProvider>
                 </AppPreferencesProvider>
               </BackgroundTasksProvider>
-            </AuthProvider>
+            </AuthProvider>}>{children}</PublicPageBoundary>
           </AccentColorProvider>
         </ThemeProvider>
       </body>

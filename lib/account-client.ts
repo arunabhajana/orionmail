@@ -1,3 +1,9 @@
+/** Expected cancellation: the originating mailbox is no longer active. */
+export class AccountRequestCancelledError extends Error {
+    readonly code = 'ACCOUNT_REQUEST_CANCELLED';
+    constructor(message: string) { super(message); this.name = 'AccountRequestCancelledError'; }
+}
+export const isAccountRequestCancelled = (error: unknown): boolean => error instanceof AccountRequestCancelledError;
 export type AccountTransport = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
 /** Device preferences/window commands stay global. Mailbox work always carries ownership. */
@@ -20,9 +26,9 @@ export function createAccountInvoker(owner: string | undefined, transport: Accou
     return async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
         if (!ACCOUNT_COMMANDS.has(command)) return transport<T>(command, args);
         if (command === 'release_attachment_handles' && owner && (args?.accountId === undefined || args.accountId === owner)) return transport<T>(command, { ...args, accountId: owner });
-        if (!owner || !current(owner) || args?.accountId !== undefined && args.accountId !== owner) throw new Error('Account changed. Reopen the mailbox and try again.');
+        if (!owner || !current(owner) || args?.accountId !== undefined && args.accountId !== owner) throw new AccountRequestCancelledError('Account changed. Reopen the mailbox and try again.');
         const result = await transport<T>(command, { ...args, accountId: owner });
-        if (!current(owner)) throw new Error('Account changed while the request was running.');
+        if (!current(owner)) throw new AccountRequestCancelledError('Account changed while the request was running.');
         return result;
     };
 }

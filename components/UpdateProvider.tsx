@@ -1,5 +1,7 @@
 "use client";
 import {createContext,useContext,useEffect,useRef,useState,useCallback,type ReactNode} from 'react';
+import {usePathname} from 'next/navigation';
+import {isPublicDocument} from './PublicPageBoundary';
 import {isTauri} from '@tauri-apps/api/core';
 import {check,type Update} from '@tauri-apps/plugin-updater';
 import {isPermissionGranted,requestPermission,sendNotification} from '@tauri-apps/plugin-notification';
@@ -13,6 +15,7 @@ const Context=createContext({checkNow:async()=>{},status:'Automatic update check
 export const useUpdates=()=>useContext(Context);
 export function UpdateProvider({children}:{children:ReactNode}){
  const {prepareForUpdate}=useAuth();
+ const publicDocument=isPublicDocument(usePathname());
  const [update,setUpdate]=useState<Update|null>(null),[open,setOpen]=useState(false),[installing,setInstalling]=useState(false),[progress,setProgress]=useState<number|null>(null),[error,setError]=useState(''),[status,setStatus]=useState('Automatic update checks run on launch and hourly.'),[highlights,setHighlights]=useState(false);
  const held=useRef<Update|null>(null),checking=useRef(false),installLock=useRef(false),alive=useRef(false),announced=useRef(new Set<string>()),deferred=useRef(new Set<string>());
  const dialog=useRef<HTMLDialogElement>(null);
@@ -38,7 +41,7 @@ export function UpdateProvider({children}:{children:ReactNode}){
   alive.current=true;
   try{
    const last=localStorage.getItem('orion_installed_version'),pending=localStorage.getItem('orion_pending_update');
-   if((last&&last!==currentRelease.version||pending===currentRelease.version)&&!currentRelease.sample&&currentRelease.whatsNew.length)queueMicrotask(()=>{if(alive.current)setHighlights(true);});
+   if((!last||last!==currentRelease.version||pending===currentRelease.version)&&!currentRelease.sample&&currentRelease.whatsNew.length)queueMicrotask(()=>{if(alive.current)setHighlights(true);});
    else localStorage.setItem('orion_installed_version',currentRelease.version);
   }catch{/* The update service remains usable when storage is unavailable. */}
   queueMicrotask(()=>{if(alive.current)void checkNow(false);});const timer=setInterval(()=>{void checkNow(false);},HOUR);
@@ -46,7 +49,7 @@ export function UpdateProvider({children}:{children:ReactNode}){
   document.addEventListener('visibilitychange',visible);
   return()=>{alive.current=false;clearInterval(timer);document.removeEventListener('visibilitychange',visible);const next=held.current;held.current=null;void next?.close().catch(()=>{});};
  },[checkNow]);
- useEffect(()=>{if(!open)return;const element=dialog.current;element?.showModal();return()=>element?.close();},[open]);
+ useEffect(()=>{if(!open||publicDocument)return;const element=dialog.current;element?.showModal();return()=>element?.close();},[open,publicDocument]);
  const later=()=>{if(installLock.current)return;if(update)deferred.current.add(update.version);setOpen(false);setError('');};
  const install=async()=>{
   const next=held.current;if(!next||installLock.current)return;installLock.current=true;setInstalling(true);setError('');setProgress(null);
@@ -71,6 +74,6 @@ export function UpdateProvider({children}:{children:ReactNode}){
    {error&&<p role="alert" className="mt-4 text-sm text-red-500">{error}</p>}
    <div className="mt-6 flex justify-end gap-2"><button disabled={installing} className={settingButton} onClick={later}>Later</button><button disabled={installing} className={settingButton+' !bg-primary !text-white'} onClick={()=>{void install();}}>{installing?'Updating…':error?'Retry update':'Update now'}</button></div>
   </dialog>}
-  {highlights&&!open&&<WhatsNewModal onClose={dismissHighlights}/>}
+  {highlights&&!open&&!publicDocument&&<WhatsNewModal onClose={dismissHighlights}/>}
  </Context.Provider>;
 }

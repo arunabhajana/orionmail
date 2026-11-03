@@ -68,7 +68,7 @@ pub fn update_display_name(account_id: Option<String>, app_handle: AppHandle, di
 #[command]
 pub fn list_accounts(app_handle: AppHandle) -> Result<Vec<UserProfile>, String> {
     crate::auth::app_lock::require_unlocked(&app_handle)?;
-    Ok(session::load_profile_metadata(&app_handle).0)
+    session::try_load_profile_metadata(&app_handle).map(|(profiles,_)|profiles)
 }
 
 #[command]

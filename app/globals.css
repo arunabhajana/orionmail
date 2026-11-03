@@ -522,3 +522,10 @@ html, body {
 .mail-workspace[data-pane="minimal"][data-has-selection="true"] .mail-list-column { display: none; }
 .mail-workspace[data-pane="minimal"][data-has-selection="true"] .mail-detail-pane { display: flex; width: 100%; }
 .mail-workspace[data-pane="minimal"] .mail-back-button { display: inline-flex; }
+
+.settings-footer-action { transition: background-color 160ms ease, color 160ms ease, transform 160ms ease; }
+.settings-footer-action svg { transition: transform 160ms ease; }
+.settings-footer-action:hover svg { transform: translateX(2px); }
+.settings-footer-action:active { transform: scale(.98); }
+.settings-footer-action:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .settings-footer-action, .settings-footer-action svg { transition: none; transform: none !important; } }

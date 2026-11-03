@@ -167,9 +167,9 @@ function SettingsPageInner() {
                         </button>;
                     })}
                 </nav>
-                <div className="mx-4 shrink-0 border-t border-black/[0.07] dark:border-white/[0.07] pt-3 pb-2 space-y-1">
-                    <button type="button" onClick={handleBackClick} className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-muted-foreground hover:text-foreground"><Inbox className="size-4" />Back to Inbox</button>
-                    <button type="button" onClick={() => requestNavigation(() => { if (user) void logout(user.id).catch(error => toast.error('Could not sign out', { description: String(error) })); })} className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/10"><LogOut className="size-4" />Sign out</button>
+                <div className="mx-4 shrink-0 border-t border-black/[0.07] dark:border-white/[0.07] pt-3 pb-[13px] space-y-1.5">
+                    <button type="button" onClick={handleBackClick} className="settings-footer-action w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] text-muted-foreground hover:bg-foreground/5 hover:text-foreground"><Inbox className="size-4" />Back to Inbox</button>
+                    <button type="button" onClick={() => requestNavigation(() => { if (user) void logout(user.id).catch(error => toast.error('Could not sign out', { description: String(error) })); })} className="settings-footer-action w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] text-red-600 dark:text-red-400 hover:bg-red-500/10"><LogOut className="size-4" />Sign out</button>
                 </div>
             </aside>
 

@@ -109,7 +109,7 @@ try {
             if (git('ls-remote', 'origin', 'refs/heads/master').split(/\s/)[0] !== git('rev-parse', 'HEAD')) throw new Error('Update master from origin before pushing the tag.');
             if (git('ls-remote', '--tags', 'origin', `refs/tags/${tag}`)) throw new Error('Remote tag already exists; it will not be overwritten.');
             if (!dry) run('git', ['-c', `safe.directory=${ROOT}`, 'push', 'origin', `refs/tags/${tag}:refs/tags/${tag}`]);
-            console.log(dry ? `Would push only ${tag}.` : `Pushed ${tag}. No CI publishing is configured yet.`); break;
+            console.log(dry ? `Would push only ${tag}.` : `Pushed ${tag}. GitHub Actions will run checks and build the Windows release.`); break;
         }
         case 'doctor': doctor(args.includes('--release')); break;
         default: throw new Error('Unknown release command. Use the documented npm scripts.');

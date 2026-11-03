@@ -41,15 +41,16 @@ function ReleaseEntry({ release }: { release: Release }) {
         <div className="mt-6 space-y-6">{release.sections.map(section => <section key={section.category} aria-label={section.category}><h4 className="mb-3 text-xs font-semibold">{section.category}</h4><ul className="space-y-3 border-l border-black/[0.06] pl-4 dark:border-white/[0.08]">{section.items.map(item => <li key={item.title}><p className="text-xs font-medium">{item.title}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.text}</p></li>)}</ul></section>)}</div>
     </article>;
 }
-export function ReleaseNotesPanel() {
+export function ReleaseNotesPanel({installedVersion=currentRelease.version}:{installedVersion?:string}) {
+    const installedRelease=releases.find(release=>release.version===installedVersion);
     return <details data-setting-id="about.changelog" className="settings-group group/release-notes overflow-hidden">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[19px] p-5 transition-colors hover:bg-primary/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
-            <div><h2 className="text-sm font-semibold">Release notes</h2><p className="mt-1 text-xs text-muted-foreground">Version {currentRelease.version} · Changes, improvements, and fixes.</p></div>
+            <div><h2 className="text-sm font-semibold">Release notes</h2><p className="mt-1 text-xs text-muted-foreground">Version {installedVersion} · Changes, improvements, and fixes.</p></div>
             <ChevronDown aria-hidden="true" size={17} className="shrink-0 text-muted-foreground transition-transform duration-150 group-open/release-notes:rotate-180 motion-reduce:transition-none" />
         </summary>
         <div className="border-t border-black/[0.05] dark:border-white/[0.06]">
-            <ReleaseEntry release={currentRelease} />
-            {releases.filter(release => release.version !== currentRelease.version).map(release => <details key={release.version} className="border-t border-black/5 dark:border-white/10"><summary className="cursor-pointer px-5 py-4 text-xs font-medium">Version {release.version} · {release.title}</summary><ReleaseEntry release={release} /></details>)}
+            {installedRelease?<ReleaseEntry release={installedRelease}/>:<p className="p-5 text-sm text-muted-foreground">Release notes for this installed version are not bundled.</p>}
+            {releases.filter(release => release.version !== installedVersion).map(release => <details key={release.version} className="border-t border-black/5 dark:border-white/10"><summary className="cursor-pointer px-5 py-4 text-xs font-medium">Version {release.version} · {release.title}</summary><ReleaseEntry release={release} /></details>)}
         </div>
     </details>;
 }

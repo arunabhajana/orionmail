@@ -37,13 +37,10 @@ fn get_store_path(app_handle: &AppHandle) -> PathBuf {
 pub fn save_account(app_handle: &AppHandle, account: Account, set_active: bool) -> Result<(), String> {
     let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
     let path = get_store_path(app_handle);
-    let mut store = load_store(app_handle);
+    let mut store = load_store(app_handle)?;
     update_store_account(&mut store, account, set_active)?;
 
-    let json = serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())?;
-
-    Ok(())
+    write_store(&path, &store)
 }
 
 fn update_store_account(store: &mut AuthStore, account: Account, set_active: bool) -> Result<(), String> {
@@ -74,16 +71,18 @@ fn update_store_account(store: &mut AuthStore, account: Account, set_active: boo
 /// Returns the requested stored account.
 pub fn get_account(app_handle: &AppHandle, account_id: &str) -> Option<Account> {
     let _store = STORE_LOCK.lock().unwrap_or_else(|error|error.into_inner());
-    load_store_for(app_handle, Some(account_id)).accounts.into_iter().find(|account|account.id==account_id)
+    load_store_for(app_handle, Some(account_id)).ok()?.accounts.into_iter().find(|account|account.id==account_id)
 }
 
 // Display-only consumers must not read Windows Credential Manager or trigger
 // token self-healing just to draw a tray tooltip or notification attribution.
-pub fn load_profile_metadata(app_handle: &AppHandle) -> (Vec<crate::auth::account::UserProfile>,Option<String>) {
-    let _store = STORE_LOCK.lock().unwrap_or_else(|error|error.into_inner());
-    let store:AuthStore=fs::read(get_store_path(app_handle)).ok()
-        .and_then(|bytes|serde_json::from_slice(&bytes).ok()).unwrap_or_default();
-    (store.accounts.into_iter().map(crate::auth::account::UserProfile::from).collect(),store.active_account_id)
+pub fn load_profile_metadata(app: &AppHandle) -> (Vec<crate::auth::account::UserProfile>,Option<String>) {
+    try_load_profile_metadata(app).unwrap_or_default()
+}
+pub fn try_load_profile_metadata(app: &AppHandle) -> Result<(Vec<crate::auth::account::UserProfile>,Option<String>),String> {
+    let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
+    let store = read_store_file(&get_store_path(app))?;
+    Ok((store.accounts.into_iter().map(crate::auth::account::UserProfile::from).collect(),store.active_account_id))
 }
 pub fn get_active_profile(app_handle:&AppHandle)->Option<crate::auth::account::UserProfile>{
     let (profiles,active)=load_profile_metadata(app_handle);
@@ -101,10 +100,10 @@ pub fn ensure_account_capacity(app: &AppHandle, id: &str) -> Result<(), String> 
 pub fn mark_reauth(app: &AppHandle, id: &str) -> Result<(), String> {
     let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
     let path = get_store_path(app);
-    let mut store: AuthStore = serde_json::from_slice(&fs::read(&path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    let mut store = read_store_file(&path)?;
     if let Some(account) = store.accounts.iter_mut().find(|account|account.id == id && !account.needs_reauth) {
         account.needs_reauth = true;
-        fs::write(path, serde_json::to_vec_pretty(&store).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+        write_store(&path, &store)?;
     }
     Ok(())
 }
@@ -112,18 +111,18 @@ pub fn mark_reauth(app: &AppHandle, id: &str) -> Result<(), String> {
 pub fn update_profile_name(app: &AppHandle, id: &str, name: &str) -> Result<crate::auth::account::UserProfile, String> {
     let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
     let path = get_store_path(app);
-    let mut store: AuthStore = serde_json::from_slice(&fs::read(&path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    let mut store = read_store_file(&path)?;
     let account = store.accounts.iter_mut().find(|account|account.id == id).ok_or("Account was removed")?;
     account.profile_name = name.to_string();
     let profile = crate::auth::account::UserProfile::from(account.clone());
-    fs::write(path, serde_json::to_vec_pretty(&store).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    write_store(&path, &store)?;
     Ok(profile)
 }
 
 /// Retrieves the profile currently marked as active.
 pub fn get_active_account(app_handle: &AppHandle) -> Option<Account> {
     let _store = STORE_LOCK.lock().unwrap_or_else(|error|error.into_inner());
-    let store = load_store(app_handle);
+    let store = load_store(app_handle).ok()?;
     let active_id = store.active_account_id?;
     store.accounts.into_iter().find(|a| a.id == active_id)
 }
@@ -132,12 +131,11 @@ pub fn get_active_account(app_handle: &AppHandle) -> Option<Account> {
 pub fn set_active_account(app_handle: &AppHandle, account_id: String) -> Result<(), String> {
     let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
     let path = get_store_path(app_handle);
-    let mut store: AuthStore = serde_json::from_slice(&fs::read(&path).map_err(|error|error.to_string())?).map_err(|error|error.to_string())?;
+    let mut store = read_store_file(&path)?;
     
     if store.accounts.iter().any(|a| a.id == account_id) {
         store.active_account_id = Some(account_id);
-        let json = serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?;
-        fs::write(path, json).map_err(|e| e.to_string())?;
+        write_store(&path, &store)?;
         Ok(())
     } else {
         Err("Account not found".to_string())
@@ -147,10 +145,10 @@ pub fn set_active_account(app_handle: &AppHandle, account_id: String) -> Result<
 /// Removes an account and its tokens from the system.
 pub fn remove_account(app_handle: &AppHandle, account_id: String) -> Result<(), String> {
     let _store = STORE_LOCK.lock().map_err(|_| "Account store unavailable")?;
-    crate::auth::token_store::delete_tokens(&account_id);
+
 
     let path = get_store_path(app_handle);
-    let mut store = load_store(app_handle);
+    let mut store = read_store_file(&path)?;
 
     store.accounts.retain(|a| a.id != account_id);
     
@@ -159,25 +157,43 @@ pub fn remove_account(app_handle: &AppHandle, account_id: String) -> Result<(), 
         store.active_account_id = store.accounts.first().map(|a| a.id.clone());
     }
 
-    let json = serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())?;
-
+    write_store(&path, &store)?;
+    crate::auth::token_store::delete_tokens(&account_id);
     Ok(())
 }
 
+fn read_store_file(path: &std::path::Path) -> Result<AuthStore,String> {
+    match fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("Account store is unreadable; existing data was preserved: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(AuthStore::default()),
+        Err(error) => Err(format!("Could not read account store; existing data was preserved: {error}")),
+    }
+}
+fn write_store(path: &std::path::Path, store: &AuthStore) -> Result<(),String> {
+    use std::io::Write;
+    // Never convert a transient read/parse failure into an empty saved account list.
+    read_store_file(path)?;
+    let bytes = serde_json::to_vec_pretty(store).map_err(|error|error.to_string())?;
+    let temp = path.with_extension(format!("{}.tmp",uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp).map_err(|error|error.to_string())?;
+        file.write_all(&bytes).map_err(|error|error.to_string())?;
+        file.sync_all().map_err(|error|error.to_string())?;
+        drop(file);
+        fs::rename(&temp,path).map_err(|error|error.to_string())
+    })();
+    if result.is_err() { let _ = fs::remove_file(&temp); }
+    result
+}
+
 /// Internal helper to deserialize the state file.
-fn load_store(app_handle: &AppHandle) -> AuthStore {
+fn load_store(app_handle: &AppHandle) -> Result<AuthStore, String> {
     load_store_for(app_handle, None)
 }
 
-fn load_store_for(app_handle: &AppHandle, only_account: Option<&str>) -> AuthStore {
+fn load_store_for(app_handle: &AppHandle, only_account: Option<&str>) -> Result<AuthStore, String> {
     let path = get_store_path(app_handle);
-    if !path.exists() {
-        return AuthStore::default();
-    }
-
-    let content = fs::read_to_string(&path).unwrap_or_default();
-    let mut store: AuthStore = serde_json::from_str(&content).unwrap_or_default();
+    let mut store = read_store_file(&path)?;
 
     let mut needs_save = false;
 
@@ -226,13 +242,8 @@ fn load_store_for(app_handle: &AppHandle, only_account: Option<&str>) -> AuthSto
         }
     }
 
-    if needs_save {
-        if let Ok(json) = serde_json::to_string_pretty(&store) {
-            let _ = fs::write(&path, json);
-        }
-    }
-
-    store
+    if needs_save { write_store(&path, &store)?; }
+    Ok(store)
 }
 
 #[cfg(test)]
@@ -240,6 +251,38 @@ mod tests {
     use super::*;
     fn account(id: &str) -> Account {
         serde_json::from_value(serde_json::json!({"id":id,"email":"same@example.com","provider":{"type":"Google"},"expires_at":0,"last_sync":null,"profile_name":"","profile_picture":""})).unwrap()
+    }
+    #[test]
+    fn corrupt_metadata_is_not_treated_as_an_empty_account_store() {
+        let directory = std::env::temp_dir().join(format!("orion-account-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("accounts.json");
+        fs::write(&path,b"{ interrupted write").unwrap();
+        assert!(read_store_file(&path).is_err());
+        assert!(write_store(&path,&AuthStore::default()).is_err());
+        assert_eq!(fs::read(&path).unwrap(),b"{ interrupted write");
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+    #[test]
+    fn replacing_metadata_preserves_both_accounts_and_never_serializes_tokens() {
+        let directory = std::env::temp_dir().join(format!("orion-account-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("accounts.json");
+        let mut store = AuthStore::default();
+        update_store_account(&mut store,account("a"),true).unwrap();
+        update_store_account(&mut store,account("b"),true).unwrap();
+        write_store(&path,&store).unwrap();
+        store.accounts[0].profile_name="Updated alias".into();
+        store.accounts[0].access_token="must-not-be-written".into();
+        write_store(&path,&store).unwrap();
+        let saved=read_store_file(&path).unwrap();
+        assert_eq!(saved.accounts.len(),2);
+        assert_eq!(saved.active_account_id.as_deref(),Some("b"));
+        assert!(!fs::read_to_string(&path).unwrap().contains("must-not-be-written"));
+        assert_eq!(fs::read_dir(&directory).unwrap().count(),1);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
     }
     #[test]
     fn account_limit_rejects_a_fourth_but_allows_reconnecting_existing_accounts() {

@@ -9,6 +9,22 @@ import {toast} from 'sonner';
 import { colorMap, useAccentColor } from '@/components/AccentColorProvider';
 
 
+function LayoutPreview({mode}:{mode:'right'|'bottom'|'minimal'}) {
+    const list=mode==='minimal'?{x:86,y:48,w:116,h:104}:mode==='bottom'?{x:86,y:48,w:116,h:44}:{x:86,y:48,w:46,h:104};
+    const reader=mode==='bottom'?{x:86,y:98,w:116,h:54}:{x:138,y:48,w:64,h:104};
+    return <svg aria-hidden="true" viewBox="0 0 220 165" className="absolute inset-0 h-full w-full">
+        <rect width="220" height="165" className="fill-[#c9c9c9] dark:fill-[#171717]"/>
+        <rect x="18" y="28" width="204" height="146" rx="12" className="fill-[#fafafa] stroke-white dark:fill-[#111111] dark:stroke-[#383838]" strokeWidth="2"/>
+        <path d="M30 29h48v136H19V40q0-11 11-11" className="fill-[#eee] dark:fill-[#202020]"/>
+        {[29,36,43].map(x=><circle key={x} cx={x} cy="38" r="1.7" className="fill-black/25 dark:fill-white/25"/>)}
+        <rect x="27" y="53" width="42" height="10" rx="4" className="fill-primary/25"/>
+        {[75,87,99,111].map((y,i)=><rect key={y} x="28" y={y} width={i%2?23:32} height="4" rx="2" className="fill-black/20 dark:fill-white/20"/>)}
+        <rect {...list} rx="5" className="fill-black/[0.025] dark:fill-white/[0.025]"/>
+        {[0,1,2].map(i=><g key={i}><rect x={list.x+4} y={list.y+5+i*(mode==='bottom'?12:29)} width={list.w-8} height={mode==='bottom'?9:23} rx="3" className={i===0?'fill-primary/20':'fill-black/5 dark:fill-white/5'}/><rect x={list.x+8} y={list.y+9+i*(mode==='bottom'?12:29)} width={(list.w-16)*.65} height="3" rx="1.5" className="fill-black/25 dark:fill-white/25"/></g>)}
+        {mode!=='minimal'&&<g><rect {...reader} rx="5" className="fill-primary/[0.07]"/><rect x={reader.x+6} y={reader.y+8} width={reader.w-18} height="5" rx="2" className="fill-black/30 dark:fill-white/30"/>{[0,1,2].map(i=><rect key={i} x={reader.x+6} y={reader.y+23+i*7} width={reader.w-(i===2?25:12)} height="3" rx="1.5" className="fill-black/15 dark:fill-white/15"/>)}</g>}
+    </svg>;
+}
+
 function ThemePreview({ mode }: { mode: 'light' | 'dark' | 'system' }) {
     const scene = (dark: boolean, split = false) => {
         const background = dark ? '#171717' : '#c9c9c9';
@@ -54,10 +70,7 @@ export const AppearanceSection = () => {
                 <p className="mt-1 text-xs text-muted-foreground">Choose how your message list and reading pane share the window.</p>
                 <div role="group" aria-label="Mailbox layout" className="mt-5 grid grid-cols-3 gap-3 sm:gap-4">
                     {([['right','Side by side','List and message together.'],['bottom','Stacked','Read below your list.'],['minimal','Minimal','Open messages in the full second pane.']] as const).map(([value,label,description])=><button key={value} type="button" aria-pressed={preferences.readingPane===value} onClick={()=>{void updatePreferences({readingPane:value}).catch(()=>toast.error('Could not save layout'));}} className="group min-w-0 rounded-2xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-4 focus-visible:ring-offset-background">
-                        <div className={cn('flex aspect-[4/3] gap-1.5 overflow-hidden rounded-2xl border border-border bg-foreground/[0.025] p-3 transition-colors group-hover:border-foreground/30',preferences.readingPane===value&&'ring-1 ring-foreground ring-offset-[3px] ring-offset-background')} aria-hidden="true">
-                            <div className="w-1/5 rounded-md bg-foreground/10"/>
-                            <div className={cn('flex min-w-0 flex-1 gap-1.5',value==='bottom'&&'flex-col')}><div className={cn('space-y-1.5 rounded-md bg-primary/10 p-2',value==='minimal'?'flex-1':value==='bottom'?'h-1/2':'w-2/5')}>{[0,1,2].map(i=><div key={i} className="h-2 rounded bg-primary/20"/>)}</div>{value!=='minimal'&&<div className="flex-1 rounded-md bg-foreground/5 p-2"><div className="h-1.5 w-3/4 rounded bg-foreground/15"/><div className="mt-2 h-1 w-full rounded bg-foreground/10"/></div>}</div>
-                        </div><span className="mt-3 block text-sm font-medium">{label}</span><span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">{description}</span>
+                        <div className={cn('relative aspect-[4/3] overflow-hidden rounded-2xl border border-black/10 transition-[box-shadow,border-color] duration-150 dark:border-white/10',preferences.readingPane===value?'ring-1 ring-foreground ring-offset-[3px] ring-offset-background':'group-hover:border-foreground/30')}><LayoutPreview mode={value}/></div><span className="mt-3 block text-sm font-medium">{label}</span><span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">{description}</span>
                     </button>)}
                 </div>
             </div>

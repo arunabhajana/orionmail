@@ -3,8 +3,9 @@ use tauri::AppHandle;
 
 #[tauri::command]
 pub async fn mark_as_read(app_handle: AppHandle, account_id:String,expected_uid_validity:u32,uid: u32, folder: Option<String>,local_id:Option<String>) -> Result<Option<crate::mail::trash::Pending>, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
+    let owner = crate::auth::scope::profile(&app_handle, Some(&account_id))?;
+    // Queue local flag changes even when OAuth refresh/network access is unavailable.
+    let account = crate::auth::session::get_account(&app_handle, &owner.id).ok_or("Account is no longer available")?;
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
     let receipt=crate::mail::message_actions::perform_for_location(&app_handle, &account, &folder_str, uid, "seen", Some(true),expected_uid_validity,local_id.as_deref()).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
@@ -13,8 +14,9 @@ pub async fn mark_as_read(app_handle: AppHandle, account_id:String,expected_uid_
 
 #[tauri::command]
 pub async fn toggle_read(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, should_read: bool, folder: Option<String>,local_id:Option<String>) -> Result<Option<crate::mail::trash::Pending>, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
+    let owner = crate::auth::scope::profile(&app_handle, Some(&account_id))?;
+    // Queue local flag changes even when OAuth refresh/network access is unavailable.
+    let account = crate::auth::session::get_account(&app_handle, &owner.id).ok_or("Account is no longer available")?;
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
     let receipt=crate::mail::message_actions::perform_for_location(&app_handle, &account, &folder_str, uid, "seen", Some(should_read),expected_uid_validity,local_id.as_deref()).await?;
     crate::tray_state::refresh_unread_count_from_db(&app_handle);
@@ -23,8 +25,9 @@ pub async fn toggle_read(app_handle: AppHandle,account_id:String,expected_uid_va
 
 #[tauri::command]
 pub async fn toggle_star(app_handle: AppHandle,account_id:String,expected_uid_validity:u32, uid: u32, should_star: bool, folder: Option<String>,local_id:Option<String>) -> Result<Option<crate::mail::trash::Pending>, String> {
-    let account = crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    if account.id!=account_id{return Err("Account changed. Reopen the message.".into());}
+    let owner = crate::auth::scope::profile(&app_handle, Some(&account_id))?;
+    // Queue local flag changes even when OAuth refresh/network access is unavailable.
+    let account = crate::auth::session::get_account(&app_handle, &owner.id).ok_or("Account is no longer available")?;
     let folder_str = folder.map(|f| if f.to_lowercase().starts_with("tag:") { f } else { f.to_lowercase() }).unwrap_or_else(|| "inbox".to_string());
     crate::mail::message_actions::perform_for_location(&app_handle, &account, &folder_str, uid, "flagged", Some(should_star),expected_uid_validity,local_id.as_deref()).await
 }
