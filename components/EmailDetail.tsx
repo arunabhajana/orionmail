@@ -141,6 +141,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ accountBadge,className, email
                                     <style>
                                         html { opacity: 0; }
                                         html.ready { opacity: 1; }
+                                        html.conversation-surface, html.conversation-surface body, html.conversation-surface #email-content-wrapper { background: transparent !important; }
                                         html, body { font-family: system-ui, -apple-system, sans-serif; font-size: ${preferences.readingFontSize}px; margin: 0; padding: 0; overflow: hidden; width: 100%; }
                                         img { max-width: 100% !important; height: auto; }
                                         table { max-width: 100% !important; }
@@ -352,7 +353,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ accountBadge,className, email
                                 className={cn('block w-full border-0 email-content-iframe', isConversation ? 'bg-transparent' : 'bg-white dark:bg-[#111111]')}
                                 sandbox="allow-scripts"
                                 scrolling="no"
-                                style={{ height: `${iframeHeight}px`, overflow: 'hidden' }}
+                                style={{ height: `${iframeHeight}px`, overflow: 'hidden', colorScheme: 'normal' }}
                                 srcDoc={messageDocument}
                             />
                         )}

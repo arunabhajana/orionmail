@@ -24,7 +24,7 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
         ] },
         { title: "Mailbox layout", items: [
             item("density", "Message density", "Choose how much breathing room each message gets.", "select", [["compact", "Compact"], ["default", "Comfortable"], ["relaxed", "Spacious"]]),
-            item("readingPane", "Reading pane", "Read beside or below the message list.", "select", [["right", "On the right"], ["bottom", "At the bottom"]]),
+            item("readingPane", "Reading pane", "Choose a reading layout, including a focused two-pane view.", "select", [["right", "On the right"], ["bottom", "At the bottom"], ["minimal", "Minimal mode"]]),
             item("previewLines", "Message previews", "Choose how much message text appears in the list.", "select", [["0", "Hidden"], ["1", "One line"], ["2", "Two lines"]]),
             item("showAvatars", "Sender initials", "Show a small initials avatar beside each sender."),
             item("dateFormat", "Date format", "Choose relative times or calendar dates.", "select", [["relative", "Relative"], ["absolute", "Calendar date"]]),

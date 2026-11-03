@@ -4,6 +4,8 @@ import React, { useSyncExternalStore } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useTheme } from 'next-themes';
+import {useAppPreferences} from '../AppPreferencesContext';
+import {toast} from 'sonner';
 import { colorMap, useAccentColor } from '@/components/AccentColorProvider';
 
 
@@ -36,6 +38,7 @@ function ThemePreview({ mode }: { mode: 'light' | 'dark' | 'system' }) {
 
 const subscribe = () => () => {};
 export const AppearanceSection = () => {
+    const {preferences,updatePreferences}=useAppPreferences();
     const { theme, resolvedTheme, setTheme } = useTheme();
     const { accentColor, setAccentColor } = useAccentColor();
     const mounted = useSyncExternalStore(subscribe, () => true, () => false);
@@ -46,6 +49,18 @@ export const AppearanceSection = () => {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-8"
         >
+            <div className="settings-group p-6" data-setting-id="appearance.layout">
+                <h3 className="text-sm font-semibold">Mailbox layout</h3>
+                <p className="mt-1 text-xs text-muted-foreground">Choose how your message list and reading pane share the window.</p>
+                <div role="group" aria-label="Mailbox layout" className="mt-5 grid grid-cols-3 gap-3 sm:gap-4">
+                    {([['right','Side by side','List and message together.'],['bottom','Stacked','Read below your list.'],['minimal','Minimal','Open messages in the full second pane.']] as const).map(([value,label,description])=><button key={value} type="button" aria-pressed={preferences.readingPane===value} onClick={()=>{void updatePreferences({readingPane:value}).catch(()=>toast.error('Could not save layout'));}} className="group min-w-0 rounded-2xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-4 focus-visible:ring-offset-background">
+                        <div className={cn('flex aspect-[4/3] gap-1.5 overflow-hidden rounded-2xl border border-border bg-foreground/[0.025] p-3 transition-colors group-hover:border-foreground/30',preferences.readingPane===value&&'ring-1 ring-foreground ring-offset-[3px] ring-offset-background')} aria-hidden="true">
+                            <div className="w-1/5 rounded-md bg-foreground/10"/>
+                            <div className={cn('flex min-w-0 flex-1 gap-1.5',value==='bottom'&&'flex-col')}><div className={cn('space-y-1.5 rounded-md bg-primary/10 p-2',value==='minimal'?'flex-1':value==='bottom'?'h-1/2':'w-2/5')}>{[0,1,2].map(i=><div key={i} className="h-2 rounded bg-primary/20"/>)}</div>{value!=='minimal'&&<div className="flex-1 rounded-md bg-foreground/5 p-2"><div className="h-1.5 w-3/4 rounded bg-foreground/15"/><div className="mt-2 h-1 w-full rounded bg-foreground/10"/></div>}</div>
+                        </div><span className="mt-3 block text-sm font-medium">{label}</span><span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">{description}</span>
+                    </button>)}
+                </div>
+            </div>
             {/* Theme Selection */}
             <div className="settings-group p-6">
                 <h3 className="text-sm font-semibold">Interface theme</h3>

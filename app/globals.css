@@ -516,3 +516,9 @@ html, body {
   .mail-sidebar-footer { flex-direction: column; gap: 6px; }
   .mail-sidebar-footer > :first-child { flex: none; width: 100%; }
 }
+
+.mail-workspace[data-pane="minimal"] .mail-list-column { width: 100%; flex: 1; min-width: 0; border-right: 0; }
+.mail-workspace[data-pane="minimal"] .mail-detail-pane { display: none; }
+.mail-workspace[data-pane="minimal"][data-has-selection="true"] .mail-list-column { display: none; }
+.mail-workspace[data-pane="minimal"][data-has-selection="true"] .mail-detail-pane { display: flex; width: 100%; }
+.mail-workspace[data-pane="minimal"] .mail-back-button { display: inline-flex; }

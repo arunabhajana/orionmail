@@ -19,7 +19,7 @@ const choices: Partial<Record<keyof AppPreferences, readonly string[]>> = {
     notificationTone: ["mail", "default", "im", "reminder"],
     composeFont: ["system", "serif", "monospace"], readingFontSize: ["14", "16", "18", "20"],
     markRead: ["immediate", "3", "5", "manual"], density: ["compact", "default", "relaxed"],
-    previewLines: ["0", "1", "2"], dateFormat: ["relative", "absolute"], readingPane: ["right", "bottom"],
+    previewLines: ["0", "1", "2"], dateFormat: ["relative", "absolute"], readingPane: ["right", "bottom", "minimal"],
     defaultFolder: ["inbox", "starred", "sent"], pollInterval: ["60", "180", "300", "900"],
 };
 /** Allowlisted, bounded device preferences; ignore corrupt or unknown stored values. */
