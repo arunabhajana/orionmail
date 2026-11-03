@@ -9,7 +9,7 @@ try{
  if(command==='validate'){
   const tag=process.env.GITHUB_REF_NAME;
   if(tag!==`v${version}`)throw new Error('Tag does not match application version.');
-  git('merge-base','--is-ancestor','HEAD','origin/main');
+  git('merge-base','--is-ancestor','HEAD','origin/master');
   if(git('cat-file','-t',`refs/tags/${tag}`)!=='tag')throw new Error('Use an annotated release tag.');
   const release=loadReleases().find(r=>r.version===version);if(!release)throw new Error('Missing release notes');requirePublishable(release);
  }else if(command==='config'){
@@ -25,7 +25,7 @@ try{
  }else if(command==='start'){
   const next=process.argv[3];if(!next||!/^(patch|minor|major|\d+\.\d+\.\d+)$/.test(next))throw new Error('Supply patch, minor, major or a version.');
   if(git('status','--porcelain'))throw new Error('Start from a clean checkout.');
-  if(git('branch','--show-current')!=='main')throw new Error('Start from main.');
+  if(git('branch','--show-current')!=='master')throw new Error('Start from master.');
   git('switch','-c',`orionmail/release-${next}-${Date.now()}`);
   for(const args of [['bump',next],['notes'],['generate']])execFileSync(process.execPath,['scripts/release.mjs',...args],{cwd:ROOT,stdio:'inherit'});
  }else throw new Error('Use validate, config, manifest or start.');

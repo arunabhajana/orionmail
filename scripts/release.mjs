@@ -29,17 +29,17 @@ function generate(check = false) {
     else writeBatch(ROOT, new Map([[target, content]]));
 }
 function requireReleaseGit(version, remoteCheck) {
-    if (git('branch', '--show-current') !== 'main') throw new Error('Prepare releases from main after the PR is merged.');
+    if (git('branch', '--show-current') !== 'master') throw new Error('Prepare releases from master after the PR is merged.');
     if (git('status', '--porcelain')) throw new Error('Commit or stash changes, including release notes, before preparing a release.');
     const head = git('rev-parse', 'HEAD');
     let upstream;
-    try { upstream = git('rev-parse', 'refs/remotes/origin/main'); } catch { throw new Error('Fetch origin/main before preparing a release.'); }
-    if (head !== upstream) throw new Error('HEAD must match origin/main. Fetch and fast-forward main first.');
+    try { upstream = git('rev-parse', 'refs/remotes/origin/master'); } catch { throw new Error('Fetch origin/master before preparing a release.'); }
+    if (head !== upstream) throw new Error('HEAD must match origin/master. Fetch and fast-forward master first.');
     const tag = `v${version}`;
     if (git('tag', '--list', tag)) throw new Error(`${tag} already exists locally.`);
     if (remoteCheck) {
         if (git('ls-remote', '--tags', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`)) throw new Error(`${tag} already exists on origin.`);
-        if (git('ls-remote', 'origin', 'refs/heads/main').split(/\s/)[0] !== head) throw new Error('origin/main changed; fetch and update main.');
+        if (git('ls-remote', 'origin', 'refs/heads/master').split(/\s/)[0] !== head) throw new Error('origin/master changed; fetch and update master.');
     }
     return { head, tag };
 }
@@ -104,9 +104,9 @@ try {
             const release = currentRelease(true), tag = `v${release.version}`;
             generate(true);
             if (git('status', '--porcelain')) throw new Error('The worktree must be clean.');
-            if (git('branch', '--show-current') !== 'main' || git('rev-parse', `${tag}^{commit}`) !== git('rev-parse', 'HEAD')) throw new Error('The release tag must point at the current main commit.');
+            if (git('branch', '--show-current') !== 'master' || git('rev-parse', `${tag}^{commit}`) !== git('rev-parse', 'HEAD')) throw new Error('The release tag must point at the current master commit.');
             if (git('cat-file', '-t', `refs/tags/${tag}`) !== 'tag') throw new Error('Release tags must be annotated.');
-            if (git('ls-remote', 'origin', 'refs/heads/main').split(/\s/)[0] !== git('rev-parse', 'HEAD')) throw new Error('Update main from origin before pushing the tag.');
+            if (git('ls-remote', 'origin', 'refs/heads/master').split(/\s/)[0] !== git('rev-parse', 'HEAD')) throw new Error('Update master from origin before pushing the tag.');
             if (git('ls-remote', '--tags', 'origin', `refs/tags/${tag}`)) throw new Error('Remote tag already exists; it will not be overwritten.');
             if (!dry) run('git', ['-c', `safe.directory=${ROOT}`, 'push', 'origin', `refs/tags/${tag}:refs/tags/${tag}`]);
             console.log(dry ? `Would push only ${tag}.` : `Pushed ${tag}. No CI publishing is configured yet.`); break;

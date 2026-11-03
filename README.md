@@ -1,114 +1,100 @@
 <div align="center">
-  <img src="public/logo.svg" alt="OrionMail Logo" width="128" />
+  <img src="public/logo-transparent.svg" alt="OrionMail" width="96" />
   <h1>OrionMail</h1>
+  <p>A calmer space for your everyday email.</p>
+  <p>
+    <a href="https://github.com/arunabhajana/orionmail/releases">Download for Windows</a>
+    · <a href="https://github.com/arunabhajana/orionmail/issues">Report an issue</a>
+    · <a href="https://github.com/arunabhajana/orionmail/releases">Release notes</a>
+  </p>
 </div>
 
-OrionMail is a modern, high-performance desktop email client built with **Next.js**, **Tauri**, and **Tailwind CSS**. Designed with a refined aesthetic focus, it features a sleek, glassmorphic user interface inspired by macOS design principles, offering a premium experience with smooth animations and an intuitive layout.
+OrionMail is a Windows desktop email app for Gmail, with a unified inbox, conversation grouping, useful message actions, and a customizable reading experience.
 
-## Highlights
+**OrionMail is in preview.** Features and layouts may change as the app develops. Google accounts are currently supported; Outlook and custom email providers are not available yet.
 
-*   **Glassmorphic Interface**: A sophisticated, translucent UI with advanced blur effects and semantic color systems.
-*   **Modern Technology Stack**: Developed using Rust (Tauri) for high-performance backend logic and React (Next.js) for a flexible frontend.
-*   **Fluid Animations**: Seamless transitions and micro-interactions implemented via Framer Motion & GSAP.
+## Get started
+
+1. Open [Releases](https://github.com/arunabhajana/orionmail/releases) and download the Windows installer ending in `-setup.exe` from a published release.
+2. Install and open OrionMail.
+3. Choose **Continue with Google** and complete sign-in in your browser.
+4. Return to OrionMail and let your mailbox sync.
+
+The first sync can take a while, especially for larger mailboxes. Later visits use downloaded mail while syncing continues in the background.
+
+If no installer is listed, a downloadable release has not been published yet.
+
+> Windows installers currently display **Unknown publisher** because they do not have a Windows publisher certificate. Download OrionMail only from this repository’s Releases page. Automatic updates are signed separately and verified by the app.
+
+## Your accounts, together or separate
+
+Connect **up to three Google accounts** and switch between them from the sidebar.
+
+- **All inboxes** brings Inbox messages from your connected accounts into one view, with filters for unread and starred mail.
+- Account indicators help you see which mailbox a message belongs to.
+- Choose an individual account for its folders and tags, or expand its folder shortcuts in All inboxes.
+- Set account aliases and colours to make switching easier.
+- Use shared device preferences, with account-specific overrides where supported.
+- Review connection health and reconnect an account when it needs attention.
+
+The compose window lets you choose a sending account when several are connected. Replies use the account that received the message.
+
+## Keep mail organized
+
+- **Conversations:** read linked replies together, expand individual messages, and reveal quoted history when needed.
+- **Tags:** organize messages with custom tags and manage them from the sidebar or message actions.
+- **Pin and star:** keep important messages easy to find.
+- **Snooze:** put a message aside until a time you choose.
+- **Quick actions:** reply, reply all, forward, mark as read, or move mail to Trash from the message toolbar or right-click menu.
+- **Compose:** write formatted messages, add attachments and signatures, or start a fresh message to a sender.
+
+Conversation grouping can be changed in **Settings → Reading & Inbox**. Unrelated messages, including separate verification emails, are not grouped simply because they share a sender or subject.
+
+## Read your way
+
+Choose your theme, accent colour, and mailbox layout in **Settings → Appearance**.
+
+| Layout | How it works |
+| --- | --- |
+| Side by side | Keep the message list and reading pane next to each other. |
+| Stacked | Read the selected message below the list. |
+| Minimal | Keep the sidebar visible and switch the second pane between the list and a full-width message. Use Back to return to the list. |
+
+Adjust message previews, text size, sender initials, and other reading preferences in Settings.
+
+## Useful details at a glance
+
+Smart Actions can surface details from supported messages, including:
+
+- Verification codes you can copy quickly.
+- Meeting links and calendar invitations.
+- Orders, receipts, and delivery information.
+- Travel and booking details.
+
+You can turn Smart Actions off entirely or choose the types you want in **Settings → Smart Actions**. Not every message format can be recognized.
+
+## Notifications and privacy controls
+
+Choose which mail alerts you receive, enable **Do not disturb**, or schedule quiet hours. Notification previews and sounds are configurable, and the Windows taskbar can show an unread badge.
+
+Remote images are blocked by default until you allow them for a message. Settings also include external-link confirmation, Windows Hello app-lock controls, and local cache preferences.
+
+Downloaded messages remain available when you are offline. Bodies that have not been downloaded, sending, syncing, and new attachment downloads require a connection. Cache limits or clearing downloaded bodies may require messages to be downloaded again.
+
+## Stay up to date
+
+Installed production builds check for updates on launch and every hour while OrionMail is running. When an update is available, you can choose **Update now** or **Later**.
+
+You can also check manually in **Settings → About OrionMail → Check for updates**. After an update, What’s New introduces the latest changes, and categorized release notes are available in About.
+
+Existing builds without the updater need a manual installation of the first updater-enabled release.
+
+## Need help?
+
+[Open an issue](https://github.com/arunabhajana/orionmail/issues) for a bug or feature request. For a bug, include your OrionMail version, Windows version, and the steps that reproduce it. Remove email addresses, message contents, verification codes, and other private information from screenshots and logs.
+
+For feedback, contact [arunabhajana@gmail.com](mailto:arunabhajana@gmail.com?subject=OrionMail%20feedback), or use **Get in touch** in About.
 
 ---
 
-## Detailed Features & Architecture
-
-OrionMail connects local robustness with web-like flexibility. Key features and their underlying mechanics include:
-
-### Core Capabilities
-*   **Offline-First Database**: Uses a local SQLite database (`get_db_path()`, `init_from_db()`) to store emails, contacts, and account configurations, ensuring instant access even without an internet connection.
-*   **Smart Background Sync**: The Rust backend handles complex IMAP/SMTP operations (`sync_folder()`, `sync_inbox()`) quietly in the background without blocking the UI.
-*   **Predictive Body Prefetching**: Features a dedicated `BodyPrefetchManager` and background worker (`spawn_worker()`) that preemptively downloads and caches email contents (`fetch_and_cache_body_internal()`) for zero-latency reading.
-*   **Multi-Provider Authentication**: Secure OAuth flows for Google and Outlook, plus support for Custom IMAP/SMTP configurations, managed via a secure local `AuthStore` and seamlessly integrated with the React frontend.
-
-### User Interface & Experience
-*   **Glassmorphic & Adaptive Theming**: A sophisticated, translucent UI built with Tailwind CSS. Includes dynamic accent color customization (`AccentColorProvider`, `useAccentColor()`) and dark mode support.
-*   **High-Performance Email List**: Utilizes virtualized lists to effortlessly render thousands of emails (`EmailList`), paired with smooth transitions and interactive loaders like `OrbitLoader`.
-*   **Interactive Context Menus**: Seamless, floating right-click context menus for quick actions like Reply, Forward, Archive, Delete, Mark as Read, Pin, Snooze, and Tagging.
-*   **Secure Email Rendering**: Robust email sanitization ensures safety when rendering HTML content from untrusted senders in the `EmailDetail` view.
-*   **Integrated Compose & Attachments**: A feature-rich `ComposeModal` for drafting emails, alongside native attachment handling and a dedicated downloads manager (`useDownloads()`, `download_attachment()`).
-
-### Smart Features & OS Integration
-*   **Intelligent Content Extraction**: A robust extraction pipeline (`run_extraction_pipeline()`) that parses inline images (`rewrite_cid_images()`) and decodes calendar invites (ICS) for enhanced viewing.
-*   **Automated Contact Management**: Automatically extracts and stores contacts from your communications (`extract_and_store_contacts()`) into a local database, enabling fast address auto-completion (`search_contacts()`).
-*   **Custom Tag & Folder Management**: Seamlessly syncs provider tags (like Gmail labels) into a local SQLite schema, allowing advanced offline organization and message-to-tag mapping.
-*   **Deep OS Integration**: Leverages Tauri for native system tray support (`spawn_tray_update_loop()`), background OS notifications (`show_new_emails()`), and "minimize to tray" functionality (`was_launched_minimized()`).
-*   **Instant Actions**: Perform standard email operations—like starring (`toggle_star()`), marking as read (`toggle_read()`), and deleting (`delete_message()`)—with immediate optimistic UI updates backed by robust local-to-remote sync.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-The following components and versions are required for local development:
-*   **[Node.js](https://nodejs.org/)**: v18 or higher
-*   **[Rust](https://rustup.rs/)**: v1.77.2 or higher (specified in `Cargo.toml`)
-
-### Core Dependencies
-
-**Frontend (`package.json`)**:
-*   **Next.js**: v16.1.6
-*   **React**: v19.2.3
-*   **Tailwind CSS**: v4.x
-*   **Tauri API/CLI**: v2.10.x
-
-**Backend (`Cargo.toml`)**:
-*   **Tauri**: v2.10.0
-*   **Rusqlite**: v0.38.x (for local SQLite storage)
-*   **IMAP & Lettre**: For email synchronization and SMTP sending
-*   **OAuth2**: For secure Google and Outlook authentication
-
-### 1. Clone the repository
-```bash
-git clone https://github.com/arunabhajana/orionmail.git
-cd orionmail
-```
-
-### 2. Install Dependencies
-```bash
-npm install
-```
-
-### 3. Environment Variables
-You need to set up the appropriate environment variables for the Tauri backend.
-Create or edit the `.env` file in the `src-tauri/` directory:
-```bash
-# src-tauri/.env
-GOOGLE_CLIENT_ID=your_google_client_id_here
-GOOGLE_CLIENT_SECRET=your_google_client_secret_here
-```
-*(Note: A predefined `.env` with development keys may already be present in the repository for seamless initial setup. Ensure these are configured to your own Google Cloud Console credentials for production.)*
-
-### 4. Launch Development Environment
-```bash
-npm run tauri dev
-```
-
----
-
-## Project Structure
-
-### Frontend (Next.js & React)
-*   `app/`: Contains the Next.js App Router pages and layouts, handling routing and core views.
-*   `components/`: Houses reusable React UI components (e.g., Settings modules, Email list items), styled with Tailwind CSS.
-*   `hooks/`: Custom React hooks for frontend state management and encapsulating side effects.
-*   `lib/`: Includes utility functions (like `cn()`) and data providers.
-*   `public/`: Static assets such as images and icons.
-
-### Backend (Tauri & Rust)
-*   `src-tauri/`: Manages the Rust-based Tauri configuration, local database access, and core backend logic.
-    *   `src/auth/`: Handles secure authentication flows (e.g., Google OAuth).
-    *   `src/commands/`: Defines Tauri IPC (Inter-Process Communication) commands exposed to the frontend.
-    *   `src/contacts/`: Manages user contacts and address book functionality.
-    *   `src/mail/`: Core email processing module, handling IMAP/SMTP synchronization, email parsing, and local storage management.
-
-## Contributing
-
-Contributions are welcome. Please feel free to submit a pull request or open an issue to discuss proposed changes.
-
-## License
-
-This project is distributed under the MIT License.
+Made with care by **Arunabha Jana**.
