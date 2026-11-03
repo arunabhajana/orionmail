@@ -1,0 +1,11 @@
+import type {ReactNode} from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import {LegalClose,LegalBack} from './LegalControls';
+export function LegalPage({title,intro,sections,children}:{title:string;intro:string;sections:readonly(readonly[string,string])[];children?:ReactNode}){
+ return <main className="h-dvh overflow-y-auto bg-background text-foreground selection:bg-primary/20"><div className="pointer-events-none fixed inset-x-0 top-0 h-96 bg-gradient-to-b from-primary/[0.08] to-transparent"/><div className="relative mx-auto max-w-3xl px-5 py-6 sm:py-8">
+  <header className="sticky top-0 z-10 -mx-2 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-background/90 py-2 pl-2 pr-12 backdrop-blur-xl"><Link href="/" className="flex items-center gap-2.5 text-sm font-semibold"><Image src="/logo-transparent.svg" alt="" width={30} height={30} unoptimized/>OrionMail</Link><nav aria-label="Legal documents" className="ml-auto flex flex-wrap gap-3 text-[11px] text-muted-foreground"><Link className="hover:text-primary" href="/privacy">Privacy</Link><Link className="hover:text-primary" href="/terms">Terms</Link><Link className="hover:text-primary" href="/license">MIT License</Link><Link className="hover:text-primary" href="/notices">Notices</Link></nav><LegalClose/></header>
+  <article className="settings-group mt-5 p-5 backdrop-blur-2xl sm:p-7"><p className="text-xs font-medium text-primary">Your mail. Clear choices.</p><h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1><p className="mt-3 max-w-2xl text-xs leading-relaxed text-muted-foreground">{intro}</p><p className="mt-4 text-xs text-muted-foreground">Last updated November 3, 2026</p><div className="mt-5 border-t border-border pt-5 space-y-5">{sections.map(([heading,text])=><section key={heading}><h2 className="text-base font-semibold">{heading}</h2><p className="mt-2 whitespace-pre-line text-[13px] leading-6 text-muted-foreground">{text}</p></section>)}{children}</div></article>
+  <footer className="flex flex-wrap items-center justify-between gap-4 py-5 text-xs text-muted-foreground"><LegalBack/><a className="hover:text-primary" href="mailto:arunabhajana@gmail.com">arunabhajana@gmail.com</a></footer>
+ </div></main>;
+}

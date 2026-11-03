@@ -1,0 +1,34 @@
+Upstream license declaration: MIT/Apache-2.0
+Package: mac 0.1.1
+Source: https://crates.io/crates/mac/0.1.1
+Authors/maintainers: ["Jonathan Reem <jonathan.reem@gmail.com>"]
+
+This package does not supply a standalone license file in its published archive. Its published declaration and README notices are reproduced below; refer to upstream for full applicable terms.
+
+# mac
+
+> A collection of great and ubiqutitous macros.
+
+## Overview
+
+This crate contains collections of macros which are useful in many situations,
+and usable independently or together.
+
+## Usage
+
+Use the crates.io repository; add this to your `Cargo.toml` along
+with the rest of your dependencies:
+
+```toml
+[dependencies]
+mac = "*"
+```
+
+## Author
+
+[Jonathan Reem](https://medium.com/@jreem) is the primary author and maintainer of mac.
+
+## License
+
+MIT/Apache-2.0, like rust itself
+

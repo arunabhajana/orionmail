@@ -162,10 +162,16 @@ async fn perform_locked(app:&AppHandle,account:&Account,folder:&str,uid:u32,acti
         action: action.to_string(), desired, uid_validity: Some(uid_validity),
     };
 
+    // Commit visible flags before provider I/O. The durable queue protects them
+    // from reconciliation and retains offline changes for the next sync.
+    if matches!(action, "seen" | "flagged") {
+        notify_action_applied(app, &item);
+    }
     if let Err(remote_error) = execute_remote_action(app, account, &item).await {
         let _ = database::record_message_action_error(app, id, &remote_error);
         if remote_error.starts_with("CONFLICT:") { return Err(remote_error); }
         log::warn!("Queued {} action {} for account {} (UID {}): {}", action, id, account.id, uid, remote_error);
+        if deferred_flag_error(action, &remote_error) { return Ok(()); }
         return Err(format!("Provider did not confirm the {} operation; it is queued for retry: {}", action, remote_error));
     }
     if let Err(local_error) = apply_local_action(app, &item, &account.provider) {
@@ -242,5 +248,20 @@ mod tests {
             smtp: crate::auth::account::SmtpConfig { host: "smtp.example.test".into(), port: 587, starttls: true },
         };
         assert_eq!(trash_mailbox(&custom), "Trash");
+    }
+}
+
+fn deferred_flag_error(action: &str, error: &str) -> bool {
+    matches!(action, "seen" | "flagged") && !error.starts_with("CONFLICT:")
+}
+#[cfg(test)]
+mod offline_flag_tests {
+    #[test]
+    fn only_durable_flags_treat_transport_failure_as_deferred_success() {
+        for action in ["seen", "flagged"] {
+            assert!(super::deferred_flag_error(action, "Sync Connection Timeout"));
+            assert!(!super::deferred_flag_error(action, "CONFLICT: Mailbox UIDVALIDITY changed"));
+        }
+        assert!(!super::deferred_flag_error("delete", "Offline"));
     }
 }

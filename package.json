@@ -9,7 +9,7 @@
     "start": "next start",
     "tauri": "node scripts/tauri.mjs",
     "lint": "eslint . --max-warnings=0",
-    "prebuild": "node scripts/release.mjs generate",
+    "prebuild": "node scripts/release.mjs generate && node scripts/notices.mjs",
     "version:bump": "node scripts/release.mjs bump",
     "version:check": "node scripts/release.mjs versions",
     "release:notes": "node scripts/release.mjs notes",
@@ -30,15 +30,16 @@
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "release:start": "node scripts/distribute.mjs start",
     "release:validate": "node scripts/release.mjs release-check --ready",
-    "release:ship": "npm run release:prepare && npm run release:push"
+    "release:ship": "npm run release:prepare && npm run release:push",
+    "notices:generate": "node scripts/notices.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.19",
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "2.10.1",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
-    "@tauri-apps/plugin-updater": "^2.14.1",
+    "@tauri-apps/plugin-updater": "2.12.0",
     "@tiptap/core": "^3.32.2",
     "@tiptap/extension-link": "^3.32.2",
     "@tiptap/extension-placeholder": "^3.32.2",
@@ -82,5 +83,6 @@
   },
   "engines": {
     "node": ">=24.0.0 <27"
-  }
+  },
+  "license": "MIT"
 }

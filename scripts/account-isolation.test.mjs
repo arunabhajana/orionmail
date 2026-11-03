@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createAccountInvoker } from '../lib/account-client.ts';
+import { isAccountRequestCancelled, createAccountInvoker } from '../lib/account-client.ts';
 import { dedupeMail, sameMail } from '../lib/mail-identity.ts';
 import { groupConversations } from '../lib/conversations.ts';
 import { createEventScope } from '../lib/event-scope.ts';
@@ -51,4 +51,10 @@ test('account teardown releases listeners that finish registering after the view
     finish(() => releases++);
     const stop = await registration; stop(); scope.dispose();
     assert.equal(releases, 1); assert.equal(events, 0);
+});
+
+test('account-switch cancellation is distinguishable from real provider failures', async () => {
+    const invoke = createAccountInvoker('a', async () => {}, () => false);
+    await assert.rejects(invoke('mark_as_read'), error => isAccountRequestCancelled(error));
+    assert.equal(isAccountRequestCancelled(new Error('Provider failed')), false);
 });

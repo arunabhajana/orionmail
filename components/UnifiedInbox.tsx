@@ -11,6 +11,7 @@ import {useMailboxView} from './MailboxViewContext';
 import {useSync} from './SyncContext';
 import {useAccountIdentities} from './accounts/AccountIdentityControls';
 import {useUnifiedInbox} from '@/hooks/useUnifiedInbox';
+import {isAccountRequestCancelled} from '@/lib/account-client';
 import {ownedMail} from '@/lib/owned-mail';
 import {unifiedId,sameUnifiedMessage} from '@/lib/unified-inbox';
 import {mailIdentity} from '@/lib/mail-identity';
@@ -62,7 +63,7 @@ export default function UnifiedInbox(){
    await work(ipc);
   }).finally(()=>{if(choose&&alive.current&&order===sequence.current)setOpening(false);});queue.current=task.catch(()=>{});return task;
  },[auth]);
- const report=(error:unknown)=>toast.error('Could not complete mail action',{description:String(error)});
+ const report=(error:unknown)=>{if(!isAccountRequestCancelled(error))toast.error('Could not complete mail action',{description:String(error)});};
  const select=(email:Email)=>{const order=sequence.current+1;setOpening(true);void run(email,async()=>{}).catch(report).finally(()=>{if(alive.current&&sequence.current===order)setOpening(false);});};
  const fields=(email:Email)=>({accountId:email.accountId,folder:email.folder,uid:email.uid,expectedUidValidity:email.uidValidity??0,localId:email.locationId});
  const patchSelected=(email:Email,patch:Partial<Email>)=>setSelected(previous=>previous&&mailIdentity(previous)===mailIdentity(email)?{...previous,...patch}:previous);

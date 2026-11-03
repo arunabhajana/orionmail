@@ -2,16 +2,18 @@
 
 import { useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { AlertCircle, ArrowRight, Loader2 } from "lucide-react";
 import { useAuth } from "./AuthContext";
-import packageInfo from "@/package.json";
+import {useInstalledVersion} from "@/hooks/useInstalledVersion";
+import {currentRelease} from "@/lib/generated/releases";
 
 export default function LoginPage() {
+    const version=useInstalledVersion();
     const { loginWithGoogle } = useAuth();
     const guard = useRef(false);
     const [pending, setPending] = useState(false);
     const [error, setError] = useState('');
-    const [legal, setLegal] = useState<'privacy' | 'terms' | null>(null);
     const handleGoogleLogin = async () => {
         if (guard.current) return;
         guard.current = true; setPending(true); setError('');
@@ -58,11 +60,10 @@ export default function LoginPage() {
             </section>
             <footer className="mt-6 text-center text-[11px] text-muted-foreground">
                 <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-                    <button type="button" aria-expanded={legal === 'privacy'} aria-controls="login-legal" onClick={() => setLegal(value => value === 'privacy' ? null : 'privacy')} className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Privacy Policy <span className="opacity-60">· Soon</span></button>
-                    <button type="button" aria-expanded={legal === 'terms'} aria-controls="login-legal" onClick={() => setLegal(value => value === 'terms' ? null : 'terms')} className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Terms of Service <span className="opacity-60">· Soon</span></button>
+                    <Link href="/privacy" className="rounded-sm transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary">Privacy Policy</Link>
+                    <Link href="/terms" className="rounded-sm transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary">Terms of Use</Link>
                 </div>
-                <div id="login-legal" hidden={!legal} className="mt-4 rounded-xl border border-black/[0.06] bg-white/60 px-4 py-3 text-left leading-relaxed dark:border-white/[0.06] dark:bg-white/[0.025]" role="status">{legal && <><p className="font-medium text-foreground">{legal === 'privacy' ? 'Privacy Policy' : 'Terms of Service'}</p><p className="mt-1">This document has not been published yet. This is a placeholder; the full {legal === 'privacy' ? 'privacy policy' : 'terms of service'} will be available here in a future release.</p></>}</div>
-                <p className="mt-4 tabular-nums">Version {packageInfo.version} <span aria-hidden="true">·</span> Preview</p>
+                <p className="mt-4 tabular-nums">Version {version}{(currentRelease.sample||currentRelease.status==='draft')&&<> <span aria-hidden="true">·</span> Preview</>}</p>
             </footer>
         </div>
     </main>;

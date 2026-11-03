@@ -196,7 +196,15 @@ fn apply_message_action_conn(
     desired: Option<bool>,
 ) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let keys = copies(&tx, account, folder, uid, validity)?;
+    apply_message_action_in_tx(&tx, account, folder, uid, validity, action, desired)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+pub(crate) fn apply_message_action_in_tx(
+    tx: &Transaction<'_>, account: &str, folder: &str, uid: u32,
+    validity: u32, action: &str, desired: Option<bool>,
+) -> Result<(), String> {
+    let keys = copies(tx, account, folder, uid, validity)?;
     for key in keys {
         let sql = match action {
             "seen" => "UPDATE messages SET seen=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3",
@@ -207,10 +215,10 @@ fn apply_message_action_conn(
             _ => return Err("Unknown message action".into()),
         };
         if action == "delete" {
-            database::execute_cached(&tx, sql, params![account, key.folder, key.uid])
+            database::execute_cached(tx, sql, params![account, key.folder, key.uid])
                 .map_err(|e| e.to_string())?;
         } else {
-            database::execute_cached(&tx,
+            database::execute_cached(tx,
                 sql,
                 params![
                     account,
@@ -222,7 +230,6 @@ fn apply_message_action_conn(
             .map_err(|e| e.to_string())?;
         }
     }
-    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -443,6 +450,21 @@ mod tests {
             .unwrap(),
             1
         );
+    }
+    #[test]
+    fn queued_flags_commit_or_rollback_with_their_transaction() {
+        let mut c = fixture();
+        {
+            let tx = c.transaction().unwrap();
+            apply_message_action_in_tx(&tx, "a", "inbox", 1, 9, "seen", Some(true)).unwrap();
+            assert_eq!(tx.query_row("SELECT COUNT(*) FROM messages WHERE account_id='a' AND seen=0", [], |r|r.get::<_,i64>(0)).unwrap(), 0);
+        }
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM messages WHERE account_id='a' AND seen=0", [], |r|r.get::<_,i64>(0)).unwrap(), 2);
+        let tx = c.transaction().unwrap();
+        apply_message_action_in_tx(&tx, "a", "inbox", 1, 9, "seen", Some(true)).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM messages WHERE account_id='a' AND seen=0", [], |r|r.get::<_,i64>(0)).unwrap(), 0);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM messages WHERE account_id='b' AND seen=0", [], |r|r.get::<_,i64>(0)).unwrap(), 1);
     }
     #[test]
     fn superseding_alias_intent_is_rolled_back_if_replacement_fails() {

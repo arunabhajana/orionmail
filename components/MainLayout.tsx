@@ -28,6 +28,7 @@ import { listen } from '@tauri-apps/api/event';
 import { waitForInitialMail } from '@/lib/initial-sync';
 import { createEventScope } from '@/lib/event-scope';
 import { useSync } from '@/components/SyncContext';
+import {isAccountRequestCancelled} from '@/lib/account-client';
 import { useAuth } from '@/components/AuthContext';
 import {takeCompose} from '@/lib/compose-handoff';
 import LogoSpinner from '@/components/LogoSpinner';
@@ -60,7 +61,7 @@ interface LocalLocationChoice { accountId: string; email: Email; desired: 'inbox
 export default function MainLayout() {
     const invoke = useAccountInvoke();
     const view=useMailboxView();
-    const { user, accountBusy, switchAccount } = useAuth();
+    const { user, accountBusy, switchAccount, accountEpoch, isAccountCurrent } = useAuth();
     const requestedFolder=view.navigation&&view.navigation.owner===user?.id?view.navigation.folder:view.folder;
     const formatEmailFromMessage = useCallback((message: NativeMessageHeader) => formatNativeEmail(message, user?.id), [user?.id]);
     const pathname=usePathname();
@@ -271,6 +272,11 @@ export default function MainLayout() {
     const selectedEmail = visibleEmails.find(e => e.id === selectedEmailId);
 
 
+    useEffect(()=>{
+        const online=()=>triggerSync();
+        window.addEventListener('online',online);
+        return()=>window.removeEventListener('online',online);
+    },[triggerSync]);
     const unreadRefresh = useRef<{ again: boolean; promise: Promise<void> } | null>(null);
     const fetchUnreadCounts = useCallback((): Promise<void> => {
         if (unreadRefresh.current) {
@@ -293,7 +299,7 @@ export default function MainLayout() {
                     });
                 } while (work.again);
             } catch (error) {
-                console.error("Failed to fetch unread counts", error);
+                if(!isAccountRequestCancelled(error))console.error("Failed to fetch unread counts", error);
             } finally {
                 if (unreadRefresh.current === work) unreadRefresh.current = null;
             }
@@ -329,7 +335,7 @@ export default function MainLayout() {
         const version=(flagVersions.current.get(key)??0)+1;flagVersions.current.set(key,version);
         setPendingFlags(prev=>({...prev,[key]:{accountId,email,patch:{[field]:value}}}));
         return{
-            current:()=>activeAccountRef.current===accountId&&flagVersions.current.get(key)===version,
+            current:()=>isAccountCurrent(accountId,accountEpoch)&&flagVersions.current.get(key)===version,
             finish:()=>{if(flagVersions.current.get(key)===version)setPendingFlags(prev=>{const next={...prev};delete next[key];return next;});}
         };
     };
@@ -431,7 +437,7 @@ export default function MainLayout() {
             if(edit.current())patchMessage(target,{starred:newStarredState});
             fetchUnreadCounts();
         } catch (err) {
-            if(!edit.current())return;
+            if(isAccountRequestCancelled(err)||!edit.current())return;
             console.error("Failed to toggle star", err);
             toast.error("Couldn't update star", { description: String(err) });
             // Rollback
@@ -460,7 +466,7 @@ export default function MainLayout() {
             if(edit.current())patchMessage(target,{unread:!newReadState});
             fetchUnreadCounts();
         } catch (err) {
-            if(!edit.current())return;
+            if(isAccountRequestCancelled(err)||!edit.current())return;
             console.error("Failed to toggle read", err);
             toast.error("Couldn't update read status", { description: String(err) });
             // Rollback
@@ -488,7 +494,7 @@ export default function MainLayout() {
             if(edit.current())patchMessage(target,{unread:false});
             fetchUnreadCounts();
         } catch (err) {
-            if(!edit.current())return;
+            if(isAccountRequestCancelled(err)||!edit.current())return;
             console.error("Failed to mark as read", err);
             toast.error("Couldn't mark message as read", { description: String(err) });
             // Rollback

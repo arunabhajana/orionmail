@@ -1,6 +1,7 @@
 import {act,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 const api=vi.hoisted(()=>({check:vi.fn(),guard:vi.fn(),notify:vi.fn(),close:vi.fn(),install:vi.fn()}));
+vi.mock('next/navigation',()=>({usePathname:()=>'/inbox'}));
 vi.mock('@tauri-apps/api/core',()=>({isTauri:()=>true}));
 vi.mock('@tauri-apps/plugin-updater',()=>({check:api.check}));
 vi.mock('@tauri-apps/plugin-notification',()=>({isPermissionGranted:async()=>true,requestPermission:async()=>'granted',sendNotification:api.notify}));

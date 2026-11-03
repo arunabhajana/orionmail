@@ -1311,6 +1311,14 @@ pub fn enqueue_message_action(
         rusqlite::params![account_id, folder, uid, action],
         |row| row.get(0),
     ).map_err(|e| e.to_string())?;
+    if matches!(action, "seen" | "flagged") {
+        if collapse_copies {
+            crate::mail::tags::cache::apply_message_action_in_tx(&tx, account_id, folder, uid, uid_validity, action, desired)?;
+        } else {
+            let column = if action == "seen" { "seen" } else { "flagged" };
+            tx.execute(&format!("UPDATE messages SET {column}=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3 AND uid_validity=?5"),rusqlite::params![account_id,folder,uid,desired.ok_or("Missing flag value")?,uid_validity]).map_err(|e|e.to_string())?;
+        }
+    }
     tx.commit().map_err(|e|e.to_string())?;
     Ok(id)
 }

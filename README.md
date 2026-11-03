@@ -98,3 +98,5 @@ For feedback, contact [arunabhajana@gmail.com](mailto:arunabhajana@gmail.com?sub
 ---
 
 Made with care by **Arunabha Jana**.
+
+Licensed under the [MIT License](LICENSE).
