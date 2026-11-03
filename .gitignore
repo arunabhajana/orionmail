@@ -92,3 +92,8 @@ Desktop.ini
 
 # Docs
 docs/
+
+# Release signing material
+*.pfx
+*.p12
+*.key

@@ -25,6 +25,7 @@ interface AuthContextType {
     refreshAccounts: () => Promise<void>;
     isAccountCurrent: (id: string, epoch?: number) => boolean;
     accountSnapshot: () => {id:string;epoch:number}|null;
+    prepareForUpdate: () => Promise<void>;
     registerAccountGuard: (guard: () => Promise<void>) => () => void;
     loading: boolean;
     appLockStatus: "checking" | "locked" | "unlocked" | "error";
@@ -236,7 +237,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const setMailboxLoading = useCallback((value: boolean) => { if (owner && isAccountCurrent(owner, accountEpoch)) setMailboxLoadingState(value); }, [owner, accountEpoch, isAccountCurrent]);
     const setMailboxConnected = useCallback((value: boolean) => { if (owner && isAccountCurrent(owner, accountEpoch)) setMailboxConnectedState(value); }, [owner, accountEpoch, isAccountCurrent]);
     const setBootstrappingInbox = useCallback((value: boolean) => { if (owner && isAccountCurrent(owner, accountEpoch)) setBootstrappingState(value); }, [owner, accountEpoch, isAccountCurrent]);
-    return <AuthContext.Provider value={{ user, accounts, accountBusy, accountEpoch, switchAccount, refreshAccounts, isAccountCurrent, accountSnapshot, registerAccountGuard,
+    return <AuthContext.Provider value={{ user, accounts, accountBusy, accountEpoch, switchAccount, refreshAccounts, isAccountCurrent, accountSnapshot, registerAccountGuard, prepareForUpdate:()=>transition(async()=>{}),
         loading, appLockStatus, appLockError, retryAppUnlock, mailboxLoading, setMailboxLoading, mailboxConnected, setMailboxConnected,
         isBootstrappingInbox, setBootstrappingInbox, needsRefresh, isAuthenticated: Boolean(user), loginWithGoogle, addGoogleAccount, updateDisplayName, logout }}>
         {children}

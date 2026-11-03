@@ -10,7 +10,7 @@ const commands = {
     tests: [[node, ['scripts/check.mjs', 'unit']], [node, ['node_modules/vitest/vitest.mjs', 'run']]],
     desktop: [['cargo', ['check', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']], ['cargo', ['clippy', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--all-targets', '--', '-D', 'warnings']], ['cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--lib']], ['cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--bin', 'app']]],
     all: [[node, ['scripts/check.mjs', 'quick']], [node, ['scripts/check.mjs', 'desktop']], [node, ['node_modules/next/dist/bin/next', 'build']]],
-    build: [[node, ['scripts/release.mjs', 'doctor', '--release']], [node, ['scripts/release.mjs', 'generate']], [node, ['scripts/release.mjs', 'release-check']], [node, ['scripts/tauri.mjs', 'build']]],
+    build: [[node, ['scripts/release.mjs', 'doctor', '--release']], [node, ['scripts/release.mjs', 'generate']], [node, ['scripts/release.mjs', 'release-check']], [node, ['scripts/distribute.mjs', 'config']], [node, ['scripts/tauri.mjs', 'build', '--config', '.release-output/tauri.release.json', '--bundles', 'nsis']]],
 };
 try {
     if (!commands[mode]) throw new Error(`Unknown check group: ${mode}`);

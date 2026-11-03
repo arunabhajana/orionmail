@@ -7,6 +7,7 @@ import { MailtoNavigation } from "@/components/MailtoNavigation";
 import { AuthProvider } from "@/components/AuthContext";
 import {MailboxViewProvider} from "@/components/MailboxViewContext";
 import { SyncProvider } from "@/components/SyncContext";
+import {UpdateProvider} from "@/components/UpdateProvider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AccentColorProvider } from "@/components/AccentColorProvider";
 import { DownloadProvider } from "@/components/DownloadContext";
@@ -53,7 +54,7 @@ export default function RootLayout({
                   <MailboxViewProvider><SyncProvider>
                     <DownloadProvider>
                       <AppLockGate>
-                        <AppContextMenus>
+                        <UpdateProvider><AppContextMenus>
                         <div className="app-window">
                           <MailtoNavigation />
                           <GlobalLoader />
@@ -64,7 +65,7 @@ export default function RootLayout({
                           </div>
                           <Toaster theme="system" richColors position="top-center" />
                         </div>
-                        </AppContextMenus>
+                        </AppContextMenus></UpdateProvider>
                       </AppLockGate>
                     </DownloadProvider>
                   </SyncProvider></MailboxViewProvider>

@@ -176,6 +176,7 @@ pub fn run() {
       )?;
 
       
+      app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
       app.handle().plugin(tauri_plugin_dialog::init())?;
       app.handle().plugin(tauri_plugin_notification::init())?;
       app.handle().plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))?;

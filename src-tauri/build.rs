@@ -21,6 +21,12 @@ fn main() {
     }
   }
 
+  for key in ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"] {
+    println!("cargo:rerun-if-env-changed={key}");
+    if let Ok(value) = std::env::var(key) {
+      println!("cargo:rustc-env={key}={value}");
+    }
+  }
   // Re-run this build script if .env changes
   println!("cargo:rerun-if-changed=.env");
 

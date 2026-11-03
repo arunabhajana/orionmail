@@ -27,7 +27,10 @@
     "check:desktop": "node scripts/check.mjs desktop",
     "check:all": "node scripts/check.mjs all",
     "build:desktop": "node scripts/check.mjs build",
-    "audit:production": "npm audit --omit=dev --audit-level=high"
+    "audit:production": "npm audit --omit=dev --audit-level=high",
+    "release:start": "node scripts/distribute.mjs start",
+    "release:validate": "node scripts/release.mjs release-check --ready",
+    "release:ship": "npm run release:prepare && npm run release:push"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.19",
@@ -35,6 +38,7 @@
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "@tiptap/core": "^3.32.2",
     "@tiptap/extension-link": "^3.32.2",
     "@tiptap/extension-placeholder": "^3.32.2",
