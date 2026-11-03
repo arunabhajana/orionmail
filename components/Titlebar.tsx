@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {useMailboxView} from './MailboxViewContext';
 import { useSync } from "@/components/SyncContext";
 import { useDownloads } from "@/components/DownloadContext";
 import { useAppPreferences } from "@/components/AppPreferencesContext";
@@ -119,9 +120,10 @@ function DndToggle() {
  * Cycles between 'Online' and 'Syncing' states.
  */
 function SyncIndicator() {
+    const {unified}=useMailboxView();
     const { isSyncing, unreadCounts } = useSync();
     const { loading, mailboxLoading, isBootstrappingInbox } = useAuth();
-    const unreadCount = unreadCounts['inbox'] || 0;
+    const unreadCount = unified ? 0 : unreadCounts['inbox'] || 0;
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
     useEffect(() => {

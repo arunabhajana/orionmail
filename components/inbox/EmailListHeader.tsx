@@ -7,13 +7,13 @@ export interface SearchProgressData {
     streamed: number; total: number; progress_text: string;
 }
 interface SearchBarProps {
-    value?: string; onChange?: (value: string) => void; onClear?: () => void; searchProgress?: SearchProgressData | null;
+    placeholder?:string; value?: string; onChange?: (value: string) => void; onClear?: () => void; searchProgress?: SearchProgressData | null;
 }
-export const SearchBar = memo(({ value = '', onChange, onClear, searchProgress }: SearchBarProps) => {
+export const SearchBar = memo(({ placeholder='Search messages…', value = '', onChange, onClear, searchProgress }: SearchBarProps) => {
     const searching = Boolean(value && searchProgress && !['Completed', 'Cancelled', 'OfflineLocalOnly', 'Failed'].includes(searchProgress.state) && !/Complete|Offline/.test(searchProgress.progress_text));
     return <div className="mail-search relative w-full">
         <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <input aria-label="Search messages" placeholder="Search messages…" type="search" value={value} onChange={event => onChange?.(event.target.value)} onKeyDown={event => { if (event.key === 'Escape' && value) { event.preventDefault(); onClear?.(); } }} className="mail-search-input" />
+        <input aria-label="Search messages" placeholder={placeholder} type="search" value={value} onChange={event => onChange?.(event.target.value)} onKeyDown={event => { if (event.key === 'Escape' && value) { event.preventDefault(); onClear?.(); } }} className="mail-search-input" />
         <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
             {searching && <Loader2 aria-label="Searching server" className="size-3.5 animate-spin text-primary" />}
             {value && <button type="button" aria-label="Clear search" onClick={onClear} className="mail-icon-button !size-6"><X className="size-3.5" /></button>}

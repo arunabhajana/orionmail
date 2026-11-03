@@ -300,7 +300,7 @@ html, body {
   --mail-hover: rgb(255 255 255 / .055);
   background: radial-gradient(ellipse at 0% 0%, rgb(71 95 146 / .17), transparent 50%), radial-gradient(ellipse at 100% 100%, rgb(104 77 135 / .11), transparent 55%), rgb(16 19 26 / .94);
 }
-.mail-sidebar-column { width: 222px; }
+.mail-sidebar-column { width: 244px; }
 .mail-sidebar { background: rgb(255 255 255 / .32); border-right: 1px solid var(--mail-line); backdrop-filter: blur(32px) saturate(140%); -webkit-backdrop-filter: blur(32px) saturate(140%); z-index: 20; }
 .dark .mail-sidebar { background: rgb(27 33 44 / .36); }
 .mail-pane-topbar { height: 60px; min-height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--mail-line); }
@@ -329,6 +329,18 @@ html, body {
 .mail-profile-action { display: flex; width: 100%; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; font-size: 12px; }
 .mail-profile-action:hover { background: var(--mail-hover); }
 .mail-profile-action:focus-visible { outline: 2px solid var(--color-primary); }
+.mail-sidebar-accounts { padding: 2px 0 12px; border-bottom: 1px solid var(--mail-line); }
+.mail-sidebar .mail-account-all { min-height: 40px; border: 1px solid transparent; font-size: 12px; font-weight: 500; }
+.mail-sidebar .mail-account-all.is-active { border-color: color-mix(in srgb, var(--color-primary) 18%, transparent); }
+.mail-sidebar .mail-account-choice { border: 1px solid transparent; transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease; }
+.mail-sidebar .mail-account-choice:hover { transform: translateX(1px); }
+.mail-sidebar .mail-account-choice.is-active { border-color: color-mix(in srgb, var(--color-primary) 18%, transparent); }
+.mail-sidebar .mail-account-choice.is-active .mail-account-unread { color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
+@media (max-width: 700px) {
+  .mail-sidebar .mail-account-copy, .mail-sidebar .mail-account-overview, .mail-sidebar .mail-account-heading, .mail-sidebar .mail-account-unread, .mail-sidebar .mail-account-busy, .mail-sidebar .mail-account-guidance { display: none; }
+  .mail-sidebar .mail-account-choice { justify-content: center; padding: 7px 4px; }
+  .mail-sidebar .mail-account-all { justify-content: center; padding: 8px; }
+}
 .mail-panes { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .mail-list-column { width: clamp(320px, 29vw, 390px); flex-shrink: 0; border-right: 1px solid var(--mail-line); }
 .mail-list-surface { background: rgb(255 255 255 / .28); backdrop-filter: blur(24px) saturate(125%); -webkit-backdrop-filter: blur(24px) saturate(125%); }
@@ -495,4 +507,12 @@ html, body {
   .mail-reading-toolbar .mail-toolbar-action { width: 28px; height: 28px; }
   .mail-reading-toolbar > div:last-child { gap: 0; }
   .mail-reading-toolbar > div:last-child > span[aria-hidden="true"] { margin-left: 4px; margin-right: 4px; }
+}
+
+.mail-sidebar-footer { display: flex; align-items: center; gap: 4px; }
+.mail-sidebar-footer .mail-footer-settings { gap: 8px; min-height: 34px; padding: 8px; font-size: 12px; }
+.mail-sidebar-footer .mail-icon-button { width: 32px; height: 32px; }
+@media (max-width: 700px) {
+  .mail-sidebar-footer { flex-direction: column; gap: 6px; }
+  .mail-sidebar-footer > :first-child { flex: none; width: 100%; }
 }

@@ -24,6 +24,7 @@ interface AuthContextType {
     switchAccount: (id: string, openInbox?: boolean) => Promise<void>;
     refreshAccounts: () => Promise<void>;
     isAccountCurrent: (id: string, epoch?: number) => boolean;
+    accountSnapshot: () => {id:string;epoch:number}|null;
     registerAccountGuard: (guard: () => Promise<void>) => () => void;
     loading: boolean;
     appLockStatus: "checking" | "locked" | "unlocked" | "error";
@@ -94,6 +95,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const expiredNotices = useRef(new Set<string>());
     const router = useRouter();
     const isAccountCurrent = useCallback((id: string, epoch?: number) => active.current?.id === id && (epoch === undefined || epoch === activeEpoch.current), []);
+    const accountSnapshot = useCallback(() => active.current ? {id:active.current.id,epoch:activeEpoch.current} : null, []);
     const registerAccountGuard = useCallback((guard: () => Promise<void>) => {
         guards.current.add(guard);
         return () => { guards.current.delete(guard); };
@@ -234,7 +236,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const setMailboxLoading = useCallback((value: boolean) => { if (owner && isAccountCurrent(owner, accountEpoch)) setMailboxLoadingState(value); }, [owner, accountEpoch, isAccountCurrent]);
     const setMailboxConnected = useCallback((value: boolean) => { if (owner && isAccountCurrent(owner, accountEpoch)) setMailboxConnectedState(value); }, [owner, accountEpoch, isAccountCurrent]);
     const setBootstrappingInbox = useCallback((value: boolean) => { if (owner && isAccountCurrent(owner, accountEpoch)) setBootstrappingState(value); }, [owner, accountEpoch, isAccountCurrent]);
-    return <AuthContext.Provider value={{ user, accounts, accountBusy, accountEpoch, switchAccount, refreshAccounts, isAccountCurrent, registerAccountGuard,
+    return <AuthContext.Provider value={{ user, accounts, accountBusy, accountEpoch, switchAccount, refreshAccounts, isAccountCurrent, accountSnapshot, registerAccountGuard,
         loading, appLockStatus, appLockError, retryAppUnlock, mailboxLoading, setMailboxLoading, mailboxConnected, setMailboxConnected,
         isBootstrappingInbox, setBootstrappingInbox, needsRefresh, isAuthenticated: Boolean(user), loginWithGoogle, addGoogleAccount, updateDisplayName, logout }}>
         {children}

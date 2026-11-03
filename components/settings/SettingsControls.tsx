@@ -50,11 +50,11 @@ export function SettingSelect({ label, value, options, onChange, disabled = fals
     return <>
         <button ref={trigger} type="button" aria-label={label} aria-haspopup="listbox" aria-expanded={!!position} aria-controls={position ? id : undefined} disabled={disabled}
             onClick={() => position ? close() : show()} onKeyDown={event => { if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { event.preventDefault(); show(event.key === 'End'); } }}
-            className={`settings-input inline-flex max-w-full ${compact ? 'min-w-16' : 'min-w-40'} items-center justify-between gap-3 text-left text-xs hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40 disabled:cursor-not-allowed`}>
-            <span className="truncate">{options.find(([key]) => key === value)?.[1] || value}</span><ChevronDown size={14} className={`shrink-0 text-muted-foreground transition-transform ${position ? 'rotate-180' : ''}`} />
+            className={`settings-input inline-flex min-w-0 max-w-full ${compact ? 'min-w-16' : 'min-w-40'} items-center justify-between gap-3 text-left text-xs hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40 disabled:cursor-not-allowed`}>
+            <span className="min-w-0 truncate">{options.find(([key]) => key === value)?.[1] || value}</span><ChevronDown size={14} className={`shrink-0 text-muted-foreground transition-transform ${position ? 'rotate-180' : ''}`} />
         </button>
         {position && createPortal(<div ref={menu} id={id} role="listbox" aria-label={label} tabIndex={-1} aria-activedescendant={`${id}-${active}`} style={position}
-            className="z-[60] overflow-y-auto overscroll-contain rounded-xl border border-black/10 bg-white p-1 text-foreground shadow-xl outline-none dark:border-white/10 dark:bg-[#202024]"
+            className="z-[60] overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl border border-black/10 bg-white p-1 text-foreground shadow-xl outline-none dark:border-white/10 dark:bg-[#202024]"
             onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) close(); }}
             onKeyDown={event => {
                 event.stopPropagation();

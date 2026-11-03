@@ -31,6 +31,7 @@ import { useSync } from '@/components/SyncContext';
 import { useAuth } from '@/components/AuthContext';
 import {takeCompose} from '@/lib/compose-handoff';
 import LogoSpinner from '@/components/LogoSpinner';
+import {useMailboxView,useMailboxNavigation} from './MailboxViewContext';
 import Sidebar from '@/components/Sidebar';
 import EmailList from '@/components/EmailList';
 import ConversationReader from '@/components/ConversationReader';
@@ -58,11 +59,13 @@ interface LocalLocationChoice { accountId: string; email: Email; desired: 'inbox
 
 export default function MainLayout() {
     const invoke = useAccountInvoke();
+    const view=useMailboxView();
     const { user, accountBusy, switchAccount } = useAuth();
+    const requestedFolder=view.navigation&&view.navigation.owner===user?.id?view.navigation.folder:view.folder;
     const formatEmailFromMessage = useCallback((message: NativeMessageHeader) => formatNativeEmail(message, user?.id), [user?.id]);
     const pathname=usePathname();
     const snoozes=useSnoozedMail(user?.id);
-    const [showSnoozed,setShowSnoozed]=useState(false);
+    const [showSnoozed,setShowSnoozed]=useState(requestedFolder==='snoozed');
     const [snoozeSearch,setSnoozeSearch]=useState('');
     const [snoozeTarget,setSnoozeTarget]=useState<Email|null>(null);
     const replyBusy=useRef(false);
@@ -124,8 +127,13 @@ export default function MainLayout() {
     const [deletingTag, setDeletingTag] = useState<Tag | null>(null);
 
     // --- New State for Folders & Stars ---
-    const [currentFolder, setCurrentFolder] = useState<string>(preferences.defaultFolder);
-    const currentFolderRef = useRef<string>(preferences.defaultFolder); // Live reference to avoid stale closures in event listeners
+    const initialFolder=requestedFolder==='snoozed'?'inbox':requestedFolder||preferences.defaultFolder;
+    const [currentFolder, setCurrentFolder] = useState<string>(initialFolder);
+    const currentFolderRef = useRef<string>(initialFolder); // Live reference to avoid stale closures in event listeners
+    useMailboxNavigation(folder=>{
+        setSelectedEmailId(null);setShowSnoozed(folder==='snoozed');setSnoozeSearch('');
+        setCurrentFolder(folder==='snoozed'?'inbox':folder);
+    });
     const [emails, setEmails] = useState<Email[]>([]);
     const [pendingTagAdds, setPendingTagAdds] = useState<Record<string, { accountId: string; email: Email; tags: string[]; removed: string[] }>>({});
     const tagRequests = useRef(new Set<string>());
@@ -779,9 +787,11 @@ export default function MainLayout() {
     const refreshFromEffect = useEffectEvent((folder?: string) => refreshNewEmails(folder));
     useActiveFolderRefresh(!isBootstrapping && !preferences.syncPaused && currentFolder === 'trash', `${user?.id}:${currentFolder}`, () => handleSync(true, 'trash'));
 
+    const lastSyncTrigger=useRef(syncTriggerCount);
     useEffect(() => {
         let active = true;
-        if (syncTriggerCount > 0) {
+        const changed=lastSyncTrigger.current!==syncTriggerCount;lastSyncTrigger.current=syncTriggerCount;
+        if (changed && syncTriggerCount > 0) {
             // Start external sync after the subscription effect has committed.
             queueMicrotask(() => { if (active) syncFromEffect(false); });
         }

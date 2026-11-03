@@ -282,6 +282,8 @@ pub fn run() {
       get_sync_diagnostics,
       get_account_health,
       get_account_unread_counts,
+      mail::unified::get_unified_inbox,
+      mail::unified::sync_unified_inbox,
       get_app_settings,
       set_app_settings,
       was_launched_minimized,

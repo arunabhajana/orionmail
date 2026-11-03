@@ -18,6 +18,7 @@ import { Tag } from '@/lib/types';
 import { useAppPreferences } from './AppPreferencesContext';
 import { listen } from '@tauri-apps/api/event';
 import {useVisibleMailLabels} from '@/hooks/useVisibleMailLabels';
+import {useAccountIdentities} from './accounts/AccountIdentityControls';
 import {useAuth} from './AuthContext';
 import {pinnedFirst} from '@/lib/mail-pins';
 import {groupConversations} from '@/lib/conversations';
@@ -27,6 +28,11 @@ import {groupConversations} from '@/lib/conversations';
 // --- Types ---
 
 interface EmailListProps {
+    unified?:boolean;
+    filter?:FilterType;
+    onFilterChange?:(filter:FilterType)=>void;
+    tagsByAccount?:Record<string,Record<string,Tag>>;
+    onManageTags?:(id:string)=>void;
     statusBanner?: React.ReactNode;
     className?: string;
     emails: Email[];
@@ -65,6 +71,7 @@ interface EmailListProps {
 // --- Main Component ---
 
 const EmailList: React.FC<EmailListProps> = ({
+    unified=false,filter:externalFilter,onFilterChange,tagsByAccount,onManageTags,
     statusBanner,
     className,
     emails,
@@ -98,10 +105,14 @@ const EmailList: React.FC<EmailListProps> = ({
     onAddTags
 }) => {
 
+    const identities=useAccountIdentities();
     const invoke = useAccountInvoke();
-    const {user}=useAuth();
-    const { preferences } = useAppPreferences();
-    const [currentFilter, setCurrentFilter] = React.useState<FilterType>('all');
+    const {user,accounts}=useAuth();
+    const { preferences:accountPreferences,devicePreferences,overrides } = useAppPreferences();
+    const preferences=unified ? devicePreferences||accountPreferences : accountPreferences;
+    const [localFilter,setLocalFilter]=React.useState<FilterType>('all');
+    const currentFilter=externalFilter??localFilter;
+    const setCurrentFilter=(value:FilterType)=>{setLocalFilter(value);onFilterChange?.(value);};
     const [allTags, setAllTags] = React.useState<Record<string, import('@/lib/types').Tag>>({});
     const [contextMenuState, setContextMenuState] = React.useState<EmailContextMenuState | null>(null);
     const [tagPickerEmail, setTagPickerEmail] = React.useState<Email | null>(null);
@@ -118,16 +129,17 @@ const EmailList: React.FC<EmailListProps> = ({
 
 
     React.useEffect(() => {
+        if(unified)return;
         let active = true;
         let stop: (() => void) | undefined;
         const refresh = () => { void invoke<Tag[]>('get_all_tags').then(tags => { if (active) setAllTags(Object.fromEntries(tags.map(tag => [tag.id, tag]))); }).catch(console.error); };
         refresh();
         void listen<string>('mail:tags_updated', event => { if (event.payload === user?.id) refresh(); }).then(unlisten => { if (active) stop = unlisten; else unlisten(); }).catch(console.error);
         return () => { active = false; stop?.(); };
-    }, [invoke, user?.id]);
+    }, [invoke, user?.id, unified]);
 
     const displayedEmails = React.useMemo(() => {
-        const rows=preferences.conversationView ? groupConversations(emails) : emails;
+        const rows=unified ? [...new Set(emails.map(email=>email.accountId))].flatMap(owner=>{const owned=emails.filter(email=>email.accountId===owner);return (owner ? overrides?.[owner]?.conversationView : undefined)??devicePreferences?.conversationView??true ? groupConversations(owned) : owned;}) : preferences.conversationView ? groupConversations(emails) : emails;
         const grouped=currentFolder==='snoozed'?[...rows].sort((a,b)=>(a.snoozedUntil||Infinity)-(b.snoozedUntil||Infinity)):pinnedFirst(rows);
         const unread = new Set(emails.filter(item=>item.unread).map(item=>item.id));
         const starred = new Set(emails.filter(item=>item.starred).map(item=>item.id));
@@ -136,7 +148,7 @@ const EmailList: React.FC<EmailListProps> = ({
             case 'flagged': return grouped.filter(e => (e.conversationIds || [e.id]).some(id=>starred.has(id)));
             default: return grouped;
         }
-    }, [emails, currentFilter, preferences.conversationView, currentFolder]);
+    }, [emails, currentFilter, preferences.conversationView, currentFolder, unified,overrides,devicePreferences?.conversationView]);
 
     const getItemKey = React.useCallback((index: number) => displayedEmails[index]?.id || index, [displayedEmails]);
     const { parentRef, rowVirtualizer, virtualItems } = useVirtualEmailList({
@@ -152,21 +164,21 @@ const EmailList: React.FC<EmailListProps> = ({
     const viewportEnd = viewportStart + (rowVirtualizer.scrollRect?.height ?? 600);
     const visibleRows = virtualItems.filter(item => item.end >= viewportStart && item.start <= viewportEnd);
     const visibleEmails=visibleRows.map(item=>displayedEmails[item.index]).filter((email):email is Email=>Boolean(email));
-    useVisibleMailLabels(user?.id,visibleEmails,!preferences.syncPaused);
+    useVisibleMailLabels(user?.id,visibleEmails.filter(email=>!email.accountId||email.accountId===user?.id),!accountPreferences.syncPaused);
 
     React.useEffect(() => { rowVirtualizer.measure(); }, [preferences.density, preferences.previewLines, preferences.showAvatars, rowVirtualizer]);
 
-    const folderDisplayName = currentFolder?.startsWith('tag:')
+    const folderDisplayName = unified ? 'All inboxes' : currentFolder?.startsWith('tag:')
         ? allTags[currentFolder.slice(4)]?.name || 'Tag'
         : currentFolder ? currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1) : 'Mailbox';
 
     const prefetchRequests = visibleRows
-        .slice(0, 12).map(item => displayedEmails[item.index]).filter(Boolean)
+        .map(item => displayedEmails[item.index]).filter(email=>Boolean(email)&&(!email.accountId||email.accountId===user?.id)).slice(0,12)
         .map(email => ({ account_id: user?.id, folder: email.folder, uid: email.uid, uid_validity: email.uidValidity }));
     const prefetchSignature = JSON.stringify(prefetchRequests);
     const lastPrefetch = React.useRef('');
     React.useEffect(() => {
-        if (!preferences.prefetchBodies || preferences.syncPaused || !user?.id || prefetchSignature === '[]') return;
+        if (!accountPreferences.prefetchBodies || accountPreferences.syncPaused || !user?.id || prefetchSignature === '[]') return;
         const key = `${user.id}:${prefetchSignature}`;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const schedule = () => {
@@ -200,7 +212,7 @@ const EmailList: React.FC<EmailListProps> = ({
             document.removeEventListener('visibilitychange', visibility);
             window.removeEventListener('online', online);
         };
-    }, [prefetchSignature, user?.id, preferences.prefetchBodies, preferences.syncPaused, invoke]);
+    }, [prefetchSignature, user?.id, accountPreferences.prefetchBodies, accountPreferences.syncPaused, invoke]);
 
     const pullDistance = React.useRef(0);
     const touchStart = React.useRef(0);
@@ -248,7 +260,7 @@ const EmailList: React.FC<EmailListProps> = ({
         >
             <div className="shrink-0">
                 <div className="mail-pane-topbar"><div className="min-w-0"><h1 className="truncate text-sm font-semibold" title={folderDisplayName}>{folderDisplayName || 'Mailbox'}</h1></div><div className="flex shrink-0 items-center gap-2"><span aria-live="polite" className="text-[10px] tabular-nums text-muted-foreground">{searchQuery ? `${emails.length} found` : `${emails.length} loaded`}</span><button type="button" onClick={() => onSync?.()} disabled={isSyncing || !onSync} aria-label={isSyncing ? 'Syncing mail' : 'Sync mailbox'} title={isSyncing ? 'Syncing mail' : 'Sync mailbox'} className="mail-icon-button"><RefreshCw className={cn('size-4', isSyncing && 'animate-spin text-primary')} /></button></div></div>
-                <div className="space-y-3 px-3 pb-3 pt-3"><SearchBar value={searchQuery} onChange={onSearchQueryChange} onClear={onSearchClear} searchProgress={searchProgress} /><FilterTabs currentFilter={currentFilter} onFilterChange={setCurrentFilter} /></div>
+                <div className="space-y-3 px-3 pb-3 pt-3"><SearchBar placeholder={unified?'Search downloaded inbox mail…':undefined} value={searchQuery} onChange={onSearchQueryChange} onClear={onSearchClear} searchProgress={searchProgress} /><FilterTabs currentFilter={currentFilter} onFilterChange={setCurrentFilter} /></div>
             </div>
             {statusBanner}
             {pendingMessages.length > 0 && currentFilter === 'all' && !searchQuery && <div role="status" aria-label="Outgoing messages" className="max-h-40 shrink-0 overflow-y-auto border-y border-black/[0.04] px-2 py-1 custom-scrollbar dark:border-white/[0.05]">{pendingMessages.map(message => <PendingEmailListItem key={message.id} pending={message} />)}</div>}
@@ -403,7 +415,10 @@ const EmailList: React.FC<EmailListProps> = ({
                                         onSelect={selectItem}
                                         onToggleStar={starItem}
                                         onContextMenu={itemContextMenu}
-                                        allTags={allTags}
+                                        allTags={unified ? tagsByAccount?.[email.accountId||'']||{} : allTags}
+                                        listPreferences={unified?preferences:undefined}
+                                        accountLabel={unified ? accounts.find(account=>account.id===email.accountId)?.email : undefined}
+                                        accountColor={unified ? identities.accounts?.[email.accountId||'']?.color : undefined}
                                     />
                                 </div>
                             );
@@ -440,7 +455,7 @@ const EmailList: React.FC<EmailListProps> = ({
                 isTrash={currentFolder === 'trash'}
                 onDelete={onDeleteMessage}
                 onRestore={onRestoreMessage}
-                onAddTags={currentFolder !== 'trash' && onAddTags && !emails.find(email => email.id === contextMenuState?.emailId)?.tagsPending ? id => setTagPickerEmail(emails.find(email => email.id === id) || null) : undefined}
+                onAddTags={currentFolder !== 'trash' && (onManageTags||onAddTags) && !emails.find(email => email.id === contextMenuState?.emailId)?.tagsPending ? id => onManageTags ? onManageTags(id) : setTagPickerEmail(emails.find(email => email.id === id) || null) : undefined}
             />
             {tagPickerEmail && onAddTags && <MessageTagPicker email={tagPickerEmail} tags={Object.values(allTags)} onApply={onAddTags} onClose={() => setTagPickerEmail(null)} />}
         </main>

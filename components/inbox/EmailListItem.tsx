@@ -6,9 +6,12 @@ import { cn } from '@/lib/utils';
 import { Email, Tag } from '@/lib/types';
 import { mailInitials, contactFromHeader, splitHeaderAddresses } from '@/lib/mail-display';
 import {replyPreview} from '@/lib/reply-display';
+import type {AppPreferences} from '@/lib/app-preferences';
 import { useAppPreferences } from '../AppPreferencesContext';
 
-export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, onContextMenu, allTags = {} }: {
+export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, onContextMenu, allTags = {}, accountLabel,accountColor,listPreferences }: {
+    listPreferences?:AppPreferences;
+    accountLabel?:string; accountColor?:string;
     email: Email;
     isSelected: boolean;
     onSelect?: (id: string) => void;
@@ -20,7 +23,8 @@ export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, 
 }) => {
     const unread = email.conversationUnread ?? email.unread;
     const conversationCount = email.conversationCount || 0;
-    const { preferences } = useAppPreferences();
+    const {preferences:accountPreferences}=useAppPreferences();
+    const preferences=listPreferences||accountPreferences;
     const sent = (email.displayFolder || email.folder) === 'sent';
     const sender = sent && email.to ? splitHeaderAddresses(email.to).map(value => contactFromHeader(value).name).join(", ") : contactFromHeader(email.sender).name;
     const tags = email.tags.map(id => allTags[id]).filter(tag => tag && tag.tag_type !== 'system');
@@ -30,7 +34,7 @@ export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, 
         : email.time;
 
     return <article onContextMenu={event => onContextMenu?.(event, email.id)} className={cn('mail-message-card group', isSelected && 'is-selected', unread && 'is-unread')} data-density={preferences.density}>
-        <button type="button" onClick={() => onSelect?.(email.id)} className="mail-message-hit" aria-label={`${email.pinned?'Pinned, ':''}${unread ? 'Unread: ' : ''}${sender}, ${email.subject}${conversationCount>1?`, conversation with ${conversationCount} messages`:''}`} aria-current={isSelected ? 'true' : undefined} />
+        <button type="button" onClick={() => onSelect?.(email.id)} className="mail-message-hit" aria-label={`${email.pinned?'Pinned, ':''}${unread ? 'Unread: ' : ''}${sender}, ${email.subject}${accountLabel?`, in ${accountLabel}`:''}${conversationCount>1?`, conversation with ${conversationCount} messages`:''}`} aria-current={isSelected ? 'true' : undefined} />
         <div className="pointer-events-none relative flex min-w-0 gap-3">
             {preferences.showAvatars && <span aria-hidden="true" className="mail-sender-avatar">{mailInitials(sender)}</span>}
             <div className="min-w-0 flex-1">
@@ -46,6 +50,7 @@ export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, 
                     {conversationCount>1&&<span title={`Conversation with ${conversationCount} messages`} className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary/[0.08] px-2 py-1 text-[10px] font-medium leading-none text-primary"><MessagesSquare aria-hidden="true" className="size-3"/><span>{conversationCount} messages</span></span>}
                 </div>
                 {preferences.previewLines !== '0' && <p className={cn('mt-1 text-xs leading-[1.65] text-muted-foreground', preferences.previewLines === '1' ? 'line-clamp-1' : 'line-clamp-2')}>{replyPreview(email.preview) || 'No preview available'}</p>}
+                {accountLabel&&<p className="mt-2 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground" title={accountLabel}><span className="size-1.5 shrink-0 rounded-full" style={{backgroundColor:accountColor||'#3b82f6'}}/><span className="truncate">{accountLabel}</span></p>}
                 {email.snoozedUntil&&<p className="mt-2 text-[10px] font-medium text-primary">Snoozed until {new Date(email.snoozedUntil*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</p>}
                 {(tags.length > 0 || email.attachments.length > 0) && <div className="mt-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden">
 

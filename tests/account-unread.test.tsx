@@ -17,3 +17,8 @@ it('excludes disconnected accounts and represents failed counts as unknown',asyn
  await waitFor(()=>expect(result.current.total).toBe(5));native.accounts=[{id:'a'}];rerender();expect(result.current.total).toBe(2);
  native.invoke.mockRejectedValue(new Error('Unavailable'));act(()=>native.events.get('mail:updated')?.());await waitFor(()=>expect(result.current.total).toBeNull());expect(result.current.counts).toEqual({});
 });
+it('does no sidebar work while disabled and ignores old event callbacks after teardown',async()=>{
+ native.invoke.mockResolvedValue({a:2,b:3});const {result,rerender}=renderHook(({enabled})=>useAccountUnreadOverview(enabled),{initialProps:{enabled:false}});
+ await new Promise(resolve=>setTimeout(resolve,250));expect(native.invoke).not.toHaveBeenCalled();rerender({enabled:true});await waitFor(()=>expect(result.current.total).toBe(5));
+ const notify=native.events.get('mail:updated');rerender({enabled:false});act(()=>notify?.());await new Promise(resolve=>setTimeout(resolve,250));expect(native.invoke).toHaveBeenCalledOnce();
+});

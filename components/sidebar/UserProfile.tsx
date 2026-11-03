@@ -1,22 +1,24 @@
 "use client";
 import React, { memo, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { ChevronUp, LogOut, Settings, Plus } from 'lucide-react';
+import { ChevronUp, LogOut, Settings, Plus, Layers } from 'lucide-react';
 import { MAX_CONNECTED_ACCOUNTS, ACCOUNT_LIMIT_MESSAGE } from '@/lib/account-policy';
 import { AccountList } from '@/components/accounts/AccountList';
+import {useMailboxView} from '../MailboxViewContext';
 import {SidebarHint} from './SidebarHint';
 import Link from 'next/link';
 import { useAuth } from '@/components/AuthContext';
 import { mailInitials } from '@/lib/mail-display';
 import { toast } from 'sonner';
 export const UserProfile = memo(() => {
+    const view=useMailboxView();
     const { user, accounts, accountBusy, loading, logout, addGoogleAccount } = useAuth();
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
     const trigger = useRef<HTMLButtonElement>(null);
     useEffect(() => {
         if (!open) return;
-        ref.current?.querySelector<HTMLElement>("[data-profile-popover] button[aria-current='true']")?.focus();
+        ref.current?.querySelector<HTMLElement>("[data-profile-popover] button:is([aria-current='true'],[aria-current='page'])")?.focus();
         const outside = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
         const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); } };
         document.addEventListener('pointerdown', outside);
@@ -35,9 +37,9 @@ export const UserProfile = memo(() => {
             <SidebarHint label="Settings" className="w-full"><Link href="/settings" onClick={() => setOpen(false)} className="mail-profile-action"><Settings className="size-4" />Settings</Link></SidebarHint>
             <SidebarHint label="Sign out of this account" className="w-full"><button type="button" disabled={accountBusy} className="mail-profile-action !text-red-500" onClick={() => { setOpen(false); void logout(user.id).catch(error => toast.error('Could not sign out', { description: String(error) })); }}><LogOut className="size-4" />Sign out of this account</button></SidebarHint>
         </div>}
-        <SidebarHint label={`Accounts · ${user.email}`} className="w-full"><button ref={trigger} type="button" aria-expanded={open} aria-label={`Account: ${user.name || user.email}`} onClick={() => setOpen(value => !value)} className="mail-profile-trigger" title={user.email}>
-            {user.picture ? <Image src={user.picture} alt="" width={32} height={32} unoptimized referrerPolicy="no-referrer" className="size-8 shrink-0 rounded-full object-cover" /> : <span className="mail-sender-avatar !size-8 !text-[10px]">{mailInitials(user.name || user.email)}</span>}
-            <span className="mail-profile-copy min-w-0 flex-1 text-left"><span className="block truncate text-xs font-medium">{user.name || 'Your account'}</span><span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{user.email}</span></span><ChevronUp className="mail-profile-copy size-3.5 shrink-0 text-muted-foreground" />
+        <SidebarHint label={view.unified?'All inboxes · choose a mailbox':`Accounts · ${user.email}`} className="w-full"><button ref={trigger} type="button" aria-expanded={open} aria-label={view.unified?'All inboxes, choose a mailbox':`Account: ${user.name || user.email}`} onClick={() => setOpen(value => !value)} className="mail-profile-trigger" title={user.email}>
+            {view.unified ? <span className="mail-sender-avatar !size-8"><Layers className="size-4"/></span> : user.picture ? <Image src={user.picture} alt="" width={32} height={32} unoptimized referrerPolicy="no-referrer" className="size-8 shrink-0 rounded-full object-cover" /> : <span className="mail-sender-avatar !size-8 !text-[10px]">{mailInitials(user.name || user.email)}</span>}
+            <span className="mail-profile-copy min-w-0 flex-1 text-left"><span className="block truncate text-xs font-medium">{view.unified?'All inboxes':user.name || 'Your account'}</span><span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{view.unified?`${accounts.length} connected accounts`:user.email}</span></span><ChevronUp className="mail-profile-copy size-3.5 shrink-0 text-muted-foreground" />
         </button></SidebarHint>
     </div>;
 });

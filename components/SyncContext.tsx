@@ -16,24 +16,25 @@ interface SyncContextType {
 
 const SyncContext = createContext<SyncContextType | undefined>(undefined);
 
-function useAccountState<T>(owner: string, initial: T): [T, Dispatch<SetStateAction<T>>] {
+function useAccountState<T>(owner: string, initial: T, transient=false): [T, Dispatch<SetStateAction<T>>] {
     const { accountEpoch, isAccountCurrent } = useAuth();
+    const key=transient?`${owner}:${accountEpoch}`:owner;
     const [values, setValues] = useState<Record<string, T>>({});
     const set = useCallback((update: SetStateAction<T>) => {
         if (!isAccountCurrent(owner, accountEpoch)) return;
-        setValues(previous => ({ ...previous, [owner]: typeof update === 'function' ? (update as (value: T) => T)(previous[owner] ?? initial) : update }));
-    }, [owner, initial, accountEpoch, isAccountCurrent]);
-    return [values[owner] ?? initial, set];
+        setValues(previous => ({ ...(transient?{}:previous), [key]: typeof update === 'function' ? (update as (value: T) => T)(previous[key] ?? initial) : update }));
+    }, [owner, key, transient, initial, accountEpoch, isAccountCurrent]);
+    return [values[key] ?? initial, set];
 }
 const EMPTY_COUNTS: Record<string, number> = {};
 
 export function SyncProvider({ children }: { children: ReactNode }) {
     const { user } = useAuth();
     const owner = user?.id ?? '';
-    const [isSyncing, setIsSyncing] = useAccountState(owner, false);
-    const [syncMessage, setSyncMessage] = useAccountState<string | null>(owner, null);
+    const [isSyncing, setIsSyncing] = useAccountState(owner, false,true);
+    const [syncMessage, setSyncMessage] = useAccountState<string | null>(owner, null,true);
     const [unreadCounts, setUnreadCounts] = useAccountState(owner, EMPTY_COUNTS);
-    const [syncTriggerCount, setSyncTriggerCount] = useAccountState(owner, 0);
+    const [syncTriggerCount, setSyncTriggerCount] = useAccountState(owner, 0,true);
 
     const triggerSync = useCallback(() => setSyncTriggerCount(c => c + 1), [setSyncTriggerCount]);
 

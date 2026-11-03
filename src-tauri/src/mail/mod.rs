@@ -21,3 +21,5 @@ pub mod search;
 pub mod tags;
 pub mod drafts;
 pub mod trash;
+
+pub mod unified;

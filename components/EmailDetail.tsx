@@ -23,6 +23,7 @@ import {replyDisplay} from '@/lib/reply-display';
 // --- Types ---
 
 interface EmailDetailProps {
+    accountBadge?:{label:string;color?:string};
     conversation?: Email[];
     onSelectConversation?: (id:string)=>void;
     conversationNotice?: string;
@@ -44,7 +45,7 @@ interface EmailDetailProps {
 
 // --- Main Component ---
 
-const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleStar, onDeleteMessage, onRestoreMessage, onMarkAsRead, onToggleRead, onBack, onReply, onReplyAll, onForward, onManageTags, onSnooze, isSnoozed, conversation=[],onSelectConversation,conversationNotice }) => {
+const EmailDetail: React.FC<EmailDetailProps> = ({ accountBadge,className, email, onToggleStar, onDeleteMessage, onRestoreMessage, onMarkAsRead, onToggleRead, onBack, onReply, onReplyAll, onForward, onManageTags, onSnooze, isSnoozed, conversation=[],onSelectConversation,conversationNotice }) => {
 
     const isConversation = conversation.length > 1;
     const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -299,6 +300,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ className, email, onToggleSta
             {/* Content Scroll Area */}
             <div ref={scrollRef} className="mail-reader-scroll min-h-0 flex-1 overflow-y-auto custom-scrollbar">
                     <div key={remoteMessageKey} className="mail-reading-sheet">
+                        {accountBadge&&<p className="mb-4 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground" title={accountBadge.label}><span className="size-2 shrink-0 rounded-full" style={{backgroundColor:accountBadge.color||'#3b82f6'}}/><span className="truncate">{accountBadge.label}</span></p>}
                         <MessageHeader email={email} />
 
                         {conversationNotice&&<p role="status" className="mb-4 text-xs text-muted-foreground">{conversationNotice}</p>}

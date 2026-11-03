@@ -5,6 +5,7 @@ import TitlebarWrapper from "@/components/TitlebarWrapper"; // Wrapper handles c
 import { PersistentInbox } from "@/components/PersistentInbox";
 import { MailtoNavigation } from "@/components/MailtoNavigation";
 import { AuthProvider } from "@/components/AuthContext";
+import {MailboxViewProvider} from "@/components/MailboxViewContext";
 import { SyncProvider } from "@/components/SyncContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AccentColorProvider } from "@/components/AccentColorProvider";
@@ -49,7 +50,7 @@ export default function RootLayout({
             <AuthProvider>
               <BackgroundTasksProvider>
                 <AppPreferencesProvider>
-                  <SyncProvider>
+                  <MailboxViewProvider><SyncProvider>
                     <DownloadProvider>
                       <AppLockGate>
                         <AppContextMenus>
@@ -66,7 +67,7 @@ export default function RootLayout({
                         </AppContextMenus>
                       </AppLockGate>
                     </DownloadProvider>
-                  </SyncProvider>
+                  </SyncProvider></MailboxViewProvider>
                 </AppPreferencesProvider>
               </BackgroundTasksProvider>
             </AuthProvider>

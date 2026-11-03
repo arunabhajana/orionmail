@@ -10,6 +10,10 @@ Implemented inheritable account preferences, identity controls and account healt
 
 Implemented a custom From selector with account-owned draft/attachment copies, reply sender locking, and recoverable activation failures. Added per-account and total unread counts in the account picker plus optional combined taskbar counts. The full gate passes; final additions also pass strict frontend checks and `check:desktop`, including attachment ownership/state regressions. No live mail was sent. See [Account settings](ACCOUNT-SETTINGS.md).
 
+## Unified inbox follow-up
+
+Implemented All inboxes with account markers/filtering, account-owned reading/actions, paged local search, retained Settings navigation, global refresh/tray integration and guarded compose defaults. See [Unified inbox](UNIFIED-INBOX.md). The unified engine passed `npm run check:all`; final frontend follow-ups passed `npm run check` (98 tests) and `npm run build`. Native results are 96 executed tests, strict all-target Clippy and successful Windows executable linking. No live provider messages were sent.
+
 ## Fixes in this pass
 
 - Windows native test startup: `rfd` imports `TaskDialogIndirect`, which requires Common Controls v6. Embed the activation manifest for Windows MSVC test harnesses. The app binary uses Tauri's existing embedded manifest, with linker-generated manifests disabled for that binary to avoid duplicate resource ID 1. Native tests now execute, rather than merely compiling.
@@ -25,16 +29,18 @@ Implemented a custom From selector with account-owned draft/attachment copies, r
 
 | Check | Result |
 | --- | --- |
-| `npm run check:all` | Passed after the final linker refinement: versions/catalog, TypeScript, strict global ESLint, all 78 frontend tests, Cargo check, strict all-target Clippy, all 91 Windows native tests, executable linking and production static export |
+| `npm run check:all` | Passed for unified engine, including native linking and production export; final UI follow-ups also passed `npm run check` and `npm run build` |
 | Node unit tests | 42 passed |
-| Vitest tests | 36 passed, including account settings, sender handoff failure cases and unread overview event updates |
-| Windows native library tests | 91 passed; no ignored tests |
+| Vitest tests | 62 passed, including unified ownership/paging, compose defaults/guards, sidebar layouts and guarded account folder jumps, unread refresh teardown, tag isolation and prefetch policy |
+| Windows native library tests | 96 passed; no ignored tests |
 | `npm ls --depth=0` | Passed; no invalid direct dependency tree |
 | `npm audit --omit=dev` | Zero advisories |
 | `git diff --check` | Passed |
 | `node scripts/tauri.mjs build --debug --no-bundle` | Passed: production static export and Windows executable compilation/linking |
 
 The native test suite includes a loopback OAuth callback test; restricted sandboxes can deny socket creation. Run the suite in a Windows environment that permits local loopback sockets. This is distinct from the manifest failure, which occurred before any tests could start.
+
+The sidebar follow-up passed `npm run check` (104 frontend tests, TypeScript, strict lint and release consistency), `npm run build` and whitespace validation. It changes frontend navigation and presentation only; the 96 native test results above are from the preceding unified-inbox validation, not a new native run.
 
 ## Remaining checks and upstream notices
 

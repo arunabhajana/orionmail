@@ -15,11 +15,12 @@ export interface ContextMenuAction {
     separatorBefore?: boolean;
 }
 
-export function ContextMenu({ position, items, onClose, label = 'Actions' }: {
+export function ContextMenu({ position, items, onClose, label = 'Actions',caption }: {
     position: { x: number; y: number } | null;
     items: ContextMenuAction[];
     onClose: () => void;
     label?: string;
+    caption?:string;
 }) {
     const ref = useRef<HTMLDivElement>(null);
     useLayoutEffect(() => {
@@ -68,6 +69,7 @@ export function ContextMenu({ position, items, onClose, label = 'Actions' }: {
                     buttons[next].focus();
                 }
             }}>
+            {caption&&<p className="truncate border-b border-black/5 px-3 pb-2 pt-1 text-[10px] text-muted-foreground dark:border-white/10">{caption}</p>}
             {items.map(item => <React.Fragment key={item.id}>
                 {item.separatorBefore && <div role="separator" className="h-px bg-black/10 dark:bg-white/10 my-1.5" />}
                 <button type="button" role="menuitem" disabled={item.disabled}
