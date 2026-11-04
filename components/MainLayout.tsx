@@ -12,11 +12,14 @@ import DOMPurify from 'isomorphic-dompurify';
 import { MessageTagPicker } from './inbox/MessageTagPicker';
 import { dedupeMail, sameMail,mailIdentity, reuseUnchangedMail } from '@/lib/mail-identity';
 import { formatNativeEmail } from '@/lib/mail-format';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle,Pencil,RefreshCw } from 'lucide-react';
+import {useMailboxCommands} from './CommandPalette';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import ComposeModal, { type ComposeHandle } from '@/components/ComposeModal';
 import { DraftFolder } from '@/components/inbox/DraftFolder';
+import {OutboxFolder} from '@/components/inbox/OutboxFolder';
+import {OfflineStatus} from '@/components/inbox/OfflineStatus';
 import { useTrashOperations } from '@/hooks/useTrashOperations';
 import type { PendingTrashAction } from '@/lib/trash';
 import { useActiveFolderRefresh } from '@/hooks/useActiveFolderRefresh';
@@ -29,6 +32,7 @@ import { waitForInitialMail } from '@/lib/initial-sync';
 import { createEventScope } from '@/lib/event-scope';
 import { useSync } from '@/components/SyncContext';
 import {isAccountRequestCancelled} from '@/lib/account-client';
+import {beginUnreadChange,hasPendingUnread,unreadRevision} from '@/lib/unread-changes';
 import { useAuth } from '@/components/AuthContext';
 import {takeCompose} from '@/lib/compose-handoff';
 import LogoSpinner from '@/components/LogoSpinner';
@@ -44,6 +48,7 @@ import { DeleteTagModal } from '@/components/tags/DeleteTagModal';
 import { toast } from 'sonner';
 import { useAppPreferences } from './AppPreferencesContext';
 interface FolderSearchState {
+    localHasMore?:boolean;
     searchQuery: string;
     activeSearchId: string | null;
     searchProgress: SearchProgressData | null;
@@ -261,6 +266,7 @@ export default function MainLayout() {
         const filteredEmails = dedupeMail([...candidates.values()].map(overlayTags).map(email=>({...email,pinned:currentFolder!=='trash'&&pinIds.has(pinIdentity(email)),snoozedUntil:snoozeIds.get(snoozeKey(email)),resurfacedAt:returnedTimes.get(mailIdentity(email))})).filter(email => {
             const folder = email.displayFolder || email.folder;
             if(showSnoozed)return folder!=='trash'&&snoozeIds.has(snoozeKey(email));
+            if(activeSearchState.searchQuery)return true;
             if(currentFolder==='inbox'&&snoozeIds.has(snoozeKey(email)))return false;
             if (currentFolder === 'starred') return folder !== 'trash' && email.starred;
             if (currentFolder.startsWith('tag:')) return folder !== 'trash' && email.tags.includes(currentFolder.slice(4));
@@ -290,8 +296,9 @@ export default function MainLayout() {
                 do {
                     work.again = false;
                     const accountId = activeAccountRef.current;
+                    const revision=unreadRevision();
                     const counts = await invoke<Record<string, number>>('get_unread_counts');
-                    if (accountId !== activeAccountRef.current) continue;
+                    if (accountId !== activeAccountRef.current||revision!==unreadRevision()||hasPendingUnread(accountId??undefined)) continue;
                     setUnreadCounts(previous => {
                         const keys = Object.keys(counts);
                         return keys.length === Object.keys(previous).length
@@ -310,8 +317,9 @@ export default function MainLayout() {
     const updateUnreadCount = (email: Email, delta: number) => {
         setUnreadCounts(prev => {
             const newCounts = { ...prev };
-            const folderId = email.folder.toLowerCase();
-            newCounts[folderId] = Math.max(0, (newCounts[folderId] || 0) + delta);
+            const folders=new Set([email.folder.toLowerCase(),...visibleEmails.filter(row=>sameMail(row,email)).map(row=>row.folder.toLowerCase()),...email.tags.map(tag=>`tag:${tag}`.toLowerCase())]);
+            if(email.tags.includes('INBOX'))folders.add('inbox');
+            for(const folderId of folders)if(folderId!=='starred')newCounts[folderId] = Math.max(0, (newCounts[folderId] || 0) + delta);
             if (email.starred) {
                 newCounts['starred'] = Math.max(0, (newCounts['starred'] || 0) + delta);
             }
@@ -450,6 +458,9 @@ export default function MainLayout() {
         if (!target) return;
 
         const newReadState = Boolean(target.unread);
+        const finishUnread=beginUnreadChange(user?.id??'',target,!newReadState);
+        if(!finishUnread)return;
+        let accepted=false;
         const edit=beginFlagEdit(target,'unread',!newReadState);
 
         // Optimistic Update
@@ -462,22 +473,25 @@ export default function MainLayout() {
         try {
             const folderName = target.folder || "inbox";
             const receipt=await invoke<PendingTrashAction | null>('toggle_read', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, shouldRead: newReadState, folder: folderName, localId: target.locationId });
+            accepted=true;
             if(receipt && activeAccountRef.current===user?.id) acceptLocation(receipt);
             if(edit.current())patchMessage(target,{unread:!newReadState});
-            fetchUnreadCounts();
         } catch (err) {
             if(isAccountRequestCancelled(err)||!edit.current())return;
             console.error("Failed to toggle read", err);
             toast.error("Couldn't update read status", { description: String(err) });
             // Rollback
             patchMessage(target,{unread:target.unread});
-            fetchUnreadCounts();
-        }finally{edit.finish();}
+            updateUnreadCount(target,newReadState?1:-1);
+        }finally{finishUnread(accepted);edit.finish();void fetchUnreadCounts();}
     };
 
     const markAsRead = async (emailId: string) => {
         const target = (conversationTargetRef.current?.id === emailId ? conversationTargetRef.current : undefined) || filteredEmails.find(e => e.id === emailId);
         if (!target || !target.unread) return;
+        const finishUnread=beginUnreadChange(user?.id??'',target,false);
+        if(!finishUnread)return;
+        let accepted=false;
         const edit=beginFlagEdit(target,'unread',false);
 
         // Optimistic Update
@@ -490,16 +504,17 @@ export default function MainLayout() {
         try {
             const folderName = target.folder || "inbox";
             const receipt=await invoke<PendingTrashAction | null>('mark_as_read', { accountId:user?.id,expectedUidValidity:target.uidValidity??0,uid: target.uid, folder: folderName, localId: target.locationId });
+            accepted=true;
             if(receipt && activeAccountRef.current===user?.id) acceptLocation(receipt);
             if(edit.current())patchMessage(target,{unread:false});
-            fetchUnreadCounts();
         } catch (err) {
             if(isAccountRequestCancelled(err)||!edit.current())return;
             console.error("Failed to mark as read", err);
             toast.error("Couldn't mark message as read", { description: String(err) });
             // Rollback
             patchMessage(target,{unread:target.unread});
-        }finally{edit.finish();}
+            updateUnreadCount(target,1);
+        }finally{finishUnread(accepted);edit.finish();void fetchUnreadCounts();}
     };
 
     const deleteMessage = async (emailId: string) => {
@@ -568,7 +583,7 @@ export default function MainLayout() {
     };
     const fetchCache = async (folderToFetch = currentFolderRef.current) => {
         const revision = cacheRevisionRef.current;
-        if (folderToFetch === "drafts") {
+        if (['drafts','outbox'].includes(folderToFetch)) {
             setEmails([]);
             setHasMore(false);
             return false;
@@ -642,7 +657,7 @@ export default function MainLayout() {
 
     const refreshNewEmails = async (folderToFetch = currentFolderRef.current) => {
         const revision = cacheRevisionRef.current;
-        if (folderToFetch === "drafts") return;
+        if (['drafts','outbox'].includes(folderToFetch)) return;
 
         try {
             const cached: NativeMessageHeader[] = await invoke('get_folder_messages', { folder: folderToFetch, beforeUid: null, limit: 50 });
@@ -684,7 +699,7 @@ export default function MainLayout() {
     const loadMoreEmails = async () => {
         const revision = cacheRevisionRef.current;
         const currentEmails = emailsRef.current;
-        if (isLoadingMore || !hasMore || currentEmails.length === 0 || currentFolder === "drafts") return;
+        if (isLoadingMore || !hasMore || currentEmails.length === 0 || ['drafts','outbox'].includes(currentFolder)) return;
         setIsLoadingMore(true);
         try {
             const lastEmail = currentEmails[currentEmails.length - 1];
@@ -748,6 +763,7 @@ export default function MainLayout() {
         // Read currentFolder from ref to avoid stale closure issues
         const folderAtSyncTime = currentFolderRef.current;
         const targetFolder = requestedFolder ?? folderAtSyncTime;
+        if(targetFolder==='outbox'||!navigator.onLine)return Promise.resolve();
         if (targetFolder === 'drafts') return invoke('sync_drafts', { accountId: activeAccountRef.current }).then(() => {}).catch(error => { if (!isBackground) toast.error(String(error)); });
         if (!requestedFolder && isSyncing) return Promise.resolve();
         setIsSyncing(true);
@@ -855,7 +871,7 @@ export default function MainLayout() {
         const later = (work: () => void, ms: number) => { const timer = setTimeout(() => { timers.delete(timer); if (!controller.signal.aborted) work(); }, ms); timers.add(timer); };
         const loadCache = async () => {
             // Dedicated/placeholder views do not participate in IMAP bootstrap.
-            if (currentFolderRef.current === 'drafts') {
+            if (['drafts','outbox'].includes(currentFolderRef.current)) {
                 setIsBootstrapping(false);
                 return;
             }
@@ -869,7 +885,7 @@ export default function MainLayout() {
                 later(() => setSyncMessage(null), 2500);
             }
 
-            if (!hasCache && !preferencesRef.current.syncPaused && currentFolderRef.current === 'inbox') {
+            if (!hasCache && navigator.onLine && !preferencesRef.current.syncPaused && currentFolderRef.current === 'inbox') {
                 const localCache = await invoke<{ messages: number }>('get_cache_summary').catch(() => null);
                 if (controller.signal.aborted) return;
                 setIsFirstSync(localCache?.messages === 0);
@@ -916,7 +932,7 @@ export default function MainLayout() {
         setIsLoadingMore(false);
         // DraftFolder owns its local loading and Gmail synchronization. Avoid
         // a second sync from the ordinary mailbox navigation effect.
-        if (folder === 'drafts') {
+        if (['drafts','outbox'].includes(folder)) {
             setIsLoadingFolder(false);
             return;
         }
@@ -1124,6 +1140,7 @@ export default function MainLayout() {
     }, []);
 
     function handleSearchQueryChange(query: string) {
+        query=query.trimStart();
         const folder = currentFolder;
         const revision = ++searchRevision.current;
         if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -1135,7 +1152,7 @@ export default function MainLayout() {
             [folder]: {
                 ...(prev[folder] || { activeSearchId: null, searchProgress: null, searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false }),
                 searchQuery: query,
-                activeSearchId: null, searchProgress: null, searchResults: [], hasMoreSearch: false, isLoadingMoreSearch: false
+                activeSearchId: null, searchProgress: null, searchResults: [], hasMoreSearch: false, localHasMore:false,isLoadingMoreSearch: false
             }
         }));
 
@@ -1144,7 +1161,7 @@ export default function MainLayout() {
             try {
                 const searchId = crypto.randomUUID();
                 setFolderSearchContexts(prev => ({ ...prev, [folder]: { ...prev[folder], activeSearchId: searchId } }));
-                const res = await invoke<{search_id:string;local_results:NativeMessageHeader[];remote_search_state:string}>('search_messages', { folder, query: query.trim(), searchId });
+                const res = await invoke<{search_id:string;local_results:NativeMessageHeader[];remote_search_state:string;has_more_local?:boolean}>('search_messages', { folder, query: query.trim(), searchId });
                 if (revision !== searchRevision.current) {
                     void invoke('clear_search', { searchId: res.search_id }).catch(console.error);
                     return;
@@ -1157,25 +1174,26 @@ export default function MainLayout() {
                     [folder]: {
                         ...(prev[folder] || { searchQuery: query, isLoadingMoreSearch: false }),
                         activeSearchId: res.search_id,
+                        localHasMore:Boolean(res.has_more_local),
                         searchResults: dedupeMail([...deduped, ...(prev[folder]?.searchResults || [])]),
                         hasMoreSearch: res.remote_search_state !== 'Offline' && res.remote_search_state !== 'Unsupported',
                         searchProgress: prev[folder]?.searchProgress || {
                             search_id: res.search_id,
-                            state: 'SearchingRemote',
+                            state: ['Offline','Unsupported'].includes(res.remote_search_state)?'Completed':'SearchingRemote',
                             matched: deduped.length,
                             downloaded: 0,
                             indexed: 0,
                             streamed: 0,
                             total: 0,
-                            progress_text: 'Searching server...'
+                            progress_text: ['Offline','Unsupported'].includes(res.remote_search_state)?'Downloaded mail · local index':'Searching server...'
                         }
                     }
                 }));
             } catch (err) {
-                console.error("Search failed", err);
+                console.warn("Search could not run", err);
                 if (revision !== searchRevision.current) return;
                 setFolderSearchContexts(prev => ({ ...prev, [folder]: { ...prev[folder], hasMoreSearch: false,
-                    searchProgress: { search_id: '', state: 'Failed', matched: 0, downloaded: 0, indexed: 0, streamed: 0, total: 0, progress_text: 'Search failed. Try again.' } } }));
+                    searchProgress: { search_id: '', state: 'Failed', matched: 0, downloaded: 0, indexed: 0, streamed: 0, total: 0, progress_text: String(err) } } }));
             }
         }, 150);
     };
@@ -1203,7 +1221,7 @@ export default function MainLayout() {
     const handleSearchLoadMore = async () => {
         const folder = currentFolder;
         const searchId = activeSearchState.activeSearchId;
-        if (!searchId || activeSearchState.isLoadingMoreSearch || !activeSearchState.hasMoreSearch) return;
+        if (!searchId || activeSearchState.isLoadingMoreSearch || !(activeSearchState.hasMoreSearch||activeSearchState.localHasMore)) return;
 
         setFolderSearchContexts(prev => ({
             ...prev,
@@ -1235,6 +1253,7 @@ export default function MainLayout() {
         let unlistenIncremental: (() => void) | undefined;
 
         const setupSearchListeners = async () => {
+            await subscriptions.listen<{search_id:string;has_more:boolean}>('mail:search_local_more',event=>setFolderSearchContexts(previous=>Object.fromEntries(Object.entries(previous).map(([folder,state])=>[folder,state.activeSearchId===event.payload.search_id?{...state,localHasMore:event.payload.has_more}:state]))));
             unlistenProgress = await subscriptions.listen<SearchProgressData>('mail:search_progress', (event) => {
                 const progress = event.payload;
                 setFolderSearchContexts(prev => {
@@ -1290,7 +1309,6 @@ export default function MainLayout() {
             if (pathname!=='/inbox')return;
             if (event.key.toLowerCase() === 'n' && !event.shiftKey) { event.preventDefault(); if (isComposeOpen) composeWindowRef.current?.restore(); else setIsComposeOpen(true); }
             if (isComposeOpen) return;
-            if (event.key.toLowerCase() === 'k' && !event.shiftKey) { event.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder*="Search"]')?.focus(); }
             if (event.key.toLowerCase() === 'u' && event.shiftKey && selectedEmailId) { event.preventDefault(); void toggleRead(selectedEmailId); }
         });
     useEffect(() => {
@@ -1299,6 +1317,10 @@ export default function MainLayout() {
         return () => window.removeEventListener('keydown', handler);
     }, []);
 
+    useMailboxCommands(()=>pathname!=='/inbox'||accountBusy||isBootstrapping||isComposeOpen?[]:[
+        {id:'compose.'+user?.id,label:'New message',group:'Compose',keywords:'write send email',shortcut:'Ctrl N',icon:Pencil,run:()=>{setComposeDraft(undefined);setIsComposeOpen(true);}},
+        {id:'sync.'+user?.id,label:'Sync this mailbox',group:'Mailbox',keywords:'refresh fetch',icon:RefreshCw,run:()=>handleSync(false)},
+    ]);
     if (isBootstrapping) {
         return (
             <div className="h-screen w-screen flex items-center justify-center bg-[#F8F9FA]/80 dark:bg-[#09090b]/80 backdrop-blur-xl transition-colors">
@@ -1341,7 +1363,7 @@ export default function MainLayout() {
             />
 
             <div className="mail-panes">
-            {currentFolder === 'drafts' ? <DraftFolder key={user?.id} accountId={user?.id || ''} onCompose={() => { if (isComposeOpen) composeWindowRef.current?.restore(); else { setComposeDraft(undefined); setIsComposeOpen(true); } }} onBeforeOpen={() => {
+            {currentFolder==='outbox'?<OutboxFolder key={user?.id} accountId={user?.id||''} onBeforeOpen={()=>{if(!isComposeOpen)return true;composeWindowRef.current?.restore();toast.info('Save and close your current message first.');return false;}} onOpen={draft=>{setComposeDraft(draft);setIsComposeOpen(true);}}/>:currentFolder === 'drafts' ? <DraftFolder key={user?.id} accountId={user?.id || ''} onCompose={() => { if (isComposeOpen) composeWindowRef.current?.restore(); else { setComposeDraft(undefined); setIsComposeOpen(true); } }} onBeforeOpen={() => {
                 if (!isComposeOpen) return true;
                 composeWindowRef.current?.restore(); toast.info('Save and close your current message before opening another draft.'); return false;
             }} onOpen={draft => {
@@ -1351,6 +1373,7 @@ export default function MainLayout() {
             <div className="mail-list-column flex min-h-0 flex-col">
                 <EmailList key={currentFolder}
                     statusBanner={<>
+                <OfflineStatus/>
                 {preferences.syncPaused && <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 px-4 py-2 text-xs text-muted-foreground bg-white/20 dark:bg-white/5"><span>Background sync paused</span><button className="text-primary font-medium" onClick={() => { void updatePreferences({ syncPaused: false }).then(() => invoke("sync_mail_folder", { folder: "inbox", automatic: true })).catch(() => toast.error("Could not resume sync.")); }}>Resume</button></div>}
                 {/* Sync Error Banner */}
                 <AnimatePresence>
@@ -1399,7 +1422,7 @@ export default function MainLayout() {
                 isSyncing={isSyncing || isLoadingFolder || syncingFolders.has(currentFolder)}
                 isLoading={showSnoozed?false:isLoadingFolder}
                 onLoadMore={loadMoreEmails}
-                hasMore={!showSnoozed&&(activeSearchState.searchQuery ? activeSearchState.hasMoreSearch : hasMore)}
+                    hasMore={!showSnoozed&&(activeSearchState.searchQuery ? Boolean(activeSearchState.hasMoreSearch||activeSearchState.localHasMore) : hasMore)}
                 isLoadingMore={!showSnoozed&&(activeSearchState.searchQuery ? activeSearchState.isLoadingMoreSearch : isLoadingMore)}
                 listRef={emailListContainerRef}
                 currentFolder={showSnoozed?'snoozed':currentFolder}

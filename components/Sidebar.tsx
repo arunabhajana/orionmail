@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Inbox, Send, File, Trash2, Clock, Star, Mail, RefreshCw, Pencil, Plus, ChevronDown, Tags, Settings } from 'lucide-react';
+import { Inbox, Send, File, Trash2, Clock, Star, Mail, RefreshCw, Pencil, Plus, ChevronDown, Tags, Settings,SendHorizontal } from 'lucide-react';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { useAppPreferences } from './AppPreferencesContext';
@@ -17,6 +17,7 @@ import {useMailboxView} from './MailboxViewContext';
 import {toast} from 'sonner';
 import { useAuth } from './AuthContext';
 import {useSync} from './SyncContext';
+import {useMailboxCommands} from './CommandPalette';
 import type {FilterType} from './inbox/EmailListHeader';
 
 // --- Types ---
@@ -156,6 +157,7 @@ const NAV_ITEMS: NavItemConfig[] = [
     { icon: Star, label: "Starred", id: "starred" },
     { icon: Send, label: "Sent", id: "sent" },
     { icon: File, label: "Drafts", id: "drafts" },
+    { icon: SendHorizontal, label: "Outbox", id: "outbox" },
     { icon: Trash2, label: "Trash", id: "trash" },
 ];
 
@@ -176,6 +178,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, onCreateTagClic
         finally{folderOpening.current=false;}
     };
     const [tags, setTags] = useState<Tag[]>([]);
+    useMailboxCommands(()=>!user||accountBusy?[]:tags.filter(tag=>tag.tag_type==='user').map(tag=>({id:`tag.${user.id}.${tag.id}`,label:'Go to tag '+tag.name,group:'Tags',keywords:'folder '+tag.name,icon:Tags,run:()=>onFolderSelect?.('tag:'+tag.id)})));
     const compactTags = React.useRef<HTMLDetailsElement>(null);
     React.useEffect(() => {
         const closeOutside = (event: PointerEvent) => { if (compactTags.current?.open && !compactTags.current.contains(event.target as Node)) compactTags.current.open = false; };
@@ -217,7 +220,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className, onCompose, onCreateTagClic
                     <h2 className="mb-2 px-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Account folders</h2>
                     <div className="space-y-2">{accounts.map(account=><details key={account.id} className="group/account rounded-xl bg-foreground/[0.025] p-2"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg px-2 py-1.5 outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden"><span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-medium" title={account.email}>{account.name||account.email}</span>
-                        <span className="mt-0.5 block truncate text-[10px] text-muted-foreground" title={account.email}>{account.email}</span></span><ChevronDown aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/account:rotate-180 motion-reduce:transition-none"/></summary><div className="mt-1 space-y-0.5">{NAV_ITEMS.filter(item=>['sent','drafts','snoozed'].includes(item.id)).map(item=><NavItem key={item.id} {...item} hint={item.label+' · '+account.email} onClick={()=>{void openAccountFolder(account.id,item.id);}}/>)}</div>
+                        <span className="mt-0.5 block truncate text-[10px] text-muted-foreground" title={account.email}>{account.email}</span></span><ChevronDown aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/account:rotate-180 motion-reduce:transition-none"/></summary><div className="mt-1 space-y-0.5">{NAV_ITEMS.filter(item=>['sent','drafts','outbox','snoozed'].includes(item.id)).map(item=><NavItem key={item.id} {...item} hint={item.label+' · '+account.email} onClick={()=>{void openAccountFolder(account.id,item.id);}}/>)}</div>
                     </details>)}</div>
                 </section>
             </nav>}

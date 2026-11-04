@@ -15,6 +15,7 @@ export interface NativeMessageHeader {
     date: number;
     seen: boolean;
     flagged: boolean;
+    has_attachments?:boolean;
     message_id?: string | null;
     thread_id?: string | null;
     snippet?: string | null;
@@ -23,6 +24,7 @@ export interface NativeMessageHeader {
 }
 
 export interface Email {
+    hasAttachments?:boolean;
     /** Mailbox owner. Optional only for legacy fixtures/optimistic local rows. */
     accountId?: string;
     pinned?: boolean;

@@ -248,6 +248,7 @@ pub async fn update(
         }
     }
     let id = super::outbox::enqueue(app, &account.id, edit)?;
+    if !crate::mail::connectivity::is_online(){return Err("Saved on this device for automatic retry when connected.".into());}
     super::outbox::deliver(app,account,id).await.map_err(|error| {
         if error.starts_with("CONFLICT:") { error }
         else { format!("Tags could not be confirmed. Saved on this device for automatic retry during sync: {error}") }

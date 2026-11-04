@@ -11,7 +11,7 @@ export function SettingRow({ id, title, description, children, unavailable = fal
 export function SettingToggle({ label, checked, onChange, disabled = false }: { label: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
     return <button type="button" role="switch" aria-label={label} aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} className={`relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-40 disabled:cursor-not-allowed ${checked ? "bg-primary" : "bg-black/15 dark:bg-white/20"}`}><span className={`absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-4" : "translate-x-0"}`} /></button>;
 }
-export function SettingSelect({ label, value, options, onChange, disabled = false, compact = false }: { label: string; value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void; disabled?: boolean; compact?: boolean }) {
+export function SettingSelect({ label, value, options, onChange, disabled = false, compact = false,layer=100 }: { label: string; value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void; disabled?: boolean; compact?: boolean;layer?:number }) {
     const id = useId();
     const trigger = useRef<HTMLButtonElement>(null);
     const menu = useRef<HTMLDivElement>(null);
@@ -53,7 +53,7 @@ export function SettingSelect({ label, value, options, onChange, disabled = fals
             className={`settings-input inline-flex min-w-0 max-w-full ${compact ? 'min-w-16' : 'min-w-40'} items-center justify-between gap-3 text-left text-xs hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40 disabled:cursor-not-allowed`}>
             <span className="min-w-0 truncate">{options.find(([key]) => key === value)?.[1] || value}</span><ChevronDown size={14} className={`shrink-0 text-muted-foreground transition-transform ${position ? 'rotate-180' : ''}`} />
         </button>
-        {position && createPortal(<div ref={menu} id={id} role="listbox" aria-label={label} tabIndex={-1} aria-activedescendant={`${id}-${active}`} style={position}
+        {position && createPortal(<div ref={menu} id={id} role="listbox" aria-label={label} tabIndex={-1} aria-activedescendant={`${id}-${active}`} style={{...position,zIndex:layer}}
             className="z-[60] overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl border border-black/10 bg-white p-1 text-foreground shadow-xl outline-none dark:border-white/10 dark:bg-[#202024]"
             onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) close(); }}
             onKeyDown={event => {

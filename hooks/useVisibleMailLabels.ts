@@ -11,7 +11,7 @@ export function useVisibleMailLabels(accountId:string|undefined,emails:Email[],e
         if(!accountId||!enabled||signature==='[]')return;
         let disposed=false;
         const refresh=async()=>{
-            if(disposed||refreshing||document.visibilityState!=='visible'||!document.hasFocus())return;
+            if(disposed||refreshing||!navigator.onLine||document.visibilityState!=='visible'||!document.hasFocus())return;
             const key=`${accountId}:${signature}`;
             if(key===lastKey&&Date.now()-lastRefresh<5000)return;
             lastKey=key;lastRefresh=Date.now();

@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod outbox;
 mod remote;
 mod store;
 use serde::{Deserialize, Serialize};
@@ -100,8 +101,8 @@ pub fn start_worker(app: &AppHandle) {
                     let deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(10);
                     loop { tokio::select!{_=tokio::time::sleep_until(deadline)=>break,
                         result=tokio::time::timeout(std::time::Duration::from_secs(2),WAKE.notified())=>if result.is_err(){break}} }
-                },_=tokio::time::sleep(std::time::Duration::from_secs(60))=>{}}
-                if crate::auth::app_lock::require_unlocked(&app).is_err()
+                },_=tokio::time::sleep(std::time::Duration::from_secs(60))=>{},_=crate::mail::shutdown::APP_TOKEN.cancelled()=>break}
+                if !crate::mail::connectivity::is_online()||crate::auth::app_lock::require_unlocked(&app).is_err()
                 {
                     continue;
                 }

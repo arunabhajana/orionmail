@@ -370,6 +370,7 @@ pub async fn get_boot_error(app_handle: AppHandle) -> Option<String> {
 
 #[derive(serde::Serialize)]
 pub struct SearchResponse {
+    pub has_more_local:bool,
     pub search_id: String,
     pub local_results: Vec<crate::mail::message_list::MessageHeader>,
     pub remote_search_state: crate::mail::search::RemoteSearchState,
@@ -377,9 +378,11 @@ pub struct SearchResponse {
 
 #[tauri::command]
 pub async fn search_messages(account_id: Option<String>, app_handle: tauri::AppHandle, folder: String, query: String, search_id: Option<String>) -> Result<SearchResponse, String> {
-    let account = crate::auth::scope::account(&app_handle, account_id.as_deref()).await?;
-    let (search_id, local_results, remote_search_state) = crate::mail::search::start_search(app_handle, account, folder, query, search_id).await?;
+    let owner=crate::auth::scope::profile(&app_handle,account_id.as_deref())?;
+    let account=crate::auth::session::get_account(&app_handle,&owner.id).ok_or("Account is no longer available")?;
+    let (search_id, local_results, remote_search_state,has_more_local) = crate::mail::search::start_search(app_handle, account, folder, query, search_id).await?;
     Ok(SearchResponse {
+        has_more_local,
         search_id,
         local_results,
         remote_search_state,
@@ -421,8 +424,8 @@ pub async fn get_message_tags(account_id: Option<String>, app_handle: tauri::App
 
 #[tauri::command]
 pub async fn update_message_tags(app_handle:tauri::AppHandle,account_id:String,expected_uid_validity:u32,folder:String,uid:u32,add_ids:Vec<String>,remove_ids:Vec<String>)->Result<Vec<String>,String>{
-    let account=crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
-    if account.id!=account_id{return Err("Account changed. Reopen the message and retry.".into());}
+    let owner=crate::auth::scope::profile(&app_handle,Some(&account_id))?;
+    let account=crate::auth::session::get_account(&app_handle,&owner.id).ok_or("Account is no longer available")?;
     crate::mail::tags::assignment::update(&app_handle,&account,folder,uid,add_ids,remove_ids,expected_uid_validity).await
 }
 

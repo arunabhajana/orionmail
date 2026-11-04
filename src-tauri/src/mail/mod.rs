@@ -18,8 +18,10 @@ pub mod extraction;
 pub(crate) mod patterns;
 pub mod shutdown;
 pub mod search;
+pub mod search_query;
 pub mod tags;
 pub mod drafts;
+pub mod connectivity;
 pub mod trash;
 
 pub mod unified;

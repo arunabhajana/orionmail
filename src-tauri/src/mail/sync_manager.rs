@@ -36,6 +36,7 @@ pub async fn enqueue_sync_with_force(
     folder: MailFolder,
     force: bool,
 ) {
+    if !crate::mail::connectivity::is_online(){return;}
     if !force && crate::mail_preferences::load_for(&app, &account.id).sync_paused { return; }
     let key = (account.id.clone(), folder.clone());
     let wake = Arc::new(tokio::sync::Notify::new());

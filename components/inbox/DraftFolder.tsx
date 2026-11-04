@@ -31,6 +31,7 @@ export function DraftFolder({ accountId, onOpen, onCompose, onBeforeOpen }: { ac
         finally { if (mounted.current) setLoading(false); }
     }, [accountId]);
     const sync = useCallback(async () => {
+        if(!navigator.onLine){await load();return;}
         if (syncGuard.current) return;
         syncGuard.current = true; setSyncing(true); setError(null);
         try { await invoke('sync_drafts', { accountId }); }

@@ -32,6 +32,7 @@ export function formatNativeEmail(msg: NativeMessageHeader, accountId?: string):
         folder,
         tags: msg.tags || [],
         starred: msg.flagged,
+        hasAttachments:msg.has_attachments,
         body: msg.snippet || '<p>Message body not fetched in this milestone.</p>',
         attachments: [],
     };

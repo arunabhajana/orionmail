@@ -21,6 +21,7 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
             .map_err(|e| e.to_string())?;
         let has_fingerprint:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('compose_drafts') WHERE name='upload_fingerprint')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
         if !has_fingerprint{conn.execute_batch("ALTER TABLE compose_drafts ADD COLUMN upload_fingerprint TEXT;").map_err(|e|e.to_string())?;}
+        super::outbox::schema(&conn)?;
         conn.execute("DELETE FROM draft_files WHERE NOT EXISTS(SELECT 1 FROM compose_drafts WHERE compose_drafts.account_id=draft_files.account_id AND compose_drafts.id=draft_files.draft_id)",[]).map_err(|e|e.to_string())?;
         Ok(())
     })?;
@@ -67,9 +68,17 @@ pub fn get(app: &AppHandle, account: &str, id: &str) -> Result<Draft, String> {
         .ok_or_else(|| "Draft no longer exists. Refresh Drafts.".into())
 }
 pub fn list(app: &AppHandle, account: &str) -> Result<Vec<Summary>, String> {
+    let conn=db(app)?;
+    let rows=list_all(app,account,false)?;
+    let mut stmt=conn.prepare("SELECT draft_id FROM mail_outbox WHERE account_id=?1").map_err(|e|e.to_string())?;
+    let ids=stmt.query_map([account],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?.collect::<rusqlite::Result<std::collections::HashSet<_>>>().map_err(|e|e.to_string())?;
+    Ok(rows.into_iter().filter(|draft|!ids.contains(&draft.id)).collect())
+}
+pub fn list_all(app: &AppHandle, account: &str, queued_only:bool) -> Result<Vec<Summary>, String> {
     // Never pull attachment BLOBs across IPC just to render the list.
     let conn = db(app)?;
-    let mut query=conn.prepare("SELECT id,revision,json_extract(payload,'$.subject'),json_extract(payload,'$.to'),substr(json_extract(payload,'$.plain'),1,180),updated_at,state,error,conflict,json_array_length(payload,'$.attachments') FROM compose_drafts WHERE account_id=?1 AND state<>'deleting' ORDER BY updated_at DESC").map_err(|e|e.to_string())?;
+    let filter=if queued_only{" AND EXISTS(SELECT 1 FROM mail_outbox WHERE mail_outbox.account_id=compose_drafts.account_id AND draft_id=compose_drafts.id)"}else{""};
+    let mut query=conn.prepare(&format!("SELECT id,revision,json_extract(payload,'$.subject'),json_extract(payload,'$.to'),substr(json_extract(payload,'$.plain'),1,180),updated_at,state,error,conflict,json_array_length(payload,'$.attachments') FROM compose_drafts WHERE account_id=?1 AND state<>'deleting'{filter} ORDER BY updated_at DESC")).map_err(|e|e.to_string())?;
     let values = query
         .query_map([account], |r| {
             Ok(Summary {
@@ -136,6 +145,7 @@ fn save_inner(
     payload.validate()?;
     let mut conn = db(app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_outbox WHERE account_id=?1 AND draft_id=?2)",params![account,id],|r|r.get::<_,bool>(0)).map_err(|e|e.to_string())?{return Err("This message is in Outbox. Return it to Drafts before editing.".into());}
     let current: Option<(i64, String)> = tx
         .query_row(
             "SELECT revision,state FROM compose_drafts WHERE account_id=?1 AND id=?2",
@@ -236,6 +246,7 @@ pub fn remove(app: &AppHandle, account: &str, id: &str) -> Result<(), String> {
 pub fn sent(app: &AppHandle, account: &str, draft: &Draft) -> Result<(), String> {
     let mut conn = db(app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM mail_outbox WHERE account_id=?1 AND draft_id=?2",params![account,draft.id]).map_err(|e|e.to_string())?;
     let message_id = format!("<orion.{}.{}@orionmail.local>", draft.id, draft.revision);
     tx.execute(
         "INSERT OR REPLACE INTO draft_send_receipts VALUES(?1,?2,?3,?4)",
@@ -272,7 +283,7 @@ pub fn receipt(app: &AppHandle, account: &str, id: &str) -> Result<Option<String
 pub fn remove_clean(app: &AppHandle, account: &str, draft: &Draft) -> Result<(), String> {
     let mut conn = db(app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let count=tx.execute("DELETE FROM compose_drafts WHERE account_id=?1 AND id=?2 AND revision=?3 AND dirty=0 AND editing=0 AND state NOT IN ('sending','send_unknown','checking','deleting')",params![account,draft.id,draft.revision]).map_err(|e|e.to_string())?;
+    let count=tx.execute("DELETE FROM compose_drafts WHERE account_id=?1 AND id=?2 AND revision=?3 AND dirty=0 AND editing=0 AND state NOT IN ('sending','send_unknown','checking','deleting','outbox') AND NOT EXISTS(SELECT 1 FROM mail_outbox WHERE account_id=?1 AND draft_id=?2)",params![account,draft.id,draft.revision]).map_err(|e|e.to_string())?;
     if count == 1 {
         tx.execute(
             "DELETE FROM draft_files WHERE account_id=?1 AND draft_id=?2",
@@ -311,7 +322,7 @@ pub fn acknowledge(
 }
 pub fn detach(app: &AppHandle, account: &str, id: &str) -> Result<(), String> {
     db(app)?.execute("UPDATE compose_drafts SET remote_id=NULL,remote_version=NULL,dirty=1,conflict=1,state='queued',upload_revision=NULL,
-      error='A different Gmail version was preserved as a separate draft.' WHERE account_id=?1 AND id=?2",params![account,id]).map(|_|()).map_err(|e|e.to_string())
+      error='A different Gmail version was preserved as a separate draft.' WHERE account_id=?1 AND id=?2 AND NOT EXISTS(SELECT 1 FROM mail_outbox WHERE account_id=?1 AND draft_id=?2)",params![account,id]).map(|_|()).map_err(|e|e.to_string())
 }
 pub fn import(
     app: &AppHandle,
@@ -329,7 +340,7 @@ pub fn import(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     // A save may have arrived while the remote MIME was downloading. Never replace it.
     if let Some(id) = existing {
-        let protected:bool=tx.query_row("SELECT dirty OR editing OR state IN ('deleting','sending','send_unknown','checking') FROM compose_drafts WHERE account_id=?1 AND id=?2",params![account,id],|r|r.get(0)).map_err(|e|e.to_string())?;
+        let protected:bool=tx.query_row("SELECT dirty OR editing OR state IN ('deleting','sending','send_unknown','checking','outbox') OR EXISTS(SELECT 1 FROM mail_outbox WHERE account_id=?1 AND draft_id=?2) FROM compose_drafts WHERE account_id=?1 AND id=?2",params![account,id],|r|r.get(0)).map_err(|e|e.to_string())?;
         if protected {
             return Err("Draft is being edited; reconciliation will retry.".into());
         }

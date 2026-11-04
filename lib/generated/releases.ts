@@ -3,6 +3,135 @@ import type { Release } from "../release-types";
 export const releases: Release[] = [
   {
     "schemaVersion": 1,
+    "version": "0.2.0",
+    "status": "ready",
+    "sample": false,
+    "date": "2026-11-04",
+    "title": "Find faster. Keep going offline.",
+    "summary": "Find the right message with advanced search, move through your inbox with a command palette, and send mail even when your connection drops. Unread counts react immediately, with clearer message styling and a tidier storage overview.",
+    "sections": [
+      {
+        "category": "Added",
+        "items": [
+          {
+            "title": "Advanced mail search",
+            "text": "Narrow results by sender, recipient, subject, tag, date, read status or attachments using the new filter panel. Combine filters, search exact phrases and exclude unwanted senders. Press Ctrl+S to jump to search."
+          },
+          {
+            "title": "Search across your accounts",
+            "text": "Search downloaded mail across connected accounts and folders from All inboxes. Downloaded message content and attachment names are searchable too, so you can find more than a subject line."
+          },
+          {
+            "title": "Command palette",
+            "text": "Press Ctrl+K to search mail, open folders and tags, switch accounts, compose a message or use actions for the open message. Type > to browse commands only, then use the arrow keys and Enter."
+          },
+          {
+            "title": "Outbox and offline sending",
+            "text": "Write a message and press Send without a connection. OrionMail keeps it and its attachments in Outbox, ready to send when the app is running and connected. Review delivery status, retry a message or return a waiting message to Drafts."
+          }
+        ]
+      },
+      {
+        "category": "Improved",
+        "items": [
+          {
+            "title": "Find downloaded mail without waiting",
+            "text": "Search starts with downloaded mail, and more results load as you scroll. Supported online searches can bring in additional results for an individual account. Search across accounts stays focused on downloaded mail."
+          },
+          {
+            "title": "Changes that survive a lost connection",
+            "text": "Read status, stars, tag changes and trash actions are saved on your device and retried when you reconnect or reopen OrionMail. Closing the app pauses background work; opening it resumes pending work."
+          },
+          {
+            "title": "Unread mail is easier to spot",
+            "text": "Stronger sender and subject text, an unread marker and a clearer highlight help unread messages stand out. Read changes update account and inbox counts immediately while syncing continues in the background."
+          },
+          {
+            "title": "Clearer storage overview",
+            "text": "The storage card brings message totals, measured space and the coloured usage bar together, making it easier to see how much space downloaded headers and bodies use."
+          },
+          {
+            "title": "Small details, smoother navigation",
+            "text": "Attachment indicators appear without opening a message. The command palette uses a slim, rounded scrollbar that matches the app theme."
+          }
+        ]
+      },
+      {
+        "category": "Fixed",
+        "items": [
+          {
+            "title": "Unread counts after reading mail",
+            "text": "Account and inbox counters respond to local read changes immediately, without waiting for Gmail to finish syncing."
+          },
+          {
+            "title": "Switching accounts during an action",
+            "text": "Late responses from a previously selected account are kept from changing the mailbox you are viewing. Pending changes stay associated with their original account."
+          }
+        ]
+      },
+      {
+        "category": "Known issues",
+        "items": [
+          {
+            "title": "Offline availability",
+            "text": "Only downloaded content can be read or searched offline. New message bodies and attachment downloads need a connection. Cross-account search and app-specific body, tag or folder-scope searches use downloaded mail."
+          },
+          {
+            "title": "Outbox delivery",
+            "text": "OrionMail must be running and connected to deliver queued mail. If a delivery status needs review, check Sent before retrying to avoid sending a duplicate."
+          },
+          {
+            "title": "Platform support",
+            "text": "Windows and up to three Google accounts are supported. Pins and snoozes stay on this device. The Windows installer may display Unknown publisher."
+          }
+        ]
+      }
+    ],
+    "whatsNew": [
+      {
+        "id": "search",
+        "eyebrow": "Find the message you need",
+        "title": "Less scrolling. Better search.",
+        "text": "Filter by people, subject, tags, dates and attachments. Search downloaded content across accounts from All inboxes, or press Ctrl+S to jump straight to the search bar.",
+        "image": {
+          "src": "/releases/0.2.0/search.svg",
+          "alt": "Advanced search with sender and attachment filters above matching messages."
+        }
+      },
+      {
+        "id": "commands",
+        "eyebrow": "Your keyboard, in command",
+        "title": "One shortcut. More possibilities.",
+        "text": "Press Ctrl+K to open the command palette. Jump to a folder, switch accounts, compose or act on the open message. Type > for commands only, then use the arrow keys and Enter.",
+        "image": {
+          "src": "/releases/0.2.0/commands.svg",
+          "alt": "Command palette showing search, new message and navigation commands with Ctrl K."
+        }
+      },
+      {
+        "id": "outbox",
+        "eyebrow": "Keep writing, even offline",
+        "title": "Send when your connection returns.",
+        "text": "Press Send while offline and your message waits safely in Outbox with its attachments. Delivery resumes when OrionMail is running and connected. Check its status, retry or return a waiting message to Drafts.",
+        "image": {
+          "src": "/releases/0.2.0/outbox.svg",
+          "alt": "Outbox showing a saved message waiting for a connection and another marked sent."
+        }
+      },
+      {
+        "id": "unread",
+        "eyebrow": "An inbox that keeps up",
+        "title": "Read it. See the count change.",
+        "text": "Unread counts react as soon as you mark mail read, while sync runs in the background. Stronger text and an unread marker make the messages that still need your attention easier to spot.",
+        "image": {
+          "src": "/releases/0.2.0/unread.svg",
+          "alt": "An unread message with bold text and a blue dot beside a quieter read message."
+        }
+      }
+    ]
+  },
+  {
+    "schemaVersion": 1,
     "version": "0.1.0",
     "status": "ready",
     "sample": false,
@@ -215,4 +344,4 @@ export const releases: Release[] = [
     ]
   }
 ];
-export const currentRelease = releases.find(release => release.version === "0.1.0")!;
+export const currentRelease = releases.find(release => release.version === "0.2.0")!;

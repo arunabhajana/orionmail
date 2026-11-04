@@ -168,7 +168,7 @@ const EmailList: React.FC<EmailListProps> = ({
 
     React.useEffect(() => { rowVirtualizer.measure(); }, [preferences.density, preferences.previewLines, preferences.showAvatars, rowVirtualizer]);
 
-    const folderDisplayName = unified ? 'All inboxes' : currentFolder?.startsWith('tag:')
+    const folderDisplayName = unified ? (searchQuery?'All mail':'All inboxes') : currentFolder?.startsWith('tag:')
         ? allTags[currentFolder.slice(4)]?.name || 'Tag'
         : currentFolder ? currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1) : 'Mailbox';
 
@@ -260,7 +260,7 @@ const EmailList: React.FC<EmailListProps> = ({
         >
             <div className="shrink-0">
                 <div className="mail-pane-topbar"><div className="min-w-0"><h1 className="truncate text-sm font-semibold" title={folderDisplayName}>{folderDisplayName || 'Mailbox'}</h1></div><div className="flex shrink-0 items-center gap-2"><span aria-live="polite" className="text-[10px] tabular-nums text-muted-foreground">{searchQuery ? `${emails.length} found` : `${emails.length} loaded`}</span><button type="button" onClick={() => onSync?.()} disabled={isSyncing || !onSync} aria-label={isSyncing ? 'Syncing mail' : 'Sync mailbox'} title={isSyncing ? 'Syncing mail' : 'Sync mailbox'} className="mail-icon-button"><RefreshCw className={cn('size-4', isSyncing && 'animate-spin text-primary')} /></button></div></div>
-                <div className="space-y-3 px-3 pb-3 pt-3"><SearchBar placeholder={unified?'Search downloaded inbox mail…':undefined} value={searchQuery} onChange={onSearchQueryChange} onClear={onSearchClear} searchProgress={searchProgress} /><FilterTabs currentFilter={currentFilter} onFilterChange={setCurrentFilter} /></div>
+                <div className="space-y-3 px-3 pb-3 pt-3"><SearchBar unified={unified} placeholder={unified?'Search all connected mail…':undefined} value={searchQuery} onChange={onSearchQueryChange} onClear={onSearchClear} searchProgress={searchProgress} /><FilterTabs currentFilter={currentFilter} onFilterChange={setCurrentFilter} /></div>
             </div>
             {statusBanner}
             {pendingMessages.length > 0 && currentFilter === 'all' && !searchQuery && <div role="status" aria-label="Outgoing messages" className="max-h-40 shrink-0 overflow-y-auto border-y border-black/[0.04] px-2 py-1 custom-scrollbar dark:border-white/[0.05]">{pendingMessages.map(message => <PendingEmailListItem key={message.id} pending={message} />)}</div>}

@@ -203,6 +203,9 @@ pub fn run() {
           ready_tx.send_replace(Some(result));
           log::info!("Mail database initialization finished in {} ms",started.elapsed().as_millis());
           if failed{return;}
+          crate::mail::drafts::outbox::start(&handle);
+          crate::mail::drafts::start_worker(&handle);
+          crate::mail::connectivity::start(&handle);
           crate::cache_preferences::kick(&handle,false);
           if let Err(error)=mail::notifications::initialize(&handle){
               log::error!("Native notifications could not initialize: {}",error);
@@ -235,6 +238,12 @@ pub fn run() {
       mail::drafts::commands::discard_draft,
       mail::drafts::commands::sync_drafts,
       mail::drafts::commands::send_draft,
+      mail::drafts::outbox::queue_draft,
+      mail::drafts::outbox::list_outbox,
+      mail::drafts::outbox::read_outbox,
+      mail::drafts::outbox::cancel_outbox,
+      mail::drafts::outbox::retry_outbox,
+      mail::connectivity::set_network_status,
       mail::drafts::commands::resolve_draft_send,
       mail::drafts::commands::fork_draft,
       mail::drafts::commands::copy_draft_to_account,

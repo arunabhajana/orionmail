@@ -94,7 +94,7 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
     ],
     shortcuts: [
         { title: "Keyboard control", items: [
-            item("shortcutsEnabled", "Mailbox shortcuts", "Enable Ctrl+N to compose, Ctrl+K to search, and Ctrl+Shift+U to toggle read status. Shortcuts are ignored while typing."),
+            item("shortcutsEnabled", "Mailbox shortcuts", "Ctrl+N composes, Ctrl+S focuses mail search, Ctrl+K opens the command palette, and Ctrl+Shift+U toggles read status. Compose editor shortcuts keep their normal behaviour."),
             later("custom", "Custom shortcut bindings", "Available shortcuts use fixed bindings. Reply, forward, and archive shortcuts are not available yet."),
         ] },
     ],

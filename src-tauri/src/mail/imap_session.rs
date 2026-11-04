@@ -37,6 +37,7 @@ pub fn remove_account(account_id: &str) {
 }
 
 pub fn create_session(account: &Account, kind: SessionKind) -> Result<ImapSession, String> {
+    if !crate::mail::connectivity::is_online(){return Err("OFFLINE: Mail sync resumes when connected.".into());}
     let mut session = connect_and_authenticate(account, kind)?;
 
     // GUARANTEE: Always select INBOX on fresh creation
@@ -121,6 +122,7 @@ where
     F: FnMut(&mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>) -> Result<R, String> + Send + 'static,
     R: Send + 'static,
 {
+    if !crate::mail::connectivity::is_online(){return Err("OFFLINE: Changes are saved on this device and will sync when connected.".into());}
     // 1. Get or create the ManagedSession for this Account+Kind
     let session_arc = {
         let mut pools = SESSION_MANAGER.lock().unwrap();
