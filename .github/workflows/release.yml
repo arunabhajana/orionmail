@@ -55,8 +55,10 @@ jobs:
             gh release create $env:GITHUB_REF_NAME --verify-tag --draft --title "OrionMail $version" --notes-file ".release-output/$version.md"
             if ($LASTEXITCODE) { throw 'Could not create draft release.' }
           }
-          $id = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" --jq .id
-          if (!$id) { throw 'Draft release ID not found.' }
+          # The REST tag endpoint can return 404 for drafts. The release command
+          # also searches authenticated draft releases and exposes their numeric ID.
+          $id = gh release view $env:GITHUB_REF_NAME --json databaseId --jq .databaseId
+          if ($LASTEXITCODE -ne 0 -or $id -notmatch '^\d+$') { throw 'Draft release ID not found.' }
           "id=$id" >> $env:GITHUB_OUTPUT
       - uses: tauri-apps/tauri-action@v0
         with:
