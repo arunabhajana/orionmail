@@ -22,7 +22,11 @@ try{
   fs.writeFileSync(path.join(ROOT,'.release-output/tauri.release.json'),JSON.stringify({plugins:{updater:{pubkey}}},null,2));
  }else if(command==='manifest'){
   const manifest=JSON.parse(fs.readFileSync(file,'utf8')),platform=manifest.platforms?.['windows-x86_64'];
-  if(manifest.version!==version||!platform?.signature?.trim()||!platform.url?.startsWith(`https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/v${version}/`))throw new Error('Updater manifest must contain the current updater-signed Windows release.');
+  if(manifest.version!==version)throw new Error(`Updater manifest version must be ${version}; received ${JSON.stringify(manifest.version)}.`);
+  if(!platform)throw new Error(`Updater manifest is missing windows-x86_64. Available platforms: ${Object.keys(manifest.platforms??{}).join(', ')||'none'}.`);
+  if(typeof platform.signature!=='string'||!platform.signature.trim())throw new Error('Updater manifest is missing the Windows updater signature.');
+  const expected=`https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/v${version}/`;
+  if(typeof platform.url!=='string'||!platform.url.startsWith(expected))throw new Error(`Updater Windows URL must start with ${expected}. Pass tagName to tauri-action so draft assets use version-specific URLs.`);
  }else if(command==='start'){
   const next=process.argv[3];if(!next||!/^(patch|minor|major|\d+\.\d+\.\d+)$/.test(next))throw new Error('Supply patch, minor, major or a version.');
   if(git('status','--porcelain'))throw new Error('Start from a clean checkout.');

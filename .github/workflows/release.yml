@@ -63,6 +63,7 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         with:
           releaseId: ${{ steps.draft.outputs.id }}
+          tagName: ${{ github.ref_name }}
           tauriScript: npm run tauri
           args: --config .release-output/tauri.release.json --bundles nsis
           updaterJsonPreferNsis: true
