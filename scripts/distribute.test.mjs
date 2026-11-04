@@ -37,6 +37,9 @@ test('updater manifest accepts only the current signed Windows version and expec
  try{
   const manifest={version,platforms:{'windows-x86_64':{signature:'test-signature',url:`https://github.com/arunabhajana/orionmail/releases/download/v${version}/OrionMail-setup.exe`}}};
   fs.writeFileSync(file,JSON.stringify(manifest));assert.equal(run(['manifest',file],{GITHUB_REPOSITORY:'arunabhajana/orionmail'}).status,0);
+  manifest.platforms['windows-x86_64'].url='https://github.com/arunabhajana/orionmail/releases/latest/download/OrionMail-setup.exe';fs.writeFileSync(file,JSON.stringify(manifest));assert.match(run(['manifest',file],{GITHUB_REPOSITORY:'arunabhajana/orionmail'}).stderr,/Pass tagName/);
+  manifest.platforms['windows-x86_64'].url=`https://github.com/arunabhajana/orionmail/releases/download/v${version}/OrionMail-setup.exe`;
+  manifest.version='0.0.0';fs.writeFileSync(file,JSON.stringify(manifest));assert.match(run(['manifest',file],{GITHUB_REPOSITORY:'arunabhajana/orionmail'}).stderr,/manifest version/);manifest.version=version;
   manifest.platforms['windows-x86_64'].signature='';fs.writeFileSync(file,JSON.stringify(manifest));assert.notEqual(run(['manifest',file],{GITHUB_REPOSITORY:'arunabhajana/orionmail'}).status,0);
   manifest.platforms['windows-x86_64'].signature='signature';manifest.platforms['windows-x86_64'].url='https://example.com/setup.exe';fs.writeFileSync(file,JSON.stringify(manifest));assert.notEqual(run(['manifest',file],{GITHUB_REPOSITORY:'arunabhajana/orionmail'}).status,0);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
