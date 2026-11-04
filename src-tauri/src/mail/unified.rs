@@ -66,11 +66,18 @@ fn query(
         .map(|c| serde_json::to_string(&c))
         .transpose()
         .map_err(|e| e.to_string())?;
-    let terms = serde_json::to_string(&query.split_whitespace().take(20).collect::<Vec<_>>())
-        .map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare(SQL).map_err(|e| e.to_string())?;
+    let mut values=vec![rusqlite::types::Value::Text(ids),cursor.map(rusqlite::types::Value::Text).unwrap_or(rusqlite::types::Value::Null),rusqlite::types::Value::Text("[]".into()),rusqlite::types::Value::Text(filter.into()),rusqlite::types::Value::Integer((limit+1)as i64)];
+    let sql=if query.trim().is_empty(){SQL.to_string()}else{
+        let compiled=super::search_query::compile(query,"all",6)?;values.extend(compiled.values);
+        SQL.replacen("WITH candidates AS",&format!("WITH search_matches AS (SELECT m.account_id,m.folder,m.uid,m.uid_validity FROM messages m WHERE m.account_id IN(SELECT value FROM json_each(?1)) AND {}), candidates AS",compiled.sql),1)
+            .replace("AND NOT EXISTS(SELECT 1 FROM mail_snoozes s WHERE", "AND NOT EXISTS(SELECT 1 FROM mail_snoozes s WHERE 0 AND")
+            .replace("ORDER BY date DESC,uid DESC", "ORDER BY date DESC,folder DESC,uid DESC")
+            .replace("m.folder='inbox'","EXISTS(SELECT 1 FROM search_matches sm WHERE sm.account_id=m.account_id AND sm.folder=m.folder AND sm.uid=m.uid AND sm.uid_validity=m.uid_validity)")
+            .replace("AND p.desired='inbox'","AND p.desired='inbox' AND EXISTS(SELECT 1 FROM search_matches sm WHERE sm.account_id=p.account_id AND sm.folder=json_extract(p.source,'$.folder') AND sm.uid=json_extract(p.source,'$.uid') AND sm.uid_validity=json_extract(p.source,'$.uid_validity'))")
+    };
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![ids, cursor, terms, filter, limit + 1], |row| {
+        .query_map(rusqlite::params_from_iter(values), |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -137,7 +144,7 @@ pub async fn get_unified_inbox(
         ids.retain(|i| i == &id);
     }
     let query_text = query_text.unwrap_or_default();
-    if query_text.len() > 1000 {
+    if query_text.len() > 2048 {
         return Err("Search is too long".into());
     }
     let filter = filter.unwrap_or_else(|| "all".into());
@@ -191,6 +198,9 @@ mod tests {
    CREATE TABLE mail_location_intents(account_id TEXT,id TEXT,identity TEXT,optimistic INTEGER,deleted INTEGER,desired TEXT,source TEXT);
    CREATE TABLE mail_pins(account_id TEXT,identity TEXT);
    CREATE TABLE mail_snoozes(account_id TEXT,key TEXT,wake_at INTEGER,cutoff INTEGER,state INTEGER,seen_uid INTEGER);
+   CREATE VIRTUAL TABLE messages_fts USING fts5(subject,sender,recipient,body,attachment_names);
+   CREATE TRIGGER test_search_insert AFTER INSERT ON messages BEGIN INSERT INTO messages_fts(rowid,subject,sender,recipient,body) VALUES(new.rowid,new.subject,new.sender,new.recipient,new.snippet);END;
+   CREATE TRIGGER test_search_update AFTER UPDATE ON messages BEGIN DELETE FROM messages_fts WHERE rowid=old.rowid;INSERT INTO messages_fts(rowid,subject,sender,recipient,body) VALUES(new.rowid,new.subject,new.sender,new.recipient,new.snippet);END;
    INSERT INTO messages(account_id,folder,uid,date,message_id) VALUES('a','inbox',1,100,'same'),('b','inbox',1,100,'same'),('a','inbox',2,90,'older'),('a','sent',3,1000,'sent'),('a','trash',4,1000,'trash'),('removed','inbox',99,9999,'private');").unwrap();
         conn
     }

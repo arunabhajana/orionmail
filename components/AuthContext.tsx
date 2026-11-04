@@ -126,6 +126,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const bootstrap = useCallback(async () => {
         const revision = generation.current;
         try {
+            await invoke('set_network_status',{online:navigator.onLine}).catch(()=>{});
             const result = await invoke<{ user: User | null; needs_refresh: boolean }>('bootstrap_accounts');
             if (revision !== generation.current) return;
             let selected=result.user;

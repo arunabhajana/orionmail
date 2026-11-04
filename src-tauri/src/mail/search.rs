@@ -117,7 +117,7 @@ impl SearchBackend for GmailSearchBackend {
     fn search(&self, account: &Account, imap_mailbox: &str, query: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
         let account_clone = account.clone();
         let imap_mailbox_clone = imap_mailbox.to_string();
-        let query_clone = query.to_string();
+        let query_clone = super::search_query::gmail_query(query);
         Box::pin(async move {
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
                 let imap_mailbox = imap_mailbox_clone.clone();
@@ -134,7 +134,7 @@ impl SearchBackend for GmailSearchBackend {
     fn load_more(&self, account: &Account, imap_mailbox: &str, query: &str, cursor_uid: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u32>, String>> + Send>> {
         let account_clone = account.clone();
         let imap_mailbox_clone = imap_mailbox.to_string();
-        let query_clone = query.to_string();
+        let query_clone = super::search_query::gmail_query(query);
         Box::pin(async move {
             execute_with_session(&account_clone, SessionKind::Search, move |session| {
                 let imap_mailbox = imap_mailbox_clone.clone();
@@ -272,6 +272,7 @@ pub struct SearchCacheEntry {
 pub static SEARCH_CACHE: Lazy<DashMap<String, SearchCacheEntry>> = Lazy::new(DashMap::new);
 
 pub struct SearchContextState {
+    pub local_cursor:Option<super::search_query::Cursor>,
     pub pending: VecDeque<u32>,
     pub streamed: HashSet<u32>,
     pub cursor: Option<u32>,
@@ -344,7 +345,7 @@ pub async fn fetch_and_index_search_message(app_handle: &AppHandle, account: &Ac
     })
 }
 
-pub async fn start_search(app_handle: AppHandle, account: Account, folder: String, query: String, requested_id: Option<String>) -> Result<(String, Vec<MessageHeader>, RemoteSearchState), String> {
+pub async fn start_search(app_handle: AppHandle, account: Account, folder: String, query: String, requested_id: Option<String>) -> Result<(String, Vec<MessageHeader>, RemoteSearchState,bool), String> {
     let start_time = Instant::now();
     if query.trim().is_empty() || query.len() > 2048 || query.chars().any(char::is_control) {
         return Err("Enter a search query of up to 2048 bytes without control characters".to_string());
@@ -371,10 +372,12 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
     let local_account = account.id.clone();
     let local_folder = folder.clone();
     let local_query = query.clone();
-    let local_results = tokio::task::spawn_blocking(move || {
-        FTS5SearchEngine.search(&local_app, &local_account, &local_folder, &local_query, 100)
+    let mut local_results = tokio::task::spawn_blocking(move || {
+        FTS5SearchEngine.search(&local_app, &local_account, &local_folder, &local_query, 101)
     }).await.map_err(|e| format!("Local search failed: {e}"))??;
     let local_ms = start_time.elapsed().as_millis();
+    let has_more_local=local_results.len()>100;local_results.truncate(100);
+    let local_cursor=if has_more_local{local_results.last().map(super::search_query::Cursor::from_header)}else{None};
 
     // 3. Create SearchContext
     let token = CancellationToken::new();
@@ -385,6 +388,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         query: query.clone(),
         cancellation_token: token.clone(),
         state: Mutex::new(SearchContextState {
+            local_cursor,
             pending: VecDeque::new(),
             streamed: HashSet::new(),
             cursor: None,
@@ -403,6 +407,15 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
     });
 
     ACTIVE_SEARCHES.insert(search_id.clone(), context.clone());
+    // Cross-folder and app-specific tag filters have local semantics. Never
+    // merge unrelated server rows into those results or refresh OAuth offline.
+    let parsed=super::search_query::compile(&query,&folder,1)?;
+    let local_only=!crate::mail::connectivity::is_online()||parsed.overrides_folder||super::search_query::parse(&query)?.iter().any(|term|matches!(term.field.as_str(),"tag"|"body"));
+    if local_only {
+        let state=if crate::mail::connectivity::is_online(){RemoteSearchState::Unsupported}else{RemoteSearchState::Offline};
+        context.state.lock().await.remote_state=state;
+        return Ok((search_id,local_results,state,has_more_local));
+    }
 
     // 4. Spawn Background Remote Search Service
     let app_handle_bg = app_handle.clone();
@@ -411,6 +424,10 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
     let folder_bg = folder.clone();
 
     tokio::spawn(async move {
+        tokio::select!{_=tokio::time::sleep(Duration::from_millis(300))=>{},_=token.cancelled()=>return}
+        let account=match crate::auth::bootstrap::ensure_account(&app_handle_bg,&account.id).await{
+            Ok(account)=>account,Err(_)=>{context.state.lock().await.remote_state=RemoteSearchState::Offline;let _=app_handle_bg.emit("mail:search_progress",SearchProgress{search_id:search_id_bg.clone(),state:SearchState::Completed,matched:0,downloaded:0,indexed:0,streamed:0,total:0,progress_text:"Complete (Local results only)".into()});return;}
+        };
         let _ = app_handle_bg.emit("mail:search_progress", SearchProgress {
             search_id: search_id_bg.clone(),
             state: SearchState::SearchingRemote,
@@ -546,7 +563,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
                     search_id: search_id_bg.clone(),
                     query: query_bg.clone(),
                     folder: folder_bg.clone(),
-                    new_messages: existing_msgs,
+                    new_messages: super::search_query::filter_live_flags(&query_bg,existing_msgs),
                 });
             }
         }
@@ -619,7 +636,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
                             search_id: search_id_bg.clone(),
                             query: query_bg.clone(),
                             folder: folder_bg.clone(),
-                            new_messages: new_msgs,
+                            new_messages: super::search_query::filter_live_flags(&query_bg,new_msgs),
                         });
                     }
                     batch_buffer.clear();
@@ -634,7 +651,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
                     search_id: search_id_bg.clone(),
                     query: query_bg.clone(),
                     folder: folder_bg.clone(),
-                    new_messages: new_msgs,
+                    new_messages: super::search_query::filter_live_flags(&query_bg,new_msgs),
                 });
             }
         }
@@ -658,7 +675,7 @@ pub async fn start_search(app_handle: AppHandle, account: Account, folder: Strin
         });
     });
 
-    Ok((search_id, local_results, RemoteSearchState::Running))
+    Ok((search_id, local_results, RemoteSearchState::Running,has_more_local))
 }
 
 pub fn validate_owner(search: &str, account: &str) -> Result<(), String> {
@@ -679,6 +696,18 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
     };
 
     let (account, folder, query, token) = (context.account.clone(), context.folder.clone(), context.query.clone(), context.cancellation_token.clone());
+    let local_cursor=context.state.lock().await.local_cursor.take();
+    if let Some(cursor)=local_cursor {
+        let app=app_handle.clone();let owner=account.id.clone();let scope=folder.clone();let text=query.clone();let restore=cursor.clone();
+        let page=tokio::task::spawn_blocking(move||{let conn=database::open_connection(&app)?;super::search_query::local_page(&conn,&owner,&scope,&text,Some(cursor),100)}).await.map_err(|e|e.to_string())?;
+        let (messages,next)=match page{Ok(page)=>page,Err(error)=>{context.state.lock().await.local_cursor=Some(restore);return Err(error);}};
+        if token.is_cancelled(){return Ok(RemoteSearchState::Completed);}
+        let more=next.is_some();context.state.lock().await.local_cursor=next;
+        let _=app_handle.emit("mail:search_incremental",SearchIncrementalPayload{search_id:search_id.clone(),query,folder,new_messages:messages});
+        let _=app_handle.emit("mail:search_local_more",serde_json::json!({"search_id":search_id,"has_more":more}));
+        let state=context.state.lock().await;
+        return Ok(if more||!state.pending.is_empty()||state.cursor.is_some()||!matches!(state.remote_state,RemoteSearchState::Offline|RemoteSearchState::Completed|RemoteSearchState::Unsupported){RemoteSearchState::Running}else{RemoteSearchState::Completed});
+    }
     
     let mut pending_uids = Vec::new();
     let mut cursor = None;
@@ -734,7 +763,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
                                 search_id: search_id_bg.clone(),
                                 query: query.clone(),
                                 folder: folder.clone(),
-                                new_messages: existing_msgs,
+                                new_messages: super::search_query::filter_live_flags(&query,existing_msgs),
                             });
                         }
                     }
@@ -779,7 +808,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
                             search_id: search_id_bg.clone(),
                             query: query.clone(),
                             folder: folder.clone(),
-                            new_messages: new_msgs,
+                            new_messages: super::search_query::filter_live_flags(&query,new_msgs),
                         });
                     }
                     batch_buffer.clear();
@@ -794,7 +823,7 @@ pub async fn load_more_results(app_handle: AppHandle, search_id: String) -> Resu
                     search_id: search_id_bg.clone(),
                     query: query.clone(),
                     folder: folder.clone(),
-                    new_messages: new_msgs,
+                    new_messages: super::search_query::filter_live_flags(&query,new_msgs),
                 });
             }
         }

@@ -6,10 +6,21 @@ import {listen} from '@tauri-apps/api/event';
 import {useAuth} from '@/components/AuthContext';
 import type {Email,Tag} from '@/lib/types';
 import {mergeUnified,unifiedEmail,type UnifiedCursor,type UnifiedPage} from '@/lib/unified-inbox';
+import {sameMail,mailIdentity} from '@/lib/mail-identity';
 export function useUnifiedInbox(query:string,filter:string,accountFilter:string){
  const {accounts}=useAuth();const path=usePathname();const ids=accounts.map(a=>a.id).sort().join('\n');
  const [rows,setRows]=useState<Email[]>([]),[tags,setTags]=useState<Record<string,Tag[]>>({}),[cursor,setCursor]=useState<UnifiedCursor|null>(null),[loading,setLoading]=useState(true),[moreLoading,setMoreLoading]=useState(false),[error,setError]=useState<string|null>(null);
  const generation=useRef(0),pageSize=useRef(50),resultKey=useRef('');
+ const [readEdits,setReadEdits]=useState<Record<string,{email:Email;unread:boolean}>>({});const editsRevision=useRef(0);
+ const beginRead=useCallback((email:Email,unread:boolean)=>{
+  const key=mailIdentity(email);editsRevision.current++;
+  setReadEdits(previous=>({...previous,[key]:{email,unread}}));
+  return(success:boolean)=>{
+   editsRevision.current++;
+   setRows(previous=>previous.map(row=>sameMail(row,email)?{...row,unread:success?unread:email.unread}:row));
+   setReadEdits(previous=>{const next={...previous};delete next[key];return next;});
+  };
+ },[]);
  const controller=useRef({busy:false,pending:false,schedule:()=>{}});
  const refresh=useCallback(()=>controller.current.schedule(),[]);
  useEffect(()=>{
@@ -18,6 +29,7 @@ export function useUnifiedInbox(query:string,filter:string,accountFilter:string)
   const read=async()=>{
    if(!active)return;if(work.busy){work.pending=true;return;}work.busy=true;
    try{
+    const editsAtStart=editsRevision.current;
     let next:UnifiedCursor|null=null;let collected:Email[]=[];let resultTags:Record<string,Tag[]>={};
     do{
      const response:UnifiedPage=await invoke('get_unified_inbox',{queryText:query,filter,accountFilter:accountFilter||null,limit:Math.min(100,pageSize.current-collected.length),cursor:next});
@@ -25,7 +37,7 @@ export function useUnifiedInbox(query:string,filter:string,accountFilter:string)
      collected=mergeUnified(collected,response.messages.map(unifiedEmail));resultTags=response.tags;next=response.next_cursor;
      if(!response.messages.length)break;
     }while(next&&collected.length<pageSize.current);
-    if(active){setRows(collected);setTags(resultTags);setCursor(next);setError(null);}
+    if(active&&editsAtStart===editsRevision.current){setRows(collected);setTags(resultTags);setCursor(next);setError(null);}else if(active)work.pending=true;
    }catch(e){if(active)setError(String(e));}
    finally{work.busy=false;if(active){setLoading(false);if(work.pending){work.pending=false;work.schedule();}}}
   };
@@ -38,11 +50,11 @@ export function useUnifiedInbox(query:string,filter:string,accountFilter:string)
   return()=>{active=false;invalidate();clearTimeout(timer);window.removeEventListener('focus',work.schedule);document.removeEventListener('visibilitychange',work.schedule);for(const stop of stops)void stop.then(fn=>fn()).catch(()=>{});};
  },[ids,path,query,filter,accountFilter]);
  const loadMore=useCallback(async()=>{
-  const work=controller.current;if(!cursor||work.busy||loading)return;work.busy=true;const revision=generation.current;setMoreLoading(true);
-  try{const response=await invoke<UnifiedPage>('get_unified_inbox',{queryText:query,filter,accountFilter:accountFilter||null,limit:50,cursor});if(revision===generation.current){setRows(old=>mergeUnified(old,response.messages.map(unifiedEmail)));setCursor(response.next_cursor);pageSize.current+=response.messages.length;}}
+  const work=controller.current;if(!cursor||work.busy||loading)return;work.busy=true;const revision=generation.current,editsAtStart=editsRevision.current;setMoreLoading(true);
+  try{const response=await invoke<UnifiedPage>('get_unified_inbox',{queryText:query,filter,accountFilter:accountFilter||null,limit:50,cursor});if(revision===generation.current&&editsAtStart===editsRevision.current){setRows(old=>mergeUnified(old,response.messages.map(unifiedEmail)));setCursor(response.next_cursor);pageSize.current+=response.messages.length;}else if(revision===generation.current)work.pending=true;}
   catch(e){if(revision===generation.current)setError(String(e));}
   finally{work.busy=false;if(revision===generation.current){setMoreLoading(false);if(work.pending){work.pending=false;work.schedule();}}}
  },[cursor,loading,query,filter,accountFilter]);
- const visibleRows=useMemo(()=>{const connected=new Set(ids.split('\n'));return rows.filter(row=>connected.has(row.accountId||''));},[rows,ids]);
- return {rows:visibleRows,tags,loading,error,refresh,loadMore,moreLoading,hasMore:Boolean(cursor)};
+ const visibleRows=useMemo(()=>{const connected=new Set(ids.split('\n'));return rows.filter(row=>connected.has(row.accountId||'')).map(row=>{const edit=readEdits[mailIdentity(row)];return edit?{...row,unread:edit.unread}:row;});},[rows,ids,readEdits]);
+ return {rows:visibleRows,tags,loading,error,refresh,loadMore,beginRead,moreLoading,hasMore:Boolean(cursor)};
 }

@@ -11,6 +11,7 @@ export function sameMail(a: Email, b: Email): boolean {
 }
 
 const MAIL_SCALARS = [
+    'hasAttachments',
     'accountId', 'id', 'uid', 'uidValidity', 'messageId', 'threadId', 'sender', 'senderEmail', 'to',
     'subject', 'preview', 'date', 'time', 'timestamp', 'unread', 'starred', 'pinned', 'snoozedUntil', 'resurfacedAt',
     'folder', 'avatar', 'body', 'tagsPending', 'locationId', 'displayFolder',

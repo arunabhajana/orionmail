@@ -97,11 +97,14 @@ pub async fn switch_account(app_handle: AppHandle, account_id: String) -> Result
 #[command]
 pub async fn logout_user(app_handle: AppHandle, account_id: String) -> Result<Option<UserProfile>, String> {
     let _transition = ACCOUNT_TRANSITION.lock().await;
+    let _intent=crate::mail::drafts::outbox::intent_guard().await;
+    let _delivery=crate::mail::drafts::outbox::disconnect_guard()?;
     let credentials = crate::auth::bootstrap::credential_guard(&account_id).await?;
     crate::auth::app_lock::require_unlocked(&app_handle)?;
     let cleanup_app = app_handle.clone();
     let cleanup_id = account_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        crate::mail::drafts::outbox::suspend_account(&cleanup_app,&cleanup_id)?;
         session::remove_account(&cleanup_app, cleanup_id.clone())?;
         if let Err(error) = crate::mail::notifications::forget_account(&cleanup_app, &cleanup_id) { log::warn!("Could not remove signed-out notifications: {}", error); }
         Ok::<_,String>(())
@@ -228,13 +231,19 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32, l
                 None => true, // If we don't have extracted data, we need it!
             };
 
-            if !needs_reextraction {
+            {
                 let attachments = if let Some(json) = attachments_json {
                     serde_json::from_str(&json).unwrap_or_default()
                 } else {
                     Vec::new()
                 };
-                let extracted_data = extracted_data_json.and_then(|json| serde_json::from_str(&json).ok());
+                let mut extracted_data:Option<serde_json::Value> = extracted_data_json.and_then(|json| serde_json::from_str(&json).ok());
+                if needs_reextraction {
+                    let calendars=extracted_data.as_ref().and_then(|value|value.get("entities")).and_then(|value|value.as_array()).map(|entities|entities.iter().filter_map(|entity|entity.get("metadata").and_then(|value|value.get("vcalendar")).and_then(|value|value.as_str())).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+                    let headers=crate::mail::database::get_messages_by_uids(&cache_app,&cache_account,&cache_folder,&[uid]).unwrap_or_default();
+                    let extracted=crate::mail::extraction::run_with_context(&cached_body,&calendars,headers.first().map(|header|header.subject.as_str()).unwrap_or(""),headers.first().map(|header|header.from.as_str()).unwrap_or(""));
+                    if let Ok(json)=serde_json::to_string(&extracted){let _=crate::mail::database::update_message_extraction(&cache_app,&cache_account,&cache_folder,uid,&cached_body,&json);extracted_data=serde_json::from_str(&json).ok();}
+                }
                 return Some(crate::mail::message_body::MessageDetail { body: cached_body, attachments, extracted_data });
             }
         }
@@ -246,6 +255,7 @@ pub async fn get_message_body(app_handle: AppHandle, folder: String, uid: u32, l
     }
 
     let profile_id=account.id;
+    if !crate::mail::connectivity::is_online(){return Err("This message has not been downloaded yet. Connect to the internet and try again. Your cached mail is still available.".into());}
     let account=crate::auth::bootstrap::ensure_active_account(&app_handle).await?;
     if account.id!=profile_id{return Err("Account changed. Reopen the message.".into());}
 

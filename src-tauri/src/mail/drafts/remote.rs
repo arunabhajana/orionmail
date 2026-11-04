@@ -29,6 +29,7 @@ async fn api(
     path: &str,
     body: Option<Value>,
 ) -> Result<Value, ApiError> {
+    if !crate::mail::connectivity::is_online(){return Err(ApiError{message:"You're offline. Your message is saved on this device.".into(),uncertain:false,missing:false,forbidden:false});}
     let mutation = method != reqwest::Method::GET;
     let mut request = CLIENT
         .request(
@@ -107,7 +108,7 @@ fn origin(headers: &[mailparse::MailHeader<'_>]) -> Option<(String, i64)> {
     uuid::Uuid::parse_str(id).ok()?;
     Some((id.into(), revision.parse().ok()?))
 }
-fn addresses(value: &str) -> Result<Vec<String>, String> {
+pub(super) fn addresses(value: &str) -> Result<Vec<String>, String> {
     if value.trim().is_empty() {
         return Ok(vec![]);
     }
@@ -413,7 +414,7 @@ pub async fn sync(app: &AppHandle, account: &Account) -> Result<(), String> {
         .filter(|(id, ver)| {
             !local
                 .iter()
-                .any(|d| d.remote_id.as_ref() == Some(id) && d.remote_version.as_ref() == Some(ver))
+                .any(|d| d.remote_id.as_ref() == Some(id) && (d.remote_version.as_ref() == Some(ver)||super::outbox::contains(app,&account.id,&d.id).unwrap_or(true)&&d.state!="checking"))
         })
         .cloned()
         .collect();
@@ -490,6 +491,7 @@ pub async fn sync(app: &AppHandle, account: &Account) -> Result<(), String> {
         }
         let current = store::by_remote(app, &account.id, &id)?;
         if let Some(draft) = current {
+            if super::outbox::contains(app,&account.id,&draft.id)?{continue;}
             if matches!(draft.state.as_str(), "sending" | "send_unknown") {
                 continue;
             }
@@ -508,6 +510,7 @@ pub async fn sync(app: &AppHandle, account: &Account) -> Result<(), String> {
         }
     }
     for draft in store::all(app, &account.id)? {
+        if super::outbox::contains(app,&account.id,&draft.id)?{continue;}
         if draft
             .remote_id
             .as_ref()
@@ -528,6 +531,7 @@ pub async fn sync(app: &AppHandle, account: &Account) -> Result<(), String> {
         }
     }
     for draft in store::all(app, &account.id)? {
+        if super::outbox::contains(app,&account.id,&draft.id)?{continue;}
         if matches!(
             draft.state.as_str(),
             "checking" | "sending" | "send_unknown" | "needs_attachments"
@@ -747,6 +751,11 @@ pub async fn send(
     // Send the reviewed local snapshot, even if another Gmail editor changes
     // the container between our version check and the send request.
     let (reviewed,_)=mime(app,account,&draft)?;
+    crate::auth::app_lock::require_unlocked(app)?;
+    if !crate::auth::session::load_profile_metadata(app).0.iter().any(|profile|profile.id==account.id&&!profile.needs_reauth){return Err("The sending account needs to be connected before delivery.".into());}
+    // Upload acknowledgement can set 'synced'. Persist the send boundary again
+    // before POST so a crash cannot turn an uncertain delivery into a retry.
+    store::status(app,&account.id,id,"sending",None)?;
     match api(account,reqwest::Method::POST,"drafts/send",Some(json!({"id":remote,"message":{"raw":reviewed}}))).await{
         Ok(value)=>{
             sent_confirmed=true;

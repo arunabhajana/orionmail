@@ -465,7 +465,7 @@ fn report_error(app: &AppHandle, error: &str) {
 async fn mark_snapshot_read(app: &AppHandle, token: &str) -> Result<(), String> {
     crate::auth::app_lock::require_unlocked(app)?;
     let batch = store::find(app, token)?;
-    let account = crate::auth::bootstrap::ensure_account(app, &batch.account_id).await?;
+    let account = crate::auth::session::get_account(app, &batch.account_id).ok_or("Account is no longer connected")?;
     let mut queued = 0;
     let mut conflicts = 0;
     {

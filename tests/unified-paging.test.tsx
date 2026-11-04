@@ -25,3 +25,11 @@ it('retains cached rows through Settings and ignores stale search responses',asy
  rerender({query:'old'});await waitFor(()=>expect(resolve).toBeTypeOf('function'));rerender({query:'new'});await waitFor(()=>expect(result.current.rows[0]?.subject).toBe('new'));
  await act(async()=>{resolve(page(0,50,'old'));});expect(result.current.rows[0].subject).toBe('new');
 });
+it('shows read changes before persistence finishes and restores only the failed message',async()=>{
+ const {result}=renderHook(()=>useUnifiedInbox('','all',''));await waitFor(()=>expect(result.current.rows).toHaveLength(50));
+ const first=result.current.rows[0],second=result.current.rows[1];let fail!:(success:boolean)=>void,accept!:(success:boolean)=>void;
+ act(()=>{fail=result.current.beginRead(first,false);accept=result.current.beginRead(second,false);});
+ expect(result.current.rows[0].unread).toBe(false);expect(result.current.rows[1].unread).toBe(false);
+ act(()=>fail(false));expect(result.current.rows[0].unread).toBe(true);expect(result.current.rows[1].unread).toBe(false);
+ act(()=>accept(true));expect(result.current.rows[1].unread).toBe(false);
+});

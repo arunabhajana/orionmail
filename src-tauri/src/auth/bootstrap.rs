@@ -53,6 +53,7 @@ pub async fn ensure_account(app_handle: &AppHandle, account_id: &str) -> Result<
     // Proactively refresh the token 5 minutes before it actually expires to prevent
     // mid-flight authentication failures on long-running IMAP connections.
     if matches!(account.provider, crate::auth::account::MailProvider::Google) && account.expires_at <= current_time + 300 && !account.refresh_token.is_empty() {
+        if !crate::mail::connectivity::is_online(){return Err("OFFLINE: Cached mail is available. Account refresh resumes when connected.".into());}
         let client_id = std::env::var("GOOGLE_CLIENT_ID")
             .unwrap_or_else(|_| option_env!("GOOGLE_CLIENT_ID").unwrap_or("").to_string());
         let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")

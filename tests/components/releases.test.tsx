@@ -2,7 +2,7 @@ import { createElement, useState } from 'react';
 import { render, screen, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { currentRelease } from '@/lib/generated/releases';
+import { currentRelease, releases } from '@/lib/generated/releases';
 vi.mock('next/image', () => ({ default: ({ src, alt }: { src: string; alt: string }) => createElement('img', { src, alt }) }));
 import { ReleaseNotesPanel, WhatsNewModal } from '@/components/settings/ReleaseNotes';
 
@@ -18,7 +18,19 @@ describe('release content from the versioned file', () => {
         expect(screen.queryByRole('button', { name: /what.s new/i })).not.toBeInTheDocument();
         await user.click(screen.getByText('Release notes'));
         expect(title).toBeVisible();
-        for (const section of currentRelease.sections) expect(screen.getByRole('heading', { name: section.category })).toBeInTheDocument();
+        const currentNotes = screen.getByRole('article', { name: `Version ${currentRelease.version} release notes` });
+        for (const section of currentRelease.sections) expect(within(currentNotes).getByRole('heading', { name: section.category })).toBeVisible();
+        for (const release of releases.filter(entry => entry.version !== currentRelease.version)) {
+            const summary = screen.getByText(`Version ${release.version} · ${release.title}`);
+            expect(summary.closest('details')).not.toHaveAttribute('open');
+            const history = screen.getByRole('article', { name: `Version ${release.version} release notes`, hidden: true });
+            expect(history).not.toBeVisible();
+            await user.click(summary);
+            expect(history).toBeVisible();
+            for (const section of release.sections) expect(within(history).getByRole('heading', { name: section.category })).toBeVisible();
+            await user.click(summary);
+            expect(history).not.toBeVisible();
+        }
         expect(screen.queryByRole('img')).not.toBeInTheDocument();
         await user.click(screen.getByText('Release notes'));
         expect(title).not.toBeVisible();

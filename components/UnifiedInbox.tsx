@@ -12,6 +12,7 @@ import {useSync} from './SyncContext';
 import {useAccountIdentities} from './accounts/AccountIdentityControls';
 import {useUnifiedInbox} from '@/hooks/useUnifiedInbox';
 import {isAccountRequestCancelled} from '@/lib/account-client';
+import {beginUnreadChange} from '@/lib/unread-changes';
 import {ownedMail} from '@/lib/owned-mail';
 import {unifiedId,sameUnifiedMessage} from '@/lib/unified-inbox';
 import {mailIdentity} from '@/lib/mail-identity';
@@ -22,6 +23,9 @@ import type {AccountTransport} from '@/lib/account-client';
 import type {Email,Tag} from '@/lib/types';
 import type {DraftPayload,MailDraft} from '@/lib/drafts';
 import Sidebar from './Sidebar';
+import {OfflineStatus} from './inbox/OfflineStatus';
+import {useMailboxCommands} from './CommandPalette';
+import {Pencil,RefreshCw} from 'lucide-react';
 import EmailList from './EmailList';
 import ConversationReader from './ConversationReader';
 import ComposeModal,{type ComposeHandle} from './ComposeModal';
@@ -68,6 +72,7 @@ export default function UnifiedInbox(){
  const fields=(email:Email)=>({accountId:email.accountId,folder:email.folder,uid:email.uid,expectedUidValidity:email.uidValidity??0,localId:email.locationId});
  const patchSelected=(email:Email,patch:Partial<Email>)=>setSelected(previous=>previous&&mailIdentity(previous)===mailIdentity(email)?{...previous,...patch}:previous);
  const perform=(email:Email,action:Action)=>{
+  if(action==='markRead'&&(!email.unread||!email.accountId||!isAccountCurrent(email.accountId)))return;
   const key=mailIdentity(email);if(busy.current.has(key))return;busy.current.add(key);
   const actionSequence=sequence.current;
   void run(email,async ipc=>{
@@ -79,7 +84,12 @@ export default function UnifiedInbox(){
    }else if(action==='star'){
     await ipc('toggle_star',{...fields(email),shouldStar:!email.starred});if(alive.current)patchSelected(email,{starred:!email.starred});
    }else if(action==='read'||action==='markRead'){
-    await ipc(action==='markRead'?'mark_as_read':'toggle_read',{...fields(email),shouldRead:action==='markRead'||email.unread});if(alive.current)patchSelected(email,{unread:action==='markRead'?false:!email.unread});
+    const unread=action==='markRead'?false:!email.unread;
+    const finishCount=beginUnreadChange(email.accountId!,email,unread);if(!finishCount)return;
+    const finishRows=feed.beginRead(email,unread);if(alive.current)patchSelected(email,{unread});
+    let success=false;
+    try{await ipc(action==='markRead'?'mark_as_read':'toggle_read',{...fields(email),shouldRead:!unread});success=true;}
+    finally{finishCount(success);finishRows(success);if(!success&&alive.current)patchSelected(email,{unread:email.unread});}
    }
    feed.refresh();
   },action!=='markRead',()=>action!=='markRead'||actionSequence===sequence.current&&Boolean(email.accountId&&isAccountCurrent(email.accountId))).catch(report).finally(()=>busy.current.delete(key));
@@ -119,7 +129,7 @@ export default function UnifiedInbox(){
   }).catch(report).finally(()=>{busy.current.delete(key);if(alive.current)setPreparing(false);toast.dismiss(notice);});
  };
  const navigate=(folder:string)=>{if(!user)return;void auth.switchAccount(user.id,true).then(()=>{view.setFolder(folder);view.setUnified(false);}).catch(report);};
- const sync=async()=>{if(syncing)return;setSyncing(true);try{await invoke('sync_unified_inbox');feed.refresh();toast.info('Sync requested for connected inboxes');}catch(error){report(error);}finally{if(alive.current)setSyncing(false);}};
+ const sync=async()=>{if(syncing)return;if(!navigator.onLine){feed.refresh();return;}setSyncing(true);try{await invoke('sync_unified_inbox');feed.refresh();toast.info('Sync requested for connected inboxes');}catch(error){report(error);}finally{if(alive.current)setSyncing(false);}};
  const accountIds=accounts.map(a=>a.id).sort().join('\n');
  useEffect(()=>{
   let active=true;
@@ -154,9 +164,13 @@ export default function UnifiedInbox(){
  const composing=Boolean(compose);
  useEffect(()=>{let active=true,running=false;const consume=async()=>{if(!active||running)return;running=true;try{await mailto();}catch(error){if(active)report(error);}finally{running=false;}};const stop=listen('mailto:pending',()=>{void consume();});void consume();return()=>{active=false;void stop.then(fn=>fn()).catch(()=>{});};},[user?.id,path,composing,preparing]);
  const keyCompose=useEffectEvent(()=>newMessage());
- useEffect(()=>{const key=(event:KeyboardEvent)=>{if(path==='/inbox'&&devicePreferences.shortcutsEnabled&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='n'){event.preventDefault();keyCompose();}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[path,devicePreferences.shortcutsEnabled]);
+ useEffect(()=>{const key=(event:KeyboardEvent)=>{if(event.defaultPrevented||(event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"],[role="dialog"]'))return;if(path==='/inbox'&&devicePreferences.shortcutsEnabled&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='n'){event.preventDefault();keyCompose();}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[path,devicePreferences.shortcutsEnabled]);
  const tagsByAccount=useMemo(()=>Object.fromEntries(Object.entries(feed.tags).map(([owner,tags])=>[owner,Object.fromEntries(tags.map(tag=>[tag.id,tag]))])),[feed.tags]);
  const current=selected?.accountId===user?.id&&!opening ? selected : null;
+ useMailboxCommands(()=>path!=='/inbox'||auth.accountBusy||compose?[]:[
+  {id:'compose.unified.'+user?.id,label:'New message',group:'Compose',keywords:'write send email',shortcut:'Ctrl N',icon:Pencil,run:newMessage},
+  {id:'sync.unified',label:'Sync all inboxes',group:'Mailbox',keywords:'refresh accounts',icon:RefreshCw,run:sync},
+ ]);
  const find=(id:string)=>feed.rows.find(email=>email.id===id);
  const act=(id:string,callback:(email:Email)=>void)=>{const email=find(id);if(email)callback(email);};
  const changeFilter=(value:FilterType)=>{sequence.current++;setOpening(false);setSelected(null);setFilter(value);};
@@ -169,9 +183,9 @@ export default function UnifiedInbox(){
     onToggleStar={id=>act(id,email=>perform(email,'star'))} onToggleRead={id=>act(id,email=>perform(email,'read'))} onDeleteMessage={id=>act(id,email=>perform(email,'delete'))} onTogglePin={id=>act(id,email=>perform(email,'pin'))}
     onReply={id=>act(id,email=>prepare(email,'reply'))} onReplyAll={id=>act(id,email=>prepare(email,'replyAll'))} onForward={id=>act(id,email=>prepare(email,'forward'))} onNewToSender={id=>act(id,email=>prepare(email,'sender'))} onManageTags={id=>act(id,openTags)} onSnooze={id=>act(id,openSnooze)}
     isLoading={feed.loading} isLoadingMore={feed.moreLoading} hasMore={feed.hasMore} onLoadMore={()=>{void feed.loadMore();}} onSearchLoadMore={()=>{void feed.loadMore();}}
-    onSync={()=>{void sync();}} isSyncing={anySyncing} searchQuery={query} onSearchQueryChange={value=>{sequence.current++;setOpening(false);setSelected(null);setQuery(value);}} onSearchClear={()=>setQuery('')}
-    searchProgress={query?{search_id:'unified-local',state:feed.error?'Failed':feed.loading?'SearchingLocal':'Completed',matched:feed.rows.length,downloaded:0,indexed:0,streamed:0,total:feed.rows.length,progress_text:'Searches downloaded inbox mail'}:null}
-    statusBanner={<div className="space-y-2 border-b border-border/50 px-3 pb-3"><div className="flex min-w-0 items-center justify-between gap-2"><p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">Inbox mail · {query?'Searches downloaded mail':`${accounts.length} connected accounts`}</p><SettingSelect compact label="Filter inboxes by account" value={validFilter} options={[["","All accounts"],...accounts.map(account=>[account.id,account.name||account.email] as const)]} onChange={value=>{sequence.current++;setSelected(null);setOpening(false);setAccountFilter(value);}}/></div>{attention.length>0&&<p role="status" className="text-[11px] text-amber-600 dark:text-amber-400">{attention.length} {attention.length===1?'account needs':'accounts need'} attention. Cached mail remains available. <button className="underline" onClick={()=>{if(user)void auth.switchAccount(user.id,true).then(()=>router.push('/settings')).catch(report);}}>Review accounts</button></p>}{feed.error&&<p role="alert" className="text-[11px] text-amber-600 dark:text-amber-400">Could not refresh inboxes. <button className="underline" onClick={feed.refresh}>Try again</button></p>}</div>}/>
+    onSync={()=>{void sync();}} isSyncing={anySyncing} searchQuery={query} onSearchQueryChange={value=>{sequence.current++;setOpening(false);setSelected(null);setQuery(value.trimStart());}} onSearchClear={()=>setQuery('')}
+    searchProgress={query?{search_id:'unified-local',state:feed.error?'Failed':feed.loading?'SearchingLocal':'Completed',matched:feed.rows.length,downloaded:0,indexed:0,streamed:0,total:feed.rows.length,progress_text:'Searches downloaded mail across connected accounts'}:null}
+    statusBanner={<div className="space-y-2 border-b border-border/50 px-3 pb-3"><OfflineStatus/><div className="flex min-w-0 items-center justify-between gap-2"><p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{query?'Mail search':'Inbox mail'} · {query?'Searches downloaded mail':`${accounts.length} connected accounts`}</p><SettingSelect compact label="Filter inboxes by account" value={validFilter} options={[["","All accounts"],...accounts.map(account=>[account.id,account.name||account.email] as const)]} onChange={value=>{sequence.current++;setSelected(null);setOpening(false);setAccountFilter(value);}}/></div>{attention.length>0&&<p role="status" className="text-[11px] text-amber-600 dark:text-amber-400">{attention.length} {attention.length===1?'account needs':'accounts need'} attention. Cached mail remains available. <button className="underline" onClick={()=>{if(user)void auth.switchAccount(user.id,true).then(()=>router.push('/settings')).catch(report);}}>Review accounts</button></p>}{feed.error&&<p role="alert" className="text-[11px] text-amber-600 dark:text-amber-400">{query?`Search: ${feed.error}`:"Could not refresh inboxes."} <button className="underline" onClick={feed.refresh}>Try again</button></p>}</div>}/>
    <ConversationReader className="mail-detail-pane min-h-0 min-w-0 flex-1 flex flex-col" email={current} accountBadge={current?{label:accounts.find(a=>a.id===current.accountId)?.email||'',color:identities.accounts?.[current.accountId||'']?.color}:undefined}
     onBack={()=>{sequence.current++;setOpening(false);setSelected(null);}} onAction={(email,action)=>perform(email,action)} onReply={email=>prepare(email,'reply')} onReplyAll={email=>prepare(email,'replyAll')} onForward={email=>prepare(email,'forward')} onManageTags={openTags} onSnooze={openSnooze}/>
   </div>

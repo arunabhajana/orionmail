@@ -40,24 +40,25 @@ export const EmailListItem = memo(({ email, isSelected, onSelect, onToggleStar, 
             <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
 
-                    <span className={cn('min-w-0 basis-32 grow truncate text-[13px] leading-5', unread ? 'font-semibold text-foreground' : 'font-medium text-foreground/75')} title={sender}>{sent && <span className="mr-1 font-normal text-muted-foreground">To</span>}{sender || 'Unknown sender'}</span>
+                    <span className={cn('min-w-0 basis-32 grow truncate text-[13px] leading-5', unread ? 'font-bold text-foreground' : 'font-normal text-muted-foreground')} title={sender}>{sent && <span className="mr-1 font-normal text-muted-foreground">To</span>}{sender || 'Unknown sender'}</span>
+                    {unread&&<span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary"/>}
                     {email.pinned&&<Pin aria-label="Pinned" className="size-3 shrink-0 fill-primary/15 text-primary" />}
-                    <time title={email.date} dateTime={validDate ? new Date(email.timestamp).toISOString() : undefined} className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{timestamp}</time>
+                    <time title={email.date} dateTime={validDate ? new Date(email.timestamp).toISOString() : undefined} className={cn('shrink-0 text-[11px] tabular-nums',unread?'font-semibold text-foreground/85':'text-muted-foreground')}>{timestamp}</time>
                     <button type="button" aria-label={email.starred ? 'Unstar message' : 'Star message'} aria-pressed={email.starred} disabled={!onToggleStar} onClick={() => onToggleStar?.(email.id)} className={cn('mail-star-button pointer-events-auto relative z-10 -mr-1', email.starred && 'is-starred')}><Star className={cn('size-3.5', email.starred && 'fill-current')} /></button>
                 </div>
                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <h3 className={cn('min-w-0 basis-32 grow truncate text-[13px] leading-5', unread ? 'font-semibold text-foreground/90' : 'font-medium text-foreground/80')} title={email.subject}>{email.subject || '(No subject)'}</h3>
+                <h3 className={cn('min-w-0 basis-32 grow truncate text-[13px] leading-5', unread ? 'font-semibold text-foreground' : 'font-normal text-foreground/70')} title={email.subject}>{email.subject || '(No subject)'}</h3>
                     {conversationCount>1&&<span title={`Conversation with ${conversationCount} messages`} className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary/[0.08] px-2 py-1 text-[10px] font-medium leading-none text-primary"><MessagesSquare aria-hidden="true" className="size-3"/><span>{conversationCount} messages</span></span>}
                 </div>
                 {preferences.previewLines !== '0' && <p className={cn('mt-1 text-xs leading-[1.65] text-muted-foreground', preferences.previewLines === '1' ? 'line-clamp-1' : 'line-clamp-2')}>{replyPreview(email.preview) || 'No preview available'}</p>}
                 {accountLabel&&<p className="mt-2 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground" title={accountLabel}><span className="size-1.5 shrink-0 rounded-full" style={{backgroundColor:accountColor||'#3b82f6'}}/><span className="truncate">{accountLabel}</span></p>}
                 {email.snoozedUntil&&<p className="mt-2 text-[10px] font-medium text-primary">Snoozed until {new Date(email.snoozedUntil*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</p>}
-                {(tags.length > 0 || email.attachments.length > 0) && <div className="mt-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden">
+                {(tags.length > 0 || email.attachments.length > 0||email.hasAttachments) && <div className="mt-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden">
 
                     {tags.slice(0, 2).map(tag => <span key={tag.id} className="inline-flex max-w-28 items-center gap-1.5 truncate rounded-md bg-black/[0.035] px-1.5 py-0.5 text-[10px] text-muted-foreground dark:bg-white/[0.05]" title={tag.name}><span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: tag.bg_color || '#94a3b8' }} /><span className="truncate">{tag.name}</span></span>)}
                     {tags.length > 2 && <span className="text-[10px] text-muted-foreground">+{tags.length - 2}</span>}
                     {email.tagsPending && <Loader2 aria-label="Saving tags to Gmail" className="size-3 shrink-0 animate-spin text-primary" />}
-                    {email.attachments.length > 0 && <Paperclip aria-label="Has attachments" className="ml-auto size-3 text-muted-foreground" />}
+                    {(email.attachments.length > 0||email.hasAttachments) && <Paperclip aria-label="Has attachments" className="ml-auto size-3 text-muted-foreground" />}
                 </div>}
             </div>
         </div>

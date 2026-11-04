@@ -18,6 +18,7 @@ export const ACCOUNT_COMMANDS = new Set([
     'mark_as_read', 'toggle_read', 'toggle_star', 'delete_message', 'prepare_reply', 'prepare_forward',
     'list_drafts', 'draft_status', 'open_draft', 'save_draft', 'release_draft', 'discard_draft',
     'sync_drafts', 'send_draft', 'resolve_draft_send', 'fork_draft', 'copy_draft_to_account', 'recover_draft',
+    'queue_draft', 'list_outbox', 'read_outbox', 'cancel_outbox', 'retry_outbox',
     'list_mail_pins', 'set_mail_pin', 'snooze_mail', 'unsnooze_mail', 'list_snoozed_mail',
     'trash_action', 'list_trash_actions', 'undo_trash_action',
 ]);

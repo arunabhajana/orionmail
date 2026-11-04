@@ -363,6 +363,8 @@ html, body {
 .dark .mail-message-card { background: rgb(255 255 255 / .012); }
 .dark .mail-message-card:hover { background: rgb(255 255 255 / .035); }
 .dark .mail-message-card.is-selected { background: rgb(255 255 255 / .065); }
+.mail-message-card.is-unread:not(.is-selected) { background: color-mix(in srgb, var(--color-primary) 5%, transparent); border-color: color-mix(in srgb, var(--color-primary) 12%, transparent); }
+.mail-message-card.is-unread:not(.is-selected):hover { background: color-mix(in srgb, var(--color-primary) 9%, transparent); }
 .mail-message-hit { position: absolute; inset: 0; z-index: 1; border-radius: inherit; cursor: pointer; outline: none; }
 .mail-message-hit:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 .mail-sender-avatar { display: inline-flex; width: 32px; height: 32px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 11px; background: color-mix(in srgb, var(--color-primary) 8%, transparent); color: color-mix(in srgb, var(--color-primary) 70%, var(--color-foreground)); border: 1px solid color-mix(in srgb, var(--color-primary) 6%, transparent); font-size: 10px; font-weight: 600; letter-spacing: .02em; }

@@ -120,5 +120,5 @@ export function useDraftComposer(accountId: string | undefined, initial: MailDra
             setError(null);
         } finally { if (alive.current) setSaving(false); }
     }, [accountId, clearJournal]);
-    return { flush, release, discard, markSent, saveCopy, resolveSend, state, error, saving, blocked: ['sending', 'send_unknown', 'sent'].includes(state), unconfirmed: ['checking', 'needs_attachments'].includes(state) };
+    return { flush, release, discard, markSent, markQueued:markSent, saveCopy, resolveSend, state, error, saving, blocked: ['sending', 'send_unknown', 'sent','outbox'].includes(state), unconfirmed: ['checking', 'needs_attachments'].includes(state) };
 }

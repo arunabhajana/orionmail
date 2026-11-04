@@ -50,6 +50,14 @@ The compose window lets you choose a sending account when several are connected.
 
 Conversation grouping can be changed in **Settings → Reading & Inbox**. Unrelated messages, including separate verification emails, are not grouped simply because they share a sender or subject.
 
+## Find mail and move faster
+
+Press **Ctrl+S** to focus mail search, or open its filter button to choose a sender, recipient, subject, tag, date range, read status or attachments. Search in **All inboxes** covers downloaded mail across your connected accounts and folders.
+
+You can also type filters directly: `from:alex subject:"trip plans" has:attachment`, `tag:Work is:unread`, or `in:all after:2026-11-01 -from:news@example.com`. Dates use `YYYY-MM-DD` in UTC; `after:` includes the selected day and `before:` excludes it. Downloaded bodies and attachment names support `body:` and `filename:`. Uncached content needs a connection and a supported server search.
+
+Press **Ctrl+K** for the command palette to search mail, navigate folders and tags, switch accounts, compose, or act on the open message. Type `>` to show commands only, use the arrow keys to navigate, and press Enter to run a command. In the compose editor, Ctrl+K keeps its Insert Link function.
+
 ## Read your way
 
 Choose your theme, accent colour, and mailbox layout in **Settings → Appearance**.
@@ -79,7 +87,9 @@ Choose which mail alerts you receive, enable **Do not disturb**, or schedule qui
 
 Remote images are blocked by default until you allow them for a message. Settings also include external-link confirmation, Windows Hello app-lock controls, and local cache preferences.
 
-Downloaded messages remain available when you are offline. Bodies that have not been downloaded, sending, syncing, and new attachment downloads require a connection. Cache limits or clearing downloaded bodies may require messages to be downloaded again.
+Downloaded messages remain available when you are offline. You can write mail and press Send without a connection: OrionMail saves the message and its attachments in **Outbox**, then delivers it when the app is running and connected. Outbox shows delivery status and lets you retry or return a waiting message to Drafts. If delivery is uncertain, check Sent before sending another copy.
+
+Pending read/star changes, message tags and trash actions are saved locally and retried after reconnecting or reopening OrionMail. Fully quitting pauses background work; it resumes when the app opens again. Bodies that have not been downloaded and new attachment downloads still need a connection. Cache limits or clearing downloaded bodies may require messages to be downloaded again.
 
 ## Stay up to date
 

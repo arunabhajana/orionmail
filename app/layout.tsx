@@ -18,6 +18,7 @@ import { Toaster } from "sonner";
 import { GlobalLoader } from "@/components/GlobalLoader";
 import { AppLockGate } from "@/components/AppLockGate";
 import { AppContextMenus } from "@/components/ui/AppContextMenus";
+import {CommandPaletteProvider} from '@/components/CommandPalette';
 
 const inter = Inter({
   subsets: ["latin"],
@@ -55,7 +56,7 @@ export default function RootLayout({
                   <MailboxViewProvider><SyncProvider>
                     <DownloadProvider>
                       <AppLockGate>
-                        <UpdateProvider><AppContextMenus>
+                        <UpdateProvider><AppContextMenus><CommandPaletteProvider>
                         <div className="app-window">
                           <MailtoNavigation />
                           <GlobalLoader />
@@ -66,7 +67,7 @@ export default function RootLayout({
                           </div>
                           <Toaster theme="system" richColors position="top-center" />
                         </div>
-                        </AppContextMenus></UpdateProvider>
+                        </CommandPaletteProvider></AppContextMenus></UpdateProvider>
                       </AppLockGate>
                     </DownloadProvider>
                   </SyncProvider></MailboxViewProvider>

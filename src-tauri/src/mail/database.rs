@@ -524,6 +524,8 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_thread ON messages(account_id, thread_id)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_seen ON messages(account_id, seen)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_flagged ON messages(account_id, flagged)", ()).map_err(|e| e.to_string())?;
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_messages_account_seen_date ON messages(account_id,seen,date DESC);
+        CREATE INDEX IF NOT EXISTS idx_messages_account_attachment_date ON messages(account_id,has_attachments,date DESC);").map_err(|e|e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_account_message_id ON messages(account_id, message_id)", ()).map_err(|e| e.to_string())?;
 
     // FTS5 Setup & Resumable Contentless FTS Migration
@@ -740,6 +742,7 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), String> {
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_message_tags_message ON message_tags(account_id, folder, message_uid)", ()).map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_message_tags_tag ON message_tags(account_id, tag_id)", ()).map_err(|e| e.to_string())?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_account_name_search ON tags(account_id,name COLLATE NOCASE)",()).map_err(|e|e.to_string())?;
 
     // Reset sync_in_progress on startup to avoid permanent soft-locks from previous crashes
     conn.execute("UPDATE folder_sync_state SET sync_in_progress = 0", ()).map_err(|e| e.to_string())?;
@@ -1431,93 +1434,8 @@ pub const VISIBLE_MAIL_CTE:&str="WITH visible_mail AS (
  UNION ALL SELECT desired,json_extract(source,'$.seen'),json_extract(source,'$.flagged'),identity FROM mail_location_intents WHERE account_id=?1 AND optimistic=1 AND deleted=0 AND desired IN ('inbox','trash'))";
 
 pub fn search_messages_local(app_handle: &AppHandle, account_id: &str, folder: &str, query: &str, limit: u32) -> Result<Vec<MessageHeader>, String> {
-    let conn = open_connection(app_handle)?;
-
-    // Match tokenizer boundaries without losing Unicode or joining email-address tokens.
-    // Quote each token so renderer input cannot become FTS syntax.
-    let cleaned: Vec<String> = query.split(|c: char| !c.is_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .take(32)
-        .map(|token| format!("\"{}\"*", token))
-        .collect();
-    let match_query = cleaned.join(" ");
-
-    if match_query.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // score = bm25(messages_fts) + recent_bonus + flag_bonus
-    // In SQLite FTS5, bm25() is smaller (more negative) for better matches.
-    // So we subtract bonuses to make the score even more negative.
-    let sql = if folder == "all" {
-        "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
-         FROM messages m
-         JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
-         WHERE m.account_id = ?1 AND m.folder<>'trash' AND NOT EXISTS (SELECT 1 FROM mail_location_intents p WHERE p.account_id=m.account_id AND p.optimistic=1 AND p.identity=CASE WHEN NULLIF(m.message_id,'') IS NOT NULL THEN json_array('id',m.message_id,m.date,m.sender,m.subject) ELSE json_array('row',m.folder,m.uid,m.uid_validity) END) AND messages_fts MATCH ?2
-         ORDER BY bm25(messages_fts, 0.0, 8.0, 5.0, 3.0, 1.0, 1.0) ASC, m.date DESC
-         LIMIT ?3"
-    } else {
-        "SELECT m.uid, m.uid_validity, m.subject, m.sender, m.date, m.seen, m.flagged, m.snippet, m.folder, m.has_attachments, m.thread_id, m.recipient, m.message_id
-         FROM messages m
-         JOIN messages_fts f ON m.rowid = f.rowid AND m.account_id = f.account_id
-         WHERE m.account_id = ?1 AND NOT EXISTS (SELECT 1 FROM mail_location_intents p WHERE p.account_id=m.account_id AND p.optimistic=1 AND p.identity=CASE WHEN NULLIF(m.message_id,'') IS NOT NULL THEN json_array('id',m.message_id,m.date,m.sender,m.subject) ELSE json_array('row',m.folder,m.uid,m.uid_validity) END) AND ((?2 = 'starred' AND m.flagged = 1 AND m.folder<>'trash') OR m.folder = ?2 OR (?2 LIKE 'tag:%' AND m.folder<>'trash' AND EXISTS (
-             SELECT 1 FROM message_tags mt WHERE mt.account_id = m.account_id AND mt.folder = m.folder AND mt.message_uid = m.uid AND mt.tag_id = substr(?2, 5)
-         ))) AND messages_fts MATCH ?3
-         ORDER BY bm25(messages_fts, 0.0, 8.0, 5.0, 3.0, 1.0, 1.0) ASC, m.date DESC
-         LIMIT ?4"
-    };
-
-    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-
-    let mut messages = Vec::new();
-    if folder == "all" {
-        let rows = stmt.query_map(rusqlite::params![account_id, match_query, limit], |row| {
-            Ok(MessageHeader {
-                uid: row.get(0)?,
-                uid_validity: row.get(1)?,
-                subject: row.get(2)?,
-                from: row.get(3)?,
-                date: row.get(4)?,
-                seen: row.get(5)?,
-                flagged: row.get(6)?,
-                snippet: row.get(7)?,
-                folder: row.get(8)?,
-                has_attachments: row.get(9)?,
-                thread_id: row.get(10)?,
-                to: row.get(11)?,
-                message_id: row.get(12)?,
-                tags: Vec::new(),
-            })
-        }).map_err(|e| e.to_string())?;
-        for msg in rows.flatten() {
-            messages.push(msg);
-        }
-    } else {
-        let rows = stmt.query_map(rusqlite::params![account_id, folder, match_query, limit], |row| {
-            Ok(MessageHeader {
-                uid: row.get(0)?,
-                uid_validity: row.get(1)?,
-                subject: row.get(2)?,
-                from: row.get(3)?,
-                date: row.get(4)?,
-                seen: row.get(5)?,
-                flagged: row.get(6)?,
-                snippet: row.get(7)?,
-                folder: row.get(8)?,
-                has_attachments: row.get(9)?,
-                thread_id: row.get(10)?,
-                to: row.get(11)?,
-                message_id: row.get(12)?,
-                tags: Vec::new(),
-            })
-        }).map_err(|e| e.to_string())?;
-        for msg in rows.flatten() {
-            messages.push(msg);
-        }
-    }
-
-    populate_message_tags(&conn, account_id, &mut messages);
-    Ok(messages)
+    let conn=open_connection(app_handle)?;
+    super::search_query::local_page(&conn,account_id,folder,query,None,limit).map(|page|page.0)
 }
 
 pub fn get_existing_uids(app_handle: &AppHandle, account_id: &str, folder: &str, uids: &[u32]) -> Result<std::collections::HashSet<u32>, String> {

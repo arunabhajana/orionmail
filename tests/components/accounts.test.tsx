@@ -29,6 +29,7 @@ beforeEach(() => {
     localStorage.removeItem('orion_account_identity');
     profiles = [profile('a'), profile('b')]; active = 'a'; native.events.clear(); native.invoke.mockReset(); native.router.push.mockReset();
     native.invoke.mockImplementation(async (name: string, args?: { accountId?: string }) => {
+        if (name === 'set_network_status') return null;
         if (name === 'get_app_settings') return { app_lock_enabled: false };
         if (name === 'bootstrap_accounts') return { user: profiles.find(p => p.id === active) ?? null, needs_refresh: false };
         if (name === 'list_accounts') return profiles;
@@ -37,6 +38,15 @@ beforeEach(() => {
         if (name === 'logout_user') { profiles = profiles.filter(p => p.id !== args?.accountId); if (active === args?.accountId) active = profiles[0]?.id ?? null; return profiles.find(p => p.id === active) ?? null; }
         throw new Error(`Unexpected native command: ${name}`);
     });
+});
+
+it('sets the offline hint before bootstrap and keeps both cached account profiles',async()=>{
+    vi.spyOn(navigator,'onLine','get').mockReturnValue(false);
+    render(<App/>);await screen.findByText('Active: a');
+    const hint=native.invoke.mock.calls.findIndex(([name,args])=>name==='set_network_status'&&args.online===false);
+    const bootstrap=native.invoke.mock.calls.findIndex(([name])=>name==='bootstrap_accounts');
+    expect(hint).toBeGreaterThanOrEqual(0);expect(hint).toBeLessThan(bootstrap);
+    expect(auth.accounts.map(account=>account.id)).toEqual(['a','b']);expect(native.router.push).not.toHaveBeenCalledWith('/');
 });
 
 it('uses the preferred startup account once and preserves later selections on reconnect', async () => {

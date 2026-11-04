@@ -35,6 +35,8 @@ import { useAuth } from "./AuthContext";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useDraftComposer } from '@/hooks/useDraftComposer';
 import { draftStatus, type DraftPayload, type MailDraft } from '@/lib/drafts';
+import {toast as notify} from 'sonner';
+import {useNetworkStatus} from '@/hooks/useNetworkStatus';
 
 // --------------------------------------------------------------------------
 // Types
@@ -236,10 +238,11 @@ function LinkDialog({ open, initialUrl, isEditing, onConfirm, onCancel }: LinkDi
 // --------------------------------------------------------------------------
 
 export type ComposeWindowState = "normal" | "maximized" | "minimized" | "hidden";
-export type ComposeStatus = "draft" | "sending" | "sent" | "failed";
+export type ComposeStatus = "draft" | "sending" | "queued" | "failed";
 
-export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSendFailure, windowRef, initialDraft, initialMessage }: ComposeModalProps) {
+export default function ComposeModal({ onClose, windowRef, initialDraft, initialMessage }: ComposeModalProps) {
     const invoke = useAccountInvoke();
+  const online=useNetworkStatus();
   const { preferences } = useAppPreferences();
   const [showSignature, setShowSignature] = useState(false);
   const { user, accounts, accountBusy, switchAccount, registerAccountGuard } = useAuth();
@@ -329,7 +332,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
     plain: !bodyEdited && initialDraft ? initialDraft.payload.plain : editorValue.plainText,
     attachments: attachments.map(file => ({ id: file.id, name: file.name, size: file.size, mime_type: file.mimeType, ...(file.handle ? { handle: file.handle } : {}) })),
   }), [recipients, inputValue, cc, bcc, subject, bodyEdited, initialDraft, editorValue.html, editorValue.plainText, attachments, preferences.composeFont, initialMessage]);
-  const draft = useDraftComposer(user?.id, initialDraft, draftPayload, hasDraftContent, composeStatus === 'sending' || composeStatus === 'sent');
+  const draft = useDraftComposer(user?.id, initialDraft, draftPayload, hasDraftContent, composeStatus === 'sending' || composeStatus === 'queued');
   const { blocked: guardBlocked, unconfirmed: guardUnconfirmed, flush: guardFlush, release: guardRelease } = draft;
   useEffect(() => registerAccountGuard(async () => {
     if(changingSenderRef.current && !senderSwitchReady.current) throw new Error('Wait for the sender change to finish.');
@@ -407,7 +410,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
   // Send handler
   // --------------------------------------------------------------------------
   const handleSend = async () => {
-    if (sendGuard.current || composeStatus === 'sending' || composeStatus === 'sent') return;
+    if (sendGuard.current || composeStatus === 'sending' || composeStatus === 'queued') return;
     if (invalidRecipient || pendingRecipient || copiesInvalid) { showToast("Check the recipient addresses before sending."); return; }
     if (recipients.length === 0) {
       showToast("Please add at least one recipient.");
@@ -426,33 +429,18 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
       if (preferences.attachmentReminder && attachments.length === 0 && /\b(attach(?:ed|ment|ments)?|enclosed)\b/i.test(editorValue.plainText) && !await confirm("You mentioned an attachment, but no files are attached. Send anyway?", { title: "Missing attachment?", okLabel: "Send anyway", cancelLabel: "Keep editing" })) { sendGuard.current = false; return; }
     } catch (error) { showToast(error instanceof Error ? error.message : "Could not confirm sending."); sendGuard.current = false; return; }
     setComposeStatus("sending");
-    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-    onSendStart?.({
-      id: tempId,
-      subject: subject || '(No Subject)',
-      recipients: recipients,
-      createdAt: Date.now(),
-      status: 'sending'
-    });
-
     try {
       const saved = await draft.flush();
       if (!saved) throw new Error('Save the draft before sending.');
-      const messageId: string = await invoke('send_draft', { accountId: user?.id, id: saved.id, expectedRevision: saved.revision });
+      await invoke('queue_draft', { accountId: user?.id, id: saved.id, expectedRevision: saved.revision });
 
-      draft.markSent();
-      setComposeStatus("sent");
-      onSendSuccess?.(tempId, messageId);
+      draft.markQueued();
+      setComposeStatus("queued");
+      notify.success('Message saved to Outbox', {description:'It sends automatically when connected. You can track it or return it to Drafts from Outbox.'});
 
-      setTimeout(() => {
-        if (windowStateRef.current !== "hidden") {
-          onClose();
-        }
-      }, 2000);
+      onClose();
     } catch (error) {
       console.error("Failed to send message:", error);
-      onSendFailure?.(tempId);
       showToast(String(error));
       sendGuard.current = false;
       setComposeStatus("failed");
@@ -568,18 +556,18 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
   }, [preferences.signature, initialDraft, initialMessage]);
 
   const isSending = composeStatus === 'sending';
-  const editingDisabled = changingSender || isSending || composeStatus === 'sent' || draft.blocked;
+  const editingDisabled = changingSender || isSending || composeStatus === 'queued' || draft.blocked;
   const isSendDisabled = editingDisabled || draft.unconfirmed || isAttaching || recipients.length === 0 || editorValue.isEmpty || invalidRecipient || pendingRecipient || copiesInvalid;
-  const sendDisabledReason = isSending ? 'Sending message…' : composeStatus === 'sent' ? 'Message sent' : isAttaching ? 'Preparing attachments…' : invalidRecipient || copiesInvalid ? 'Check the recipient addresses' : pendingRecipient ? 'Press Enter to add the recipient' : recipients.length === 0 ? 'Add a recipient to get started' : editorValue.isEmpty ? 'Write a message before sending' : '';
+  const sendDisabledReason = isSending ? 'Saving to Outbox…' : composeStatus === 'queued' ? 'Saved to Outbox' : isAttaching ? 'Preparing attachments…' : invalidRecipient || copiesInvalid ? 'Check the recipient addresses' : pendingRecipient ? 'Press Enter to add the recipient' : recipients.length === 0 ? 'Add a recipient to get started' : editorValue.isEmpty ? 'Write a message before sending' : '';
   const requestClose = useCallback(async () => {
     if(changingSenderRef.current)return;
-    if (closingRef.current || sendGuard.current && composeStatus !== 'sent') {
+    if (closingRef.current || sendGuard.current && composeStatus !== 'queued') {
       if (composeStatus === 'sending') setComposeWindowState('minimized');
       return;
     }
     closingRef.current = true;
     try {
-      if (composeStatus !== 'sent') { await draft.flush(); await draft.release(); }
+      if (composeStatus !== 'queued') { await draft.flush(); await draft.release(); }
       onClose();
     } catch { showToast('Draft could not be saved. Keep this window open and retry, or save a separate copy.'); }
     finally { closingRef.current = false; }
@@ -763,10 +751,10 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
           )}
         >
           <div className="flex items-center gap-3 overflow-hidden">
-            {composeStatus === "sent" ? (
+            {composeStatus === "queued" ? (
               <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
                 <CheckCircle2 className="w-4 h-4" />
-                <span className="text-xs font-semibold">Message Sent</span>
+                <span className="text-xs font-semibold">Saved to Outbox</span>
               </div>
             ) : composeStatus === "failed" ? (
               <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
@@ -781,7 +769,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
                   transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                 />
                 <span className="text-xs font-semibold text-foreground/70 dark:text-white/70 truncate max-w-[200px]">
-                  Sending: {subject || "(No Subject)"}
+                  Saving to Outbox: {subject || "(No Subject)"}
                 </span>
                 {!isMinimized && attachments.length > 0 && (
                   <motion.button
@@ -844,7 +832,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
             </button>
           </div>
         </header>
-        {!isMinimized && composeStatus!=='sent' && user && <ComposeSenderRow user={user} accounts={accounts} disabled={editingDisabled||accountBusy||draft.unconfirmed||isAttaching} reply={Boolean(initialDraft?.payload.in_reply_to||initialMessage?.in_reply_to)} changing={changingSender} onChange={target=>{void changeSender(target);}}/>}
+        {!isMinimized && composeStatus!=='queued' && user && <ComposeSenderRow user={user} accounts={accounts} disabled={editingDisabled||accountBusy||draft.unconfirmed||isAttaching} reply={Boolean(initialDraft?.payload.in_reply_to||initialMessage?.in_reply_to)} changing={changingSender} onChange={target=>{void changeSender(target);}}/>}
 
         <motion.div
           animate={{
@@ -1027,7 +1015,7 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
                     </div>
                     <button
                       type="button"
-                      disabled={composeStatus === "sending" || composeStatus === "sent"}
+                      disabled={composeStatus === "sending" || composeStatus === "queued"}
                       aria-label={`Remove attachment ${file.name}`}
                       onClick={() => removeAttachment(file.id)}
                       className="ml-1 p-1.5 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-50 shrink-0"
@@ -1117,9 +1105,9 @@ export default function ComposeModal({ onClose, onSendStart, onSendSuccess, onSe
             <div className="compose-action-row">
               <button type="button" onClick={handleAttachFiles} disabled={editingDisabled || isAttaching} className="compose-attach-button" title="Attach files"><Paperclip className={cn('size-4', isAttaching && 'animate-pulse')} /><span className="hidden sm:inline">{isAttaching ? 'Preparing…' : 'Attach files'}</span></button>
               <button type="button" onClick={() => setShowSignature(value => !value)} disabled={editingDisabled} aria-label="Edit or insert signature" aria-expanded={showSignature} title="Signature" className={cn('compose-attach-button', showSignature && 'bg-primary/10 text-primary')}><Pencil className="size-4" /><span className="hidden md:inline">Signature</span></button>
-              <div className="min-w-0 flex-1"><p id="compose-send-help" aria-live="polite" className={cn('truncate text-[11px]', invalidRecipient || copiesInvalid ? 'text-red-500' : 'text-muted-foreground')} title={sendDisabledReason || formatCharCount(editorValue.characterCount)}>{sendDisabledReason || (draft.saving ? 'Saving…' : draft.state === 'new' ? 'Saves as you write' : draftStatus(draft.state))}</p></div>
+              <div className="min-w-0 flex-1"><p id="compose-send-help" aria-live="polite" className={cn('truncate text-[11px]', invalidRecipient || copiesInvalid ? 'text-red-500' : 'text-muted-foreground')} title={sendDisabledReason || formatCharCount(editorValue.characterCount)}>{sendDisabledReason || (draft.saving ? 'Saving…' : draft.state === 'new' ? 'Saves as you write' : online ? draftStatus(draft.state) : 'Offline · Your message will wait in Outbox')}</p></div>
               <button type="button" onClick={() => { void discardMessage(); }} disabled={editingDisabled} aria-label="Discard draft" title="Discard draft" className="compose-tool hover:!bg-red-500/10 hover:!text-red-500"><Trash2 className="size-4" /></button>
-              <button type="button" onClick={() => { void handleSend(); }} disabled={isSendDisabled} aria-label="Send message" aria-describedby="compose-send-help" title={sendDisabledReason || 'Send message (Ctrl+Enter)'} className="compose-send-button">{isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-3.5" />}<span>{isSending ? 'Sending…' : composeStatus === 'sent' ? 'Sent' : 'Send'}</span></button>
+              <button type="button" onClick={() => { void handleSend(); }} disabled={isSendDisabled} aria-label="Send message" aria-describedby="compose-send-help" title={sendDisabledReason || 'Send message (Ctrl+Enter)'} className="compose-send-button">{isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-3.5" />}<span>{isSending ? 'Saving…' : composeStatus === 'queued' ? 'Queued' : online ? 'Send' : 'Queue'}</span></button>
             </div>
           </footer>
         </motion.div>

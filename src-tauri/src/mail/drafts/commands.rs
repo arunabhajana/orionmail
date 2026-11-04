@@ -43,6 +43,7 @@ pub async fn open_draft(
     authorize(&app_handle, &account_id)?;
     tokio::task::spawn_blocking(move || {
         let draft = store::get(&app_handle, &account_id, &id)?;
+        if super::outbox::contains(&app_handle,&account_id,&id)?&&draft.state!="send_unknown"{return Err("Return this message to Drafts from Outbox before editing.".into());}
         if matches!(draft.state.as_str(), "unsupported" | "deleting") {
             return Err("Open this draft in Gmail to edit it.".into());
         }
@@ -66,6 +67,7 @@ pub async fn save_draft(
     payload: Payload,
 ) -> Result<Draft, String> {
     authorize(&app_handle, &account_id)?;
+    if super::outbox::contains(&app_handle,&account_id,&id)?{return Err("Return this message to Drafts from Outbox before editing it.".into());}
     let app = app_handle.clone();
     let account = account_id.clone();
     let draft = tokio::task::spawn_blocking(move || {
@@ -104,10 +106,11 @@ pub async fn discard_draft(
     expected_revision: i64,
 ) -> Result<(), String> {
     authorize(&app_handle, &account_id)?;
+    if super::outbox::contains(&app_handle,&account_id,&id)?{return Err("Return this message to Drafts from Outbox before discarding it.".into());}
     let app = app_handle.clone();
     let account = account_id.clone();
     tokio::task::spawn_blocking(move||{
-        let count=store::db(&app)?.execute("UPDATE compose_drafts SET state='deleting',dirty=1,revision=revision+1,editing=0 WHERE account_id=?1 AND id=?2 AND revision=?3 AND state NOT IN ('sending','send_unknown')",params![account,id,expected_revision]).map_err(|e|e.to_string())?;
+        let count=store::db(&app)?.execute("UPDATE compose_drafts SET state='deleting',dirty=1,revision=revision+1,editing=0 WHERE account_id=?1 AND id=?2 AND revision=?3 AND state NOT IN ('sending','send_unknown','outbox')",params![account,id,expected_revision]).map_err(|e|e.to_string())?;
         if count!=1{return Err("This draft changed. Refresh before discarding it.".to_string())}Ok(())
     }).await.map_err(|e|e.to_string())??;
     changed(&app_handle, &account_id);
@@ -164,7 +167,10 @@ pub async fn resolve_draft_send(
         store::sent(&app_handle, &account_id, &draft)?;
         None
     } else {
-        store::db(&app_handle)?.execute("UPDATE compose_drafts SET state='queued',dirty=1,error=NULL,upload_revision=NULL,revision=revision+1 WHERE account_id=?1 AND id=?2",params![account_id,id]).map_err(|e|e.to_string())?;
+        let mut conn=store::db(&app_handle)?;let tx=conn.transaction().map_err(|e|e.to_string())?;
+        tx.execute("DELETE FROM mail_outbox WHERE account_id=?1 AND draft_id=?2",params![account_id,id]).map_err(|e|e.to_string())?;
+        tx.execute("UPDATE compose_drafts SET state='queued',dirty=1,error=NULL,upload_revision=NULL,revision=revision+1 WHERE account_id=?1 AND id=?2",params![account_id,id]).map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e|e.to_string())?;
         Some(store::get(&app_handle, &account_id, &id)?)
     };
     changed(&app_handle, &account_id);
