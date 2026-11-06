@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, Rea
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
 import {toast} from 'sonner';
+import {deliveredFeedback} from '@/lib/mail-feedback';
 import { useAuth } from './AuthContext';
 
 interface SyncContextType {
@@ -34,7 +35,7 @@ const EMPTY_COUNTS: Record<string, number> = {};
 export function SyncProvider({ children }: { children: ReactNode }) {
     const { user } = useAuth();
     const owner = user?.id ?? '';
-    useEffect(()=>{const stop=listen<{subject:string}>('outbox:sent',event=>toast.success('Message sent',{description:event.payload.subject||'(No subject)'}));return()=>{void stop.then(fn=>fn()).catch(()=>{});};},[]);
+    useEffect(()=>{const stop=listen<{subject:string;account_id?:string;draft_id?:string}>('outbox:sent',event=>{const {subject,account_id,draft_id}=event.payload;if(account_id&&draft_id)deliveredFeedback(account_id,draft_id,subject);else toast.success('Message sent',{description:subject||'(No subject)'});});return()=>{void stop.then(fn=>fn()).catch(()=>{});};},[]);
     useEffect(()=>{
         if(!owner)return;
         const update=()=>{void invoke('set_network_status',{online:navigator.onLine}).catch(()=>{});};

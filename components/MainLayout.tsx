@@ -66,6 +66,7 @@ interface LocalLocationChoice { accountId: string; email: Email; desired: 'inbox
 export default function MainLayout() {
     const invoke = useAccountInvoke();
     const view=useMailboxView();
+    const {unified:notificationUnified,setUnified:setNotificationUnified}=view;
     const { user, accountBusy, switchAccount, accountEpoch, isAccountCurrent } = useAuth();
     const requestedFolder=view.navigation&&view.navigation.owner===user?.id?view.navigation.folder:view.folder;
     const formatEmailFromMessage = useCallback((message: NativeMessageHeader) => formatNativeEmail(message, user?.id), [user?.id]);
@@ -1093,6 +1094,7 @@ export default function MainLayout() {
                     rerun = false;
                     const notificationAccount = await invoke<string | null>('pending_notification_account');
                     if (disposed) return;
+                    if (notificationAccount && notificationUnified) { setNotificationUnified(false); return; }
                     if (notificationAccount && (notificationAccount !== user.id || pathname !== '/inbox')) {
                         await switchAccount(notificationAccount, true);
                         return; // The remounted account/route consumes the retained activation.
@@ -1130,7 +1132,7 @@ export default function MainLayout() {
         };
         void setup().catch(console.error);
         return () => { disposed = true; stops.forEach(stop => stop()); };
-    }, [user?.id, isBootstrapping, pathname, switchAccount, invoke, formatEmailFromMessage]);
+    }, [user?.id, isBootstrapping, pathname, switchAccount, invoke, formatEmailFromMessage, notificationUnified, setNotificationUnified]);
 
     const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const searchRevision = useRef(0);

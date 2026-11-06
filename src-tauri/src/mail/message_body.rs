@@ -606,6 +606,51 @@ pub async fn fetch_and_cache_body_with_session(app_handle: &AppHandle, account: 
 
 
 
+
+fn decode_notification_preview(mime:&[u8], body:&[u8])->Result<String,String>{
+ if mime.len()>4096 || body.len()>32768{return Err("Notification preview exceeds budget".into());}
+ let mut bytes=mime.to_vec();bytes.extend_from_slice(b"\r\n");bytes.extend_from_slice(body);
+ let parsed=mailparse::parse_mail(&bytes).map_err(|e|e.to_string())?;
+ let text=parsed.get_body().map_err(|e|e.to_string())?;
+ Ok(if parsed.ctype.mimetype=="text/html"{crate::mail::extraction::content::parse(&text).text}else{text})
+}
+
+/// Bounded notification-only preview. Partial data is never saved as a full body.
+pub async fn notification_preview(app: &AppHandle, account: &Account, folder: &str, uid:u32, validity:u32) -> Result<String,String> {
+    static BUDGET: Lazy<Arc<Semaphore>>=Lazy::new(||Arc::new(Semaphore::new(1)));
+    let budget=BUDGET.clone().acquire_owned().await.map_err(|_|"Notification preview stopped")?;
+    let permit=loop {
+        let prefs=crate::mail_preferences::load_for(app,&account.id);
+        if !prefs.smart_notifications || prefs.hide_notification_content || prefs.sync_paused || !crate::mail::connectivity::is_online(){return Err("Notification preview paused".into());}
+        if CONCURRENT_FETCH_LIMIT.available_permits()>1 {
+            if let Ok(permit)=CONCURRENT_FETCH_LIMIT.clone().try_acquire_owned(){break permit;}
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    let mailbox=crate::mail::message_actions::resolve_mailbox(app,account,folder)?;
+    imap_session::execute_with_session(account,imap_session::SessionKind::Notification,move|session|{
+        // Hold both permits through the blocking operation even if the caller times out.
+        let _budget=&budget;let _permit=&permit;
+        let selected=session.select(&mailbox).map_err(|e|e.to_string())?;
+        if selected.uid_validity!=Some(validity){return Err("Mailbox changed".into());}
+        let structures=session.uid_fetch(uid.to_string(),"(BODYSTRUCTURE)").map_err(|e|e.to_string())?;
+        let mut html=None;let mut plain=None;let mut attachments=Vec::new();
+        if let Some(message)=structures.iter().find(|m|m.uid==Some(uid)){
+            if let Some(bs)=message.bodystructure(){collect_parts_from_bs(bs,"",&mut html,&mut plain,&mut attachments);}
+        }
+        let Some(part)=plain.or(html) else{return Ok(String::new());};
+        // IMAP numbers a single-part message's body as section 1.
+        let part=if part.is_empty(){"1".to_string()}else{part};
+        let query=format!("(BODY.PEEK[{part}.MIME]<0.4096> BODY.PEEK[{part}]<0.32768>)");
+        let fetched=session.uid_fetch(uid.to_string(),query).map_err(|e|e.to_string())?;
+        let msg=fetched.iter().find(|m|m.uid==Some(uid)).ok_or("Message unavailable")?;
+        let path=part.split('.').map(str::parse).collect::<Result<Vec<u32>,_>>().map_err(|_|"Invalid text part")?;
+        let mime=imap_proto::types::SectionPath::Part(path.clone(),Some(imap_proto::types::MessageSection::Mime));
+        let body=imap_proto::types::SectionPath::Part(path,None);
+        decode_notification_preview(msg.section(&mime).unwrap_or_default(),msg.section(&body).unwrap_or_default())
+    }).await
+}
+
 pub async fn fetch_attachment_part(app_handle: &AppHandle, account: &Account, folder: &str, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {
     let part_id_clone = part_id.to_string();
     let mailbox = crate::mail::message_actions::resolve_mailbox(app_handle, account, folder)?;
@@ -666,6 +711,13 @@ fn inline_asset_key(scope: &str, cid: &str, bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod inline_asset_tests {
+    #[test] fn notification_preview_decodes_encoded_codes_with_a_hard_budget(){
+        let text=super::decode_notification_preview(b"Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n",b"Your verification code is =30=31=32=33=34=35.").unwrap();
+        let codes=crate::mail::extraction::otp::extract_visible(&text,"Verification code");
+        assert_eq!(codes[0].value,"012345");
+        assert!(super::decode_notification_preview(b"",&vec![b'x';32769]).is_err());
+    }
+
     use super::*;
     #[test]
     fn inline_images_do_not_collide_across_accounts_locations_or_cid_spellings() {

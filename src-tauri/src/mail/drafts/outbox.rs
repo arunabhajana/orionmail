@@ -129,7 +129,7 @@ async fn pass(app:&AppHandle){
             if draft.state=="checking"{let _=failure(app,&profile.id,&id,"attention","Gmail must confirm the previous draft upload before sending. Refresh Drafts, then retry.");continue;}
             if conn.execute("UPDATE mail_outbox SET state='delivering',error=NULL WHERE account_id=?1 AND draft_id=?2 AND state='waiting'",params![profile.id,id]).ok()!=Some(1){continue;}changed(app,&profile.id);
             match remote::send(app,&account,&id,revision).await {
-                Ok(_)=>{let _=conn.execute("DELETE FROM mail_outbox WHERE account_id=?1 AND draft_id=?2",params![profile.id,id]);let _=app.emit("outbox:sent",serde_json::json!({"account_id":profile.id,"subject":draft.payload.subject}));changed(app,&profile.id);crate::mail::sync_manager::enqueue_sync_with_force(app.clone(),account.clone(),crate::mail::folder::MailFolder::Sent,true).await;}
+                Ok(_)=>{let _=conn.execute("DELETE FROM mail_outbox WHERE account_id=?1 AND draft_id=?2",params![profile.id,id]);let _=app.emit("outbox:sent",serde_json::json!({"account_id":profile.id,"draft_id":id,"subject":draft.payload.subject}));changed(app,&profile.id);crate::mail::sync_manager::enqueue_sync_with_force(app.clone(),account.clone(),crate::mail::folder::MailFolder::Sent,true).await;}
                 Err(error)=>{
                     let current=store::get(app,&profile.id,&id).ok();
                     let uncertain=current.as_ref().is_none_or(|d|needs_attention(&d.state,d.conflict))||["denied","changed","recipient","sign in","configured","invalid","reattach"].iter().any(|word|error.to_lowercase().contains(word));

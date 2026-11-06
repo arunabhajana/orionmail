@@ -85,6 +85,8 @@ You can turn Smart Actions off entirely or choose the types you want in **Settin
 
 Choose which mail alerts you receive, enable **Do not disturb**, or schedule quiet hours. Notification previews and sounds are configurable, and the Windows taskbar can show an unread badge.
 
+**Smart Notifications are off by default.** Enable them in **Settings → Notifications** to copy a detected verification code or tracking number, or open a recognized meeting link from the Windows notification. Smart Notifications can fetch a small preview for new mail while the app is unfocused or in the tray, independently of normal message preloading. Actions expire after 15 minutes and are hidden when notification content is hidden or the app is locked. Normal speculative body preloading runs only while OrionMail is focused.
+
 Remote images are blocked by default until you allow them for a message. Settings also include external-link confirmation, Windows Hello app-lock controls, and local cache preferences.
 
 Downloaded messages remain available when you are offline. You can write mail and press Send without a connection: OrionMail saves the message and its attachments in **Outbox**, then delivers it when the app is running and connected. Outbox shows delivery status and lets you retry or return a waiting message to Drafts. If delivery is uncertain, check Sent before sending another copy.

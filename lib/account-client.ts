@@ -14,7 +14,7 @@ export const ACCOUNT_COMMANDS = new Set([
     'search_messages', 'load_more_results', 'clear_search', 'get_all_tags', 'get_message_tags',
     'create_tag', 'update_tag', 'delete_tag', 'update_message_tags', 'refresh_message_labels',
     'clear_local_cache', 'get_cache_summary', 'clear_body_cache', 'update_display_name', 'get_download_folder',
-    'pick_attachments', 'release_attachment_handles', 'download_attachment', 'send_message',
+    'import_attachment', 'pick_attachments', 'release_attachment_handles', 'download_attachment', 'send_message',
     'mark_as_read', 'toggle_read', 'toggle_star', 'delete_message', 'prepare_reply', 'prepare_forward',
     'list_drafts', 'draft_status', 'open_draft', 'save_draft', 'release_draft', 'discard_draft',
     'sync_drafts', 'send_draft', 'resolve_draft_send', 'fork_draft', 'copy_draft_to_account', 'recover_draft',

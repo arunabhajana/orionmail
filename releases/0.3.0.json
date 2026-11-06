@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "version": "0.3.0",
+  "status": "ready",
+  "sample": false,
+  "date": "2026-11-05",
+  "title": "Small shortcuts. Smoother days.",
+  "summary": "Attach files with a drop or paste, switch accounts from your keyboard, and move through long inboxes more easily. Try optional Smart Notifications for useful actions without opening your mail, with clearer alerts and fewer interruptions.",
+  "sections": [
+    {
+      "category": "Added",
+      "items": [
+        {
+          "title": "Smart Notifications — yours to enable",
+          "text": "Copy a detected verification code or tracking number, or open a recognized meeting link from a Windows notification. Smart Notifications are off by default. Turn them on in Settings → Notifications to try them. When enabled, OrionMail can load a small message preview while minimized; an alert may arrive a little later while it prepares the actions."
+        },
+        {
+          "title": "Drop and paste attachments",
+          "text": "Drag files from other apps into your message, or paste images and files when your clipboard provides them. Normal text paste still works as usual. Attach up to 25 files, with an 18 MB total limit."
+        },
+        {
+          "title": "Switch accounts with your keyboard",
+          "text": "Use Ctrl+1, Ctrl+2 or Ctrl+3 to switch to the corresponding account in sidebar order. Account shortcuts also appear in the command palette."
+        },
+        {
+          "title": "Back to top",
+          "text": "A Back to top button appears as you scroll down the message list, so returning to your newest mail takes one click."
+        },
+        {
+          "title": "Unsubscribe in Highlights",
+          "text": "When an email includes a recognizable unsubscribe link, find it in Highlights above the message. Review the destination before continuing to the sender’s unsubscribe page."
+        },
+        {
+          "title": "Request testing access",
+          "text": "Request approval for a Google account from the sign-in screen or account settings. Enter the address you want to connect, then review and send the prepared request in OrionMail or Gmail. Access is approved manually."
+        }
+      ]
+    },
+    {
+      "category": "Improved",
+      "items": [
+        {
+          "title": "Less clutter in notifications",
+          "text": "Smart alerts show the most useful available action alongside Mark as read. Click the notification itself to open the email. Verification codes are masked in the preview, while Copy code copies the complete code."
+        },
+        {
+          "title": "One message, one sending confirmation",
+          "text": "Sending feedback updates from Saved to Outbox to Message sent in the same popup. Alerts for separate messages stack with clear spacing and close buttons."
+        },
+        {
+          "title": "Quieter background activity",
+          "text": "Normal message preloading pauses while OrionMail is unfocused. Mail syncing and queued sends continue. Optional Smart Notifications have their own background preview setting."
+        },
+        {
+          "title": "A more familiar installation",
+          "text": "The Windows installer now uses OrionMail artwork and icons on its welcome and finish screens."
+        }
+      ]
+    },
+    {
+      "category": "Fixed",
+      "items": [
+        {
+          "title": "Actions from Notification Center",
+          "text": "Updated notification button handling for copying codes and marking mail read while minimized. Opening a notification from All inboxes or another account now uses the message’s account and folder."
+        },
+        {
+          "title": "Smart alerts before opening a message",
+          "text": "Smart Notifications wait for the message preview before showing an alert. Preview downloads retry when needed, so opening the email is no longer required to prepare a detected code action."
+        },
+        {
+          "title": "Faster read feedback",
+          "text": "Mark as read from a notification saves the change on your device first, while the mailbox update continues in the background."
+        },
+        {
+          "title": "Consistent input appearance",
+          "text": "Pasting into the subject field and filling other inputs keeps their background consistent with the app theme."
+        },
+        {
+          "title": "Clearer Back to top button",
+          "text": "Improved the button’s padding, contrast and spacing so its text and arrow remain easy to see."
+        },
+        {
+          "title": "Access request drafts",
+          "text": "Fixed opening the prepared access request from account settings."
+        }
+      ]
+    }
+  ],
+  "whatsNew": [
+    {
+      "id": "smart-notifications",
+      "eyebrow": "Try it when you’re ready",
+      "title": "Do more from a notification.",
+      "text": "Copy verification codes and tracking numbers, or open recognized meeting links without opening the email. Smart Notifications are OFF by default. Enable them in Settings → Notifications to try them, including while OrionMail is minimized.",
+      "image": {
+        "src": "/releases/0.3.0/smart-notifications.svg",
+        "alt": "A Smart Notifications setting switched off, above a verification notification with Copy code and Mark as read actions."
+      }
+    },
+    {
+      "id": "attachments",
+      "eyebrow": "Drop it. Paste it. Attach it.",
+      "title": "Files, without the extra clicks.",
+      "text": "Drop files into your message or paste images and files from supported clipboards. They become attachments, while regular text paste stays unchanged. Your attachments can include up to 25 files and 18 MB in total.",
+      "image": {
+        "src": "/releases/0.3.0/attachments.svg",
+        "alt": "A compose window with a photograph and a document attached below the message."
+      }
+    },
+    {
+      "id": "navigation",
+      "eyebrow": "Keep your hands on the keyboard",
+      "title": "Your accounts, a shortcut away.",
+      "text": "Use Ctrl+1, Ctrl+2 and Ctrl+3 to switch accounts in sidebar order. Scrolled through a long inbox? The new Back to top button brings you straight back to your latest messages.",
+      "image": {
+        "src": "/releases/0.3.0/navigation.svg",
+        "alt": "Three account rows paired with Ctrl 1, Ctrl 2 and Ctrl 3 shortcuts, beside a Back to top button."
+      }
+    },
+    {
+      "id": "calmer-inbox",
+      "eyebrow": "Fewer interruptions",
+      "title": "A little clearer, everywhere.",
+      "text": "Find sender-provided unsubscribe links in Highlights above an email. Sending now uses one confirmation that updates from queued to sent, and separate alerts stack neatly. Notification actions also handle switching accounts and minimized windows more reliably.",
+      "image": {
+        "src": "/releases/0.3.0/calmer-inbox.svg",
+        "alt": "An unsubscribe highlight above an email and a single Message sent confirmation."
+      }
+    }
+  ]
+}

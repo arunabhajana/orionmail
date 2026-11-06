@@ -39,6 +39,7 @@ export const preferenceGroups: Record<string, PreferenceGroup[]> = {
     notifications: [
         { title: "Incoming mail", description: "Choose which new messages can interrupt you. Windows notification permissions also apply.", items: [
             item("desktopNotifications", "Desktop notifications", "Show native desktop alerts for newly synced mail."),
+            item("smartNotifications", "Smart Notifications", "Copy codes and tracking numbers or open meeting links from alerts. Fetch a small text preview for new mail even when OrionMail is unfocused or in the tray. Processes one preview at a time; no attachments are downloaded."),
             item("notificationSound", "Notification sound", "Play your selected Windows tone for new mail."),
             item("hideNotificationContent", "Hide message previews", "Use a generic alert without sender names or subjects."),
             item("showUnreadCount", "Unread badges", "Show unread counts next to mailbox folders."),

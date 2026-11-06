@@ -464,3 +464,9 @@ pub async fn get_cache_summary(account_id: Option<String>, app_handle: tauri::Ap
         Ok(serde_json::json!({ "messages": messages, "bodyBytes": bodies, "headerBytes": headers }))
     }).await.map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub async fn import_attachment(app_handle:AppHandle,account_id:Option<String>,name:String,encoded:String)->Result<crate::mail::attachments::AttachmentMetadata,String>{
+ let owner=crate::auth::scope::profile(&app_handle,account_id.as_deref())?;
+ tokio::task::spawn_blocking(move||crate::mail::attachments::import_bytes(&owner.id,name,encoded)).await.map_err(|e|e.to_string())?
+}

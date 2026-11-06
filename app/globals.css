@@ -2,6 +2,21 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* WebView autofill must not paint an opaque blue rectangle over themed fields. */
+input, textarea { caret-color: var(--color-foreground); }
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill {
+  -webkit-text-fill-color: var(--color-foreground);
+  -webkit-box-shadow: 0 0 0 1000px var(--orion-autofill-surface, var(--color-background)) inset;
+  caret-color: var(--color-foreground);
+}
+.compose-address-row { --orion-autofill-surface: #fcfdff; }
+.dark .compose-address-row { --orion-autofill-surface: #1a1d25; }
+.settings-input { --orion-autofill-surface: #f5f7fb; }
+.dark .settings-input { --orion-autofill-surface: #12151d; }
+
 @layer utilities {
   .glass-sidebar {
     background: rgba(255, 255, 255, 0.4);

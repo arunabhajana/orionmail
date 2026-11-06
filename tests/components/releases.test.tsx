@@ -11,6 +11,14 @@ function Tour() {
     return <><button onClick={() => setOpen(true)}>Open tour</button>{open && <WhatsNewModal onClose={() => setOpen(false)} />}</>;
 }
 describe('release content from the versioned file', () => {
+    it('introduces 0.3.0 Smart Notifications as an optional feature', () => {
+        const release = releases.find(entry => entry.version === '0.3.0')!;
+        render(<WhatsNewModal release={release} onClose={() => {}} />);
+        const modal = within(screen.getByRole('dialog'));
+        expect(modal.getByText(/Smart Notifications are OFF by default/)).toBeVisible();
+        expect(modal.getByText(/Enable them in Settings → Notifications to try them/)).toBeVisible();
+        expect(modal.getByRole('img')).toHaveAttribute('src', '/releases/0.3.0/smart-notifications.svg');
+    });
     it('starts collapsed, expands categorized text, and has no tour preview button', async () => {
         const user = userEvent.setup(); render(<ReleaseNotesPanel />);
         const title = screen.getByRole('heading', { name: currentRelease.title, hidden: true });

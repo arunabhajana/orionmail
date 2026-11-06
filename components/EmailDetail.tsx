@@ -1,6 +1,7 @@
 "use client";
 
 import React from 'react';
+import {UnsubscribeHighlight} from './inbox/UnsubscribeHighlight';
 import { AlertOctagon, File, Clock, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
@@ -315,6 +316,7 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ accountBadge,className, email
                         {isConversation&&<ConversationMessageRow email={email} index={Math.max(0,conversation.findIndex(item=>item.id===email.id))} expanded={!conversationCollapsed} onSelect={()=>setConversationCollapsed(value=>!value)}/>}
                         <div hidden={isConversation&&conversationCollapsed} className={isConversation?'mail-conversation-body':undefined}>
 
+                        <UnsubscribeHighlight html={bodyContent} loading={isLoadingBody} />
                         {smartActions.length > 0 && <section aria-label="Email highlights" className="mb-4 space-y-2.5">
                             <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Highlights</h2>
                             {smartActions.map(action => <SmartActionCard key={action.id} action={action} />)}

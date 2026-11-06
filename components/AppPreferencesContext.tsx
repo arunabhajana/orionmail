@@ -6,7 +6,7 @@ import { useAuth } from "./AuthContext";
 export type { AppPreferences } from "@/lib/app-preferences";
 interface PreferencesContext { devicePreferences: AppPreferences; overrides: Record<string, Partial<AppPreferences>>; saveAccountPreferences: (accountId:string, patch:Partial<AppPreferences>, resetKeys?: (keyof AppPreferences)[]) => Promise<void>; updateDevicePreferences: (patch:Partial<AppPreferences>)=>Promise<void>; preferences: AppPreferences; updatePreferences: (updates: Partial<AppPreferences>) => Promise<void>; }
 const Context = createContext<PreferencesContext | null>(null);
-const nativeKeys: (keyof AppPreferences)[] = ["notifyInbox","notifySent","notifyLabels","importantOnly","notificationTone","downloadFolder","cacheRetention","cacheBudget","taskbarBadge","taskbarBadgeScope","dndEnabled", "desktopNotifications", "notificationSound", "hideNotificationContent", "quietHours", "quietStart", "quietEnd", "syncPaused", "pollInterval", "prefetchBodies"];
+const nativeKeys: (keyof AppPreferences)[] = ["notifyInbox","notifySent","notifyLabels","importantOnly","notificationTone","downloadFolder","cacheRetention","cacheBudget","taskbarBadge","taskbarBadgeScope","dndEnabled", "desktopNotifications", "smartNotifications", "notificationSound", "hideNotificationContent", "quietHours", "quietStart", "quietEnd", "syncPaused", "pollInterval", "prefetchBodies"];
 export function AppPreferencesProvider({ children }: { children: React.ReactNode }) {
     const {user, isAccountCurrent} = useAuth();
     const [overrides,setOverrides] = useState<Record<string,Partial<AppPreferences>>>({});

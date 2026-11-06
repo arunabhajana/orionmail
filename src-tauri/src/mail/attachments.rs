@@ -170,6 +170,18 @@ pub(crate) fn snapshot_forwarded(account_id:&str,files:Vec<AttachmentData>)->Res
     Ok(result)
 }
 
+
+pub fn import_bytes(account: &str, name: String, encoded: String) -> Result<AttachmentMetadata,String> {
+ use base64::Engine;
+ if encoded.len()>MAX_ATTACHMENT_BYTES*4/3+4 || name.len()>255 || name.contains(['/', '\\']) || name.chars().any(char::is_control) || name.is_empty(){return Err("Invalid attachment".into());}
+ let bytes=base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_|"Invalid attachment data")?;
+ if bytes.len()>MAX_ATTACHMENT_BYTES{return Err("Attachment exceeds 18 MB".into());}
+ let mut store=SELECTED_ATTACHMENTS.lock().map_err(|_|"Attachment store unavailable")?;purge_expired(&mut store);
+ if store.len()>=MAX_ATTACHMENTS*4 || store.values().map(|f|f.bytes.len()).sum::<usize>()+bytes.len()>MAX_STORED_ATTACHMENT_BYTES{return Err("Too many temporary attachments".into());}
+ let result=AttachmentMetadata{handle:uuid::Uuid::new_v4().to_string(),size:bytes.len(),mime_type:mime_guess::from_path(&name).first_or_octet_stream().to_string(),name};
+ store.insert(result.handle.clone(),SelectedAttachment{account_id:account.into(),name:result.name.clone(),mime_type:result.mime_type.clone(),bytes:Arc::new(bytes),created_at:Instant::now()});Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -298,6 +298,7 @@ pub fn run() {
       set_app_settings,
       was_launched_minimized,
       pick_attachments,
+      import_attachment,
       release_attachment_handles,
       open_url,
       reply::prepare_reply,

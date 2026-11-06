@@ -2,6 +2,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static DISPLAYED: AtomicBool = AtomicBool::new(false);
+static FOCUSED: AtomicBool = AtomicBool::new(false);
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 static VISIBLE: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
@@ -21,17 +22,21 @@ pub fn is_displayed() -> bool {
     DISPLAYED.load(Ordering::Relaxed)
 }
 
+pub fn is_foreground() -> bool { is_displayed() && FOCUSED.load(Ordering::Relaxed) }
+
 pub fn refresh(window: &tauri::WebviewWindow) {
     let displayed = window.is_visible().unwrap_or(false)
         && !window.is_minimized().unwrap_or(true);
-    let changed = DISPLAYED.swap(displayed, Ordering::Relaxed) != displayed;
+    let focused = window.is_focused().unwrap_or(false);
+    let focus_changed = FOCUSED.swap(focused, Ordering::Relaxed) != focused;
+    let changed = DISPLAYED.swap(displayed, Ordering::Relaxed) != displayed || focus_changed;
     if INITIALIZED.swap(true, Ordering::Relaxed) && !changed {
         return;
     }
     if displayed { VISIBLE.notify_waiters(); }
     // Wake an idle worker so it discards queued speculative jobs immediately
     // when hidden, without waiting for another mail request.
-    if !displayed {
+    if !displayed || !focused {
         crate::mail::body_prefetch_manager::PREFETCH_MANAGER.notify.notify_one();
     }
     // This is a cache/memory hint, not suspension: compose state, sync, native
