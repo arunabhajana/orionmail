@@ -1,6 +1,7 @@
 //! Windows mail toasts use opaque snapshot IDs. Action scope stays in Rust.
 type PendingMailBatches = std::collections::HashMap<String, HashSet<(String,u32)>>;
 mod store;
+mod smart;
 #[cfg(target_os = "windows")]
 mod windows;
 use crate::mail::{database, message_actions};
@@ -23,6 +24,12 @@ struct Item {
     validity: u32,
     sender: String,
     subject: String,
+    #[serde(default)]
+    date: i64,
+    #[serde(default)]
+    preview: Option<String>,
+    #[serde(default)]
+    smart: Option<smart::SmartAction>,
 }
 #[derive(Clone)]
 struct Batch {
@@ -31,6 +38,9 @@ struct Batch {
     display_tag: String,
     items: Vec<Item>,
     created_at: i64,
+}
+fn matches_item(item: &Item, message: &crate::mail::message_list::MessageHeader) -> bool {
+    item.uid == message.uid && item.validity == message.uid_validity && item.folder == message.folder
 }
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 static PENDING: Lazy<Mutex<VecDeque<(String, String)>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
@@ -65,6 +75,9 @@ pub fn initialize(app: &AppHandle) -> Result<(), String> {
         Ok(())
     })();
     READY.send_replace(Some(result.clone()));
+    // Replace retained Action Center cards with the current desktop activation
+    // definitions after an upgrade, without showing another popup.
+    if result.is_ok() { refresh_policy(app); }
     result
 }
 pub fn refresh_policy(app: &AppHandle) {
@@ -199,13 +212,13 @@ fn render(app: &AppHandle, batch: &Batch, popup: bool) -> Result<(), String> {
     let body = if prefs.hide_notification_content {
         "Open OrionMail to read your messages.".into()
     } else if count == 1 {
-        clip(&batch.items[0].subject, 180)
+        clip(batch.items[0].preview.as_deref().unwrap_or(&batch.items[0].subject), 180)
     } else {
         let mut lines = batch
             .items
             .iter()
             .take(3)
-            .map(|i| format!("{} — {}", sender(&i.sender), clip(&i.subject, 90)))
+            .map(|i| format!("{} — {}", sender(&i.sender), clip(i.preview.as_deref().unwrap_or(&i.subject), 90)))
             .collect::<Vec<_>>();
         if count > 3 {
             lines.push(format!("+{} more messages", count - 3));
@@ -229,7 +242,7 @@ fn render(app: &AppHandle, batch: &Batch, popup: bool) -> Result<(), String> {
         &attribution,
         prefs.notification_sound && popup,
         popup,
-        &prefs.notification_tone,
+        (&prefs.notification_tone, prefs.smart_notifications && !prefs.hide_notification_content),
     )?;
     #[cfg(not(target_os = "windows"))]
     {
@@ -268,21 +281,62 @@ pub fn show_new_emails(app: &AppHandle, account: &str, folder: &str, new_emails:
         let uids = NEW_MAIL
             .lock()
             .ok()
-            .and_then(|mut batches| batches.remove(&account))
+            .and_then(|batches| batches.get(&account).cloned())
             .unwrap_or_default()
             .into_iter()
             .collect::<Vec<_>>();
         if let Err(error) = ready {
             log::warn!("New mail notification unavailable: {}", error);
+            if let Ok(mut pending)=NEW_MAIL.lock(){pending.remove(&account);}
             return;
         }
+        let mut retries=0u32;
+        let preview=loop {
+            match prepare_smart_preview(&app,&account,&uids).await {
+                Ok(preview)=>break preview,
+                Err(error)=>{
+                    if !crate::auth::session::load_profile_metadata(&app).0.iter().any(|p|p.id==account){if let Ok(mut pending)=NEW_MAIL.lock(){pending.remove(&account);}return;}
+                    log::warn!("Smart notification preview not ready; retaining pending alert: {error}");
+                    retries=retries.saturating_add(1);
+                    tokio::time::sleep(std::time::Duration::from_secs(match retries{1=>2,2=>5,3=>15,_=>60})).await;
+                }
+            }
+        };
+        let remaining=NEW_MAIL.lock().ok().and_then(|mut map|map.remove(&account)).unwrap_or_default().into_iter().filter(|key|!uids.contains(key)).collect::<Vec<_>>();
+        let next_app=app.clone();let next_account=account.clone();
         let _ = tauri::async_runtime::spawn_blocking(move || {
-            show_new_emails_inner(&app, &account, &uids)
+            show_new_emails_inner(&app, &account, &uids, preview)
         })
         .await;
+        for (folder,uid) in remaining {
+            show_new_emails(&next_app,&next_account,&folder,&[(String::new(),String::new(),uid)]);
+        }
     });
 }
-fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[(String,u32)]) {
+struct NotificationPreview { folder: String, uid:u32, validity:u32, text:String }
+async fn prepare_smart_preview(app:&AppHandle,account:&str,uids:&[(String,u32)])->Result<Option<NotificationPreview>,String>{
+ let prefs=crate::mail_preferences::load_for(app,account);
+ if !permitted_for(app,account) || prefs.hide_notification_content || !prefs.smart_notifications || prefs.sync_paused {return Ok(None);}
+ if !crate::mail::connectivity::is_online(){return Err("Offline".into());}
+ let cache_app=app.clone();let cache_account=account.to_string();let sources=uids.to_vec();
+ let header=tauri::async_runtime::spawn_blocking(move||->Result<_,String>{
+  let mut headers=Vec::new();
+  let mut folders=std::collections::HashMap::<String,Vec<u32>>::new();
+  for (folder,uid) in sources{folders.entry(folder).or_default().push(uid);}
+  for (folder,uids) in folders{headers.extend(database::get_messages_by_uids(&cache_app,&cache_account,&folder,&uids)?);}
+  Ok(headers.into_iter().filter(|h|!h.seen).max_by_key(|h|h.date))
+ }).await.map_err(|e|e.to_string())??;
+ let Some(header)=header else{return Ok(None);};
+ let folder=header.folder;let uid=header.uid;let validity=header.uid_validity;
+ let cached_app=app.clone();let cached_account=account.to_string();let cached_folder=folder.clone();
+ let body=tauri::async_runtime::spawn_blocking(move||database::get_message_body_cache(&cached_app,&cached_account,&cached_folder,uid)).await.map_err(|e|e.to_string())??;
+ let text=if let Some((body,_,_))=body{crate::mail::extraction::content::parse(&body).text}else{
+  let owner=crate::auth::bootstrap::ensure_account(app,account).await?;
+  crate::mail::message_body::notification_preview(app,&owner,&folder,uid,validity).await?
+ };
+ Ok(Some(NotificationPreview{folder,uid,validity,text}))
+}
+fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[(String,u32)], preview:Option<NotificationPreview>) {
     if !permitted_for(app, account) {
         return;
     }
@@ -332,13 +386,19 @@ fn show_new_emails_inner(app: &AppHandle, account: &str, uids: &[(String,u32)]) 
                     uid: message.uid,
                     validity: message.uid_validity,
                     sender: message.from,
+                    preview: preview.as_ref().filter(|p|p.folder==message.folder && p.uid==message.uid && p.validity==message.uid_validity).filter(|p|!p.text.trim().is_empty()).map(|p|clip(&p.text.replace(['\n','\r']," "),240)),
+                    smart: if prefs.smart_notifications { smart::detect(&message.subject, preview.as_ref().filter(|p|p.folder==message.folder && p.uid==message.uid && p.validity==message.uid_validity).map(|p|p.text.as_str()).unwrap_or_else(||message.snippet.as_deref().unwrap_or(""))) } else { None },
                     subject: message.subject,
+                    date: message.date,
                 },
             );
         }
         if !added {
             return Ok(());
         }
+        // Parsing can finish out of order for successive arrivals. The primary
+        // card/action must still belong to the newest message in this account.
+        items.sort_by(|a,b|b.date.cmp(&a.date).then_with(||b.uid.cmp(&a.uid)));
         items.truncate(500);
         items=store::unread(app,account,items)?;
         if items.is_empty(){return Ok(());}
@@ -388,8 +448,23 @@ pub fn schedule_refresh(app: &AppHandle, account: &str) {
             let Some(previous) = store::latest(&app, &account)? else {
                 return Ok(());
             };
-            let items = store::unread(&app, &account, previous.items.clone())?;
-            if items.len() == previous.items.len() {
+            let mut items = store::unread(&app, &account, previous.items.clone())?;
+            let mut enriched = false;
+            if crate::mail_preferences::load_for(&app,&account).smart_notifications && previous.created_at >= chrono::Utc::now().timestamp() - 900 {
+                for item in items.iter_mut().take(3).filter(|item| item.smart.is_none()) {
+                    let headers = database::get_messages_by_uids(&app, &account, &item.folder, &[item.uid])?;
+                    if let Some(header) = headers.first().filter(|header| header.uid_validity == item.validity) {
+                        enriched |= smart::enrich(&mut item.smart, &item.subject, header.snippet.as_deref().unwrap_or(""));
+                        if item.smart.is_none() {
+                            if let Some((html, _, _)) = database::get_message_body_cache(&app, &account, &item.folder, item.uid)? {
+                                let content = crate::mail::extraction::content::parse(&html);
+                                enriched |= smart::enrich(&mut item.smart, &item.subject, &content.text);
+                            }
+                        }
+                    }
+                }
+            }
+            if items.len() == previous.items.len() && !enriched {
                 return Ok(());
             }
             let batch = Batch {
@@ -426,8 +501,33 @@ fn receive(app: &AppHandle, args: &str) {
     };
     if token.len() != 32
         || !token.bytes().all(|b| b.is_ascii_hexdigit())
-        || !matches!(action, "open" | "read")
+        || !matches!(action, "open" | "read" | "smart")
     {
+        return;
+    }
+    if action == "smart" {
+        let result=(|| -> Result<(),String> {
+            crate::auth::app_lock::require_unlocked(app)?;
+            let batch=store::find(app,token)?;
+            if chrono::Utc::now().timestamp()-batch.created_at>900 {return Err("This quick action expired. Open the message for its current details.".into());}
+            if !crate::mail_preferences::load_for(app,&batch.account_id).smart_notifications {return Err("Smart Notifications are disabled.".into());}
+            if crate::mail_preferences::load_for(app,&batch.account_id).hide_notification_content {return Err("Notification previews are hidden.".into());}
+            if crate::auth::session::get_account(app,&batch.account_id).is_none(){return Err("Account disconnected".into());}
+            let item=batch.items.first().ok_or("Message unavailable")?;
+            let current=database::get_messages_by_uids(app,&batch.account_id,&item.folder,&[item.uid])?;
+            if !current.iter().any(|message|matches_item(item,message)){return Err("Message changed. Open Inbox.".into());}
+            let action=item.smart.as_ref().ok_or("Action unavailable")?.clone();
+            if chrono::Utc::now().timestamp()-action.created_at>900{return Err("Quick action expired. Open the message.".into());}
+            if action.link {
+                if !smart::meeting_url(&action.value){return Err("Meeting link unavailable".into());}
+                open::that(&action.value).map_err(|e|e.to_string())?;
+            }else{
+                #[cfg(target_os="windows")]
+                windows::copy(app,action.value)?;
+            }
+            Ok(())
+        })();
+        if let Err(error)=result {report_error(app,&error);show_window(app);}
         return;
     }
     if action == "read" && crate::auth::app_lock::require_unlocked(app).is_ok() {
@@ -497,17 +597,10 @@ async fn mark_snapshot_read(app: &AppHandle, token: &str) -> Result<(), String> 
         }
     }
     if queued > 0 {
-        // Drain healthy bulk work without waiting for the next polling cycle.
-        // Stop as soon as a pass makes no progress (offline/provider rejection).
-        let mut remaining = store::unread(app, &account.id, batch.items.clone())?.len();
-        for _ in 0..((queued + 49) / 50 + 1) {
-            message_actions::retry_pending(app, &account).await;
-            let count = store::unread(app, &account.id, batch.items.clone())?.len();
-            if count == 0 || count >= remaining {
-                break;
-            }
-            remaining = count;
-        }
+        // Local intent is committed already. Never hold a Windows button activation
+        // open while waiting for OAuth, IMAP or connectivity.
+        let retry_app=app.clone();let retry_account=account.clone();
+        tauri::async_runtime::spawn(async move {message_actions::retry_pending(&retry_app,&retry_account).await;});
     }
     schedule_refresh(app, &account.id);
     let remaining = store::unread(app, &account.id, batch.items)?;
@@ -571,9 +664,9 @@ pub async fn consume_notification_navigation(
         }
         let message = if batch.items.len() == 1 {
             let item = &batch.items[0];
-            database::get_messages_by_uids(&app_handle, &batch.account_id, "inbox", &[item.uid])?
+            database::get_messages_by_uids(&app_handle, &batch.account_id, &item.folder, &[item.uid])?
                 .into_iter()
-                .find(|m| m.uid_validity == item.validity)
+                .find(|message| matches_item(item,message))
         } else {
             None
         };
@@ -676,6 +769,14 @@ pub fn snooze_returned(app:&AppHandle,account:&str){
 #[cfg(test)]
 mod folder_snapshot_tests {
     use super::*;
+    #[test] fn actions_keep_source_folder_and_validity_even_after_reading() {
+        let item:Item=serde_json::from_str(r#"{"folder":"tag:work","uid":7,"validity":9,"sender":"Alex","subject":"Code"}"#).unwrap();
+        let mut message:crate::mail::message_list::MessageHeader=serde_json::from_value(serde_json::json!({"folder":"tag:work","uid":7,"uid_validity":9,"subject":"Code","from":"Alex","date":1,"seen":true,"flagged":false,"has_attachments":false})).unwrap();
+        assert!(matches_item(&item,&message));
+        message.folder="inbox".into();assert!(!matches_item(&item,&message));
+        message.folder="tag:work".into();message.uid_validity=10;assert!(!matches_item(&item,&message));
+        message.uid_validity=9;message.uid=8;assert!(!matches_item(&item,&message));
+    }
     #[test] fn legacy_notification_items_keep_inbox_scope() {
         let item:Item=serde_json::from_str(r#"{"uid":7,"validity":9,"sender":"Alex","subject":"Hello"}"#).unwrap();
         assert_eq!(item.folder,"inbox");assert!(item.identity.is_empty());

@@ -65,7 +65,7 @@ export default function RootLayout({
                             <PersistentInbox />
                             <DesktopRouteContent>{children}</DesktopRouteContent>
                           </div>
-                          <Toaster theme="system" richColors position="top-center" />
+                          <Toaster theme="system" richColors position="top-center" expand visibleToasts={3} gap={10} offset={48} closeButton duration={4500} />
                         </div>
                         </CommandPaletteProvider></AppContextMenus></UpdateProvider>
                       </AppLockGate>

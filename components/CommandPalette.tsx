@@ -38,8 +38,8 @@ export function CommandPaletteProvider({children}:{children:ReactNode}){
   ...([['inbox','Inbox',Inbox],['starred','Starred',Star],['sent','Sent',Send],['drafts','Drafts',File],['outbox','Outbox',Send],['snoozed','Snoozed',Clock],['trash','Trash',Mail]] as const).map(([folder,label,icon])=>({id:'go.'+folder,label:'Go to '+label,group:'Navigate',icon,run:()=>navigate(folder)})),
   ...(auth.accounts.length>1?[{id:'go.unified',label:'Go to All inboxes',group:'Navigate',icon:Users,run:()=>navigate('inbox',true)}]:[]),
   {id:'go.settings',label:'Open Settings',group:'Navigate',icon:Settings,run:async()=>{await auth.prepareForUpdate();router.push('/settings');}},
-  {id:'help.shortcuts',label:'Show keyboard shortcuts',group:'Help',keywords:'help keys productivity',icon:Keyboard,run:()=>{toast.info('Keyboard shortcuts',{description:'Ctrl+K: command palette · Ctrl+S: search · Ctrl+N: compose · Ctrl+Shift+U: toggle read. In the editor, Ctrl+K inserts a link.',duration:8000});}},
-  ...auth.accounts.map(account=>({id:'account.'+account.id,label:'Switch to '+(account.name||account.email),group:'Accounts',keywords:account.email,icon:Users,run:async()=>{await auth.switchAccount(account.id,true);const token=view.requestNavigation(account.id,'inbox');if(token)view.authorizeNavigation(token);view.setFolder('inbox');view.setUnified(false);}})),
+  {id:'help.shortcuts',label:'Show keyboard shortcuts',group:'Help',keywords:'help keys productivity',icon:Keyboard,run:()=>{toast.info('Keyboard shortcuts',{description:'Ctrl+K: command palette · Ctrl+S: search · Ctrl+N: compose · Ctrl+1/2/3: switch account · Ctrl+Shift+U: toggle read. In the editor, Ctrl+K inserts a link.',duration:8000});}},
+  ...auth.accounts.map((account,index)=>({shortcut:`Ctrl ${index+1}`,id:'account.'+account.id,label:'Switch to '+(account.name||account.email),group:'Accounts',keywords:account.email,icon:Users,run:async()=>{await auth.switchAccount(account.id,true);const token=view.requestNavigation(account.id,'inbox');if(token)view.authorizeNavigation(token);view.setFolder('inbox');view.setUnified(false);}})),
   ...([['dark','Dark theme',Moon],['light','Light theme',Sun],['system','Follow system theme',Monitor]]as const).map(([theme,label,icon])=>({id:'theme.'+theme,label,group:'Appearance',icon,run:()=>setTheme(theme)})),
   ...(path==='/inbox'?[...registry.current].flatMap(get=>get()):[]),
  ];
@@ -52,6 +52,7 @@ export function CommandPaletteProvider({children}:{children:ReactNode}){
    if(event.defaultPrevented||!shortcuts||!auth.user||auth.accountBusy||!(event.ctrlKey||event.metaKey)||event.altKey||event.shiftKey)return;
    const target=event.target instanceof HTMLElement?event.target:document.body;
    if(target.closest('[contenteditable="true"],textarea,[role="dialog"]')||document.querySelector('[role="dialog"][aria-modal="true"]'))return;
+   if(/^[1-3]$/.test(event.key)){const account=auth.accounts[Number(event.key)-1];if(account){event.preventDefault();void auth.switchAccount(account.id,true).then(()=>{view.setUnified(false);const token=view.requestNavigation(account.id,'inbox');if(token)view.authorizeNavigation(token);view.setFolder('inbox');}).catch(error=>toast.error(String(error)));}return;}
    if(event.key.toLowerCase()==='k'){event.preventDefault();showRef.current();}
    if(event.key.toLowerCase()==='s'){event.preventDefault();void search().catch(error=>toast.error(String(error)));}
   };window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);

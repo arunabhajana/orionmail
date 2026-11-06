@@ -153,9 +153,7 @@ export default function UnifiedInbox(){
  // A From change uses the same saved-draft handoff as an ordinary mailbox.
  const restoreCompose=useEffectEvent(async(active:()=>boolean)=>{if(!active()||!user)return;const owner=user.id;const pending=takeCompose(owner);if(!pending)return;try{const ipc=await ownedMail(owner,auth,invoke);const draft=pending.draft?await ipc<MailDraft>('open_draft',{id:pending.draft.id}):undefined;if(active())setCompose({owner,key:pending.token,draft});}catch(error){if(active())report(error);}});
  useEffect(()=>{let active=true;queueMicrotask(()=>{void restoreCompose(()=>active);});return()=>{active=false;};},[user?.id]);
- // Keep native activations queued for the established account-specific handler.
- const notification=useEffectEvent(async()=>{const owner=await invoke<string|null>('pending_notification_account');if(owner&&alive.current){await auth.switchAccount(owner,true);if(alive.current){view.setFolder('inbox');view.setUnified(false);}}});
- useEffect(()=>{let active=true,running=false;const consume=async()=>{if(!active||running)return;running=true;try{await notification();}catch(error){if(active)report(error);}finally{running=false;}};const stop=listen('mail:notification_navigation',()=>{void consume();});void consume();return()=>{active=false;void stop.then(fn=>fn()).catch(()=>{});};},[user?.id,path]);
+ // MainLayout serializes notification navigation, including leaving All inboxes.
  const mailto=useEffectEvent(async()=>{
   if(path!=='/inbox'||!user||preparing||busy.current.has('new-compose'))return;const owner=user.id;const link=await invoke<{id:string;to:string[];cc:string;bcc:string;subject:string;body:string}|null>('pending_mailto');if(!link||!alive.current||!isAccountCurrent(owner))return;
   if(compose?.owner===owner){toast.info('Close your current draft to open the waiting email link.');return;}

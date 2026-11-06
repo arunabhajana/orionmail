@@ -21,6 +21,7 @@ pub struct MailPreferences {
     pub taskbar_badge_scope: String,
     pub dnd_enabled: bool,
     pub desktop_notifications: bool,
+    pub smart_notifications: bool,
     pub notification_sound: bool,
     pub hide_notification_content: bool,
     pub quiet_hours: bool,
@@ -31,7 +32,7 @@ pub struct MailPreferences {
     pub prefetch_bodies: bool,
 }
 impl Default for MailPreferences {
-    fn default() -> Self { Self { account_overrides: Default::default(), notify_inbox:true,notify_sent:false,notify_labels:false,important_only:false,notification_tone:"mail".into(),download_folder:String::new(),cache_retention:"30".into(),cache_budget:"512".into(),taskbar_badge:true,taskbar_badge_scope:"active".into(),dnd_enabled: false, desktop_notifications: true, notification_sound: true,
+    fn default() -> Self { Self { account_overrides: Default::default(), notify_inbox:true,notify_sent:false,notify_labels:false,important_only:false,notification_tone:"mail".into(),download_folder:String::new(),cache_retention:"30".into(),cache_budget:"512".into(),taskbar_badge:true,taskbar_badge_scope:"active".into(),dnd_enabled: false, desktop_notifications: true, smart_notifications: false, notification_sound: true,
         hide_notification_content: false, quiet_hours: false, quiet_start: "22:00".into(), quiet_end: "08:00".into(),
         sync_paused: false, poll_interval: "180".into(), prefetch_bodies: true } }
 }
@@ -152,6 +153,17 @@ pub fn get_download_folder(app_handle:AppHandle, account_id:Option<String>)->Res
 
 #[cfg(test)]
 mod tests{
+    #[test] fn smart_notifications_migrate_and_override_independently_of_prefetch(){
+        let base:MailPreferences=serde_json::from_str(r#"{"prefetchBodies":false}"#).unwrap();
+        assert!(!base.smart_notifications);assert!(!base.prefetch_bodies);
+        let disabled=merge(&base,Some(&serde_json::json!({"smartNotifications":false}))).unwrap();
+        assert!(!disabled.smart_notifications);assert!(!disabled.prefetch_bodies);
+        assert!(!merge(&base,None).unwrap().smart_notifications);
+        assert!(merge(&base,Some(&serde_json::json!({"smartNotifications":true}))).unwrap().smart_notifications);
+        let restored:MailPreferences=serde_json::from_str(&serde_json::to_string(&disabled).unwrap()).unwrap();
+        assert!(!restored.smart_notifications);
+    }
+
     use super::*;
     #[test] fn badge_scope_defaults_to_active_and_accepts_only_known_modes(){
         let mut prefs:MailPreferences=serde_json::from_str("{}").unwrap();assert_eq!(prefs.taskbar_badge_scope,"active");

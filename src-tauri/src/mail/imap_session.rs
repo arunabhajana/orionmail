@@ -13,6 +13,7 @@ pub enum SessionKind {
     Primary,
     Sync,
     Prefetch,
+    Notification,
     Body,
     Idle,
     Search,

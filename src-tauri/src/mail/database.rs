@@ -1181,14 +1181,16 @@ pub fn update_message_body(app_handle: &AppHandle, account_id: &str, folder: &st
         "UPDATE messages SET processed_html = ?1, snippet = ?2, attachments_json = ?3, extracted_data = ?4, body_fetched = 1, body_cached_at=strftime('%s','now') WHERE account_id = ?5 AND folder = ?6 AND uid = ?7",
         rusqlite::params![body, snippet, attachments_json, extracted_data, account_id, folder, uid],
     ).map_err(|e| e.to_string())?;
-
+    crate::mail::notifications::schedule_refresh(app_handle, account_id);
     Ok(())
 }
 
 #[expect(clippy::too_many_arguments, reason = "Keeps the complete validated mail identity and operation fields explicit at this boundary.")]
 pub fn update_message_body_if_current(app: &AppHandle, account: &str, folder: &str, uid: u32, validity: u32, body: &str, snippet: &str, attachments: Option<String>, extracted: Option<String>) -> Result<(), String> {
     let conn = open_connection(app)?;
-    commit_body(&conn, account, folder, uid, validity, body, snippet, attachments, extracted)
+    commit_body(&conn, account, folder, uid, validity, body, snippet, attachments, extracted)?;
+    crate::mail::notifications::schedule_refresh(app,account);
+    Ok(())
 }
 
 #[expect(clippy::too_many_arguments, reason = "Explicit account, folder and UID-validity fences accompany the complete atomic database mutation.")]

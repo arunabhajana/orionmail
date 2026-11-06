@@ -89,7 +89,7 @@ impl BodyPrefetchManager {
         responder: Option<oneshot::Sender<Result<MessageDetail, String>>>,
     ) {
         if priority == PrefetchPriority::Background {
-            if !crate::window_activity::is_displayed() { return; }
+            if !crate::window_activity::is_foreground() { return; }
             let prefs = crate::mail_preferences::load_for(&app_handle, &account.id);
             if !prefs.prefetch_bodies || prefs.sync_paused { return; }
         }
@@ -216,7 +216,7 @@ impl BodyPrefetchManager {
         
         tokio::spawn(async move {
             loop {
-                let allow_background = crate::window_activity::is_displayed() && {
+                let allow_background = crate::window_activity::is_foreground() && {
                     let prefs = crate::mail_preferences::load(&app_handle);
                     prefs.prefetch_bodies && !prefs.sync_paused
                 };
@@ -247,7 +247,7 @@ impl BodyPrefetchManager {
                 };
 
                 let policy=crate::mail_preferences::load_for(&app_handle,&job.account.id);
-                if priority == PrefetchPriority::Background && (!policy.prefetch_bodies || policy.sync_paused) {
+                if priority == PrefetchPriority::Background && (!crate::window_activity::is_foreground() || !policy.prefetch_bodies || policy.sync_paused) {
                     let mut state=manager.state.lock().await;
                     // take_next moves responders into in_progress. A reader
                     // may also have joined since the background job was taken.

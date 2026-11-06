@@ -7,7 +7,7 @@ export const defaultPreferences = {
     signature: "", defaultCc: "", defaultBcc: "", composeFont: "system", confirmEmptySubject: true, attachmentReminder: true,
     readingFontSize: "16", markRead: "immediate", autoSelectNext: false,
     density: "default", showAvatars: true, previewLines: "2", dateFormat: "relative", readingPane: "right", defaultFolder: "inbox",
-    desktopNotifications: true, notificationSound: true, hideNotificationContent: false, showUnreadCount: true,
+    desktopNotifications: true, smartNotifications: false, notificationSound: true, hideNotificationContent: false, showUnreadCount: true,
     quietHours: false, quietStart: "22:00", quietEnd: "08:00",
     blockRemoteImages: true, confirmExternalLinks: true,
     syncPaused: false, pollInterval: "180", prefetchBodies: true, shortcutsEnabled: true,

@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { Search, RefreshCw, Mailbox, CheckCircle2, Flag } from 'lucide-react';
+import { Search, RefreshCw, Mailbox, CheckCircle2, Flag, ArrowUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Email } from '@/lib/types';
 import { motion } from 'framer-motion';
@@ -393,6 +393,7 @@ const EmailList: React.FC<EmailListProps> = ({
                     onTouchMove={handleTouchMove}
                     onTouchEnd={handleTouchEnd}
                 >
+                {(rowVirtualizer.scrollOffset??0)>350 && <div className="pointer-events-none sticky top-3 z-20 flex h-0 items-start justify-center"><button type="button" aria-label="Back to top" onClick={()=>parentRef.current?.scrollTo({top:0,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'})} className="pointer-events-auto inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-primary/25 bg-background px-4 py-2.5 text-xs font-medium text-foreground shadow-lg ring-2 ring-background/80 transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-primary"><ArrowUp className="size-3.5"/>Back to top</button></div>}
                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
                         {virtualItems.map((virtualRow) => {
                             const email = displayedEmails[virtualRow.index];

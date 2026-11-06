@@ -27,3 +27,7 @@ it('does not execute a command captured for a different account',async()=>{
 it('honours disabled shortcuts and navigation guards',async()=>{
  state.enabled=false;const {rerender}=render(<App/>);fireEvent.keyDown(document.body,{key:'k',ctrlKey:true});expect(screen.queryByRole('dialog')).toBeNull();state.enabled=true;rerender(<App/>);state.guard.mockRejectedValue(new Error('Save your settings first'));fireEvent.keyDown(document.body,{key:'k',ctrlKey:true});const input=await screen.findByRole('combobox');fireEvent.change(input,{target:{value:'Open Settings'}});fireEvent.keyDown(input,{key:'Enter'});await waitFor(()=>expect(state.guard).toHaveBeenCalledOnce());expect(state.push).not.toHaveBeenCalled();
 });
+
+it('switches accounts with Ctrl+number, ignoring absent accounts and editors',async()=>{
+ render(<App/>);fireEvent.keyDown(document.body,{key:'2',ctrlKey:true});await waitFor(()=>expect(state.switch).toHaveBeenCalledWith('b',true));expect(state.unified).toHaveBeenCalledWith(false);state.switch.mockClear();fireEvent.keyDown(document.body,{key:'3',ctrlKey:true});fireEvent.keyDown(screen.getByLabelText('Message editor'),{key:'1',ctrlKey:true});expect(state.switch).not.toHaveBeenCalled();
+});

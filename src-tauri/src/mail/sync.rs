@@ -348,7 +348,7 @@ pub async fn sync_folder_with_options(
     // Quiet syncs must not keep crawling older uncached bodies while the user
     // is idle. The settled viewport already prefetches messages being browsed.
     let preferences = crate::mail_preferences::load_for(app_handle, &account.id);
-    if !history_pass && new_messages_count > 0 && crate::window_activity::is_displayed()
+    if !history_pass && new_messages_count > 0 && crate::window_activity::is_foreground()
         && preferences.prefetch_bodies && !preferences.sync_paused
     {
         let cache_app = app_handle.clone();

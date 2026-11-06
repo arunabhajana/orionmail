@@ -7,6 +7,7 @@ import { AlertCircle, ArrowRight, Loader2 } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import {useInstalledVersion} from "@/hooks/useInstalledVersion";
 import {currentRelease} from "@/lib/generated/releases";
+import {RequestAccess} from './RequestAccess';
 
 export default function LoginPage() {
     const version=useInstalledVersion();
@@ -57,6 +58,7 @@ export default function LoginPage() {
                 </button>
                 <p id="login-status" role="status" className="mt-3 text-center text-xs leading-relaxed text-muted-foreground">{pending ? 'Finish signing in in your browser, then return here.' : 'Sign-in opens securely in your browser.'}</p>
                 {error && <div role="alert" className="mt-4 flex items-start gap-2 rounded-xl border border-red-500/15 bg-red-500/[0.05] p-3 text-xs leading-relaxed text-red-600 dark:text-red-300"><AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" /><span>{error}</span></div>}
+                <RequestAccess />
             </section>
             <footer className="mt-6 text-center text-[11px] text-muted-foreground">
                 <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">

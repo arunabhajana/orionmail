@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Tauri App"
 authors = ["you"]
 license = "MIT"
@@ -64,6 +64,8 @@ version = "0.58"
 features = [
     "implement",
     "Data_Xml_Dom",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
     "Foundation_Collections",
     "UI_Notifications",
     "Security_Credentials_UI",

@@ -358,6 +358,22 @@ fn show_xml_inner(content: &str, tag: &str, popup: bool) -> Result<(), String> {
     });
     Ok(())
 }
+fn notification_body(body:&str,batch:&Batch,smart_enabled:bool)->String {
+    let mut body=body.to_string();
+    if smart_enabled {
+        for item in batch.items.iter().take(3) {
+            if let Some(action)=&item.smart {
+                if action.label=="Copy code" && !action.link && !action.value.is_empty() {
+                    body=body.replace(&action.value,"••••••");
+                }
+            }
+        }
+    }
+    body
+}
+fn action_xml(token:&str,verb:&str,label:&str)->String {
+    format!("<action content=\"{}\" arguments=\"{}:{}\" activationType=\"foreground\"/>",xml(label),xml(token),xml(verb))
+}
 pub fn show(
     batch: &Batch,
     title: &str,
@@ -365,25 +381,24 @@ pub fn show(
     attribution: &str,
     sound: bool,
     popup: bool,
-    tone: &str,
+    smart_options: (&str, bool),
 ) -> Result<(), String> {
     if !popup && !present(&batch.display_tag)? {
         return Ok(());
     }
     let open = format!("{}:open", batch.token);
-    let read = format!("{}:read", batch.token);
-    let open_label = if batch.items.len() == 1 {
-        "Open email"
-    } else {
-        "Open OrionMail"
-    };
+
     let read_label = if batch.items.len() == 1 {
         "Mark as read"
     } else {
         "Mark all as read"
     };
+    let (tone, show_smart)=smart_options;
+    let smart=if show_smart {batch.items.first().and_then(|item|item.smart.as_ref()).map(|action|action_xml(&batch.token,"smart",&action.label)).unwrap_or_default()}else{String::new()};
+    let buttons=format!("{}{}",smart,action_xml(&batch.token,"read",read_label));
+    let body=notification_body(body,batch,show_smart);
     let audio = notification_audio(sound,tone);
-    show_xml(&format!("<toast launch=\"{open}\" activationType=\"foreground\"><visual><binding template=\"ToastGeneric\"><image placement=\"appLogoOverride\" src=\"{}\"/><text>{}</text><text hint-maxLines=\"4\">{}</text><text placement=\"attribution\">{}</text></binding></visual><actions><action content=\"{open_label}\" arguments=\"{open}\" activationType=\"foreground\"/><action content=\"{read_label}\" arguments=\"{read}\" activationType=\"background\" afterActivationBehavior=\"pendingUpdate\"/></actions>{audio}</toast>",xml(&icon_uri()?),xml(title),xml(body),xml(attribution)),&batch.display_tag,popup)
+    show_xml(&format!("<toast launch=\"{open}\" activationType=\"foreground\"><visual><binding template=\"ToastGeneric\"><image placement=\"appLogoOverride\" src=\"{}\"/><text>{}</text><text hint-maxLines=\"4\">{}</text><text placement=\"attribution\">{}</text></binding></visual><actions>{buttons}</actions>{audio}</toast>",xml(&icon_uri()?),xml(title),xml(&body),xml(attribution)),&batch.display_tag,popup)
 }
 pub fn status(title: &str, body: &str) -> Result<(), String> {
     show_xml(&format!("<toast launch=\"app:open\"><visual><binding template=\"ToastGeneric\"><image placement=\"appLogoOverride\" src=\"{}\"/><text>{}</text><text>{}</text></binding></visual><actions><action content=\"Open OrionMail\" arguments=\"app:open\" activationType=\"foreground\"/></actions><audio silent=\"true\"/></toast>",xml(&icon_uri()?),xml(title),xml(body)),"status",true)
@@ -440,4 +455,44 @@ fn notification_audio(sound:bool,tone:&str)->&'static str {
 }
 pub fn preview(title:&str,body:&str,sound:bool,tone:&str)->Result<(),String>{
     show_xml(&format!("<toast launch=\"app:open\"><visual><binding template=\"ToastGeneric\"><image placement=\"appLogoOverride\" src=\"{}\"/><text>{}</text><text>{}</text></binding></visual>{}</toast>",xml(&icon_uri()?),xml(title),xml(body),notification_audio(sound,tone)),"preview",true)
+}
+
+pub fn copy(app: &AppHandle, value: String) -> Result<(), String> {
+ use ::windows::Win32::{Foundation::{GlobalFree,HANDLE,HWND},System::{DataExchange::{OpenClipboard,CloseClipboard,EmptyClipboard,SetClipboardData},Memory::{GlobalAlloc,GlobalLock,GlobalUnlock,GMEM_MOVEABLE}}};
+ let window=app.get_webview_window("main").ok_or("Main window unavailable")?;
+ let owner=HWND(window.hwnd().map_err(|e|e.to_string())?.0);
+ let text=value.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+ unsafe {
+  let memory=GlobalAlloc(GMEM_MOVEABLE,text.len()*2).map_err(|e|e.to_string())?;
+  let target=GlobalLock(memory) as *mut u16;
+  if target.is_null(){let _=GlobalFree(memory);return Err("Clipboard allocation unavailable".into());}
+  std::ptr::copy_nonoverlapping(text.as_ptr(),target,text.len());let _=GlobalUnlock(memory);
+  let mut opened=false;
+  for _ in 0..5 {if OpenClipboard(owner).is_ok(){opened=true;break;}std::thread::sleep(std::time::Duration::from_millis(20));}
+  if !opened{let _=GlobalFree(memory);return Err("Clipboard is busy. Try Copy code again.".into());}
+  let result=EmptyClipboard().and_then(|_|SetClipboardData(13,HANDLE(memory.0)));
+  let _=CloseClipboard();
+  if let Err(error)=result{let _=GlobalFree(memory);return Err(error.to_string());}
+ }
+ let _=status("Copied to clipboard","Paste it where you need it.");
+ Ok(())
+}
+
+#[cfg(test)] mod activation_tests {
+ use super::*;
+ #[test] fn code_preview_does_not_expose_a_second_copy_target(){
+  let item:super::super::Item=serde_json::from_str(r#"{"uid":1,"validity":1,"sender":"Alex","subject":"Verification code","smart":{"label":"Copy code","value":"012345","link":false,"created_at":1}}"#).unwrap();
+  let batch=Batch{token:"test".into(),account_id:"account".into(),display_tag:"test".into(),items:vec![item],created_at:1};
+  assert_eq!(notification_body("Your verification code is 012345",&batch,true),"Your verification code is ••••••");
+  assert_eq!(batch.items[0].smart.as_ref().unwrap().value,"012345");
+  assert_eq!(notification_body("Your verification code is 012345",&batch,false),"Your verification code is 012345");
+ }
+ #[test] fn every_mail_button_uses_desktop_com_activation(){
+  for verb in ["open","read","smart"]{
+   let xml=action_xml("0123456789abcdef0123456789abcdef",verb,"Copy & read");
+   assert!(xml.contains("activationType=\"foreground\""));
+   assert!(xml.contains(&format!("arguments=\"0123456789abcdef0123456789abcdef:{verb}\"")));
+   assert!(xml.contains("Copy &amp; read"));assert!(!xml.contains("background"));
+  }
+ }
 }

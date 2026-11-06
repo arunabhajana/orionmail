@@ -1,3 +1,3 @@
 "use client";
 import { PreferencesSection } from "./PreferencesSection";
-export function NotificationsSection() { return <PreferencesSection section="notifications" />; }
+export function NotificationsSection() { return <div className="space-y-5"><section className="settings-group p-5"><h2 className="text-sm font-semibold">Smart Notifications</h2><p className="mt-2 text-xs leading-relaxed text-muted-foreground">Copy detected verification codes and tracking numbers, or open recognized meeting links directly from a Windows mail notification. Off by default. Enable Smart Notifications below to fetch a small preview for new mail even while the app is unfocused or in the tray. This is independent of normal message preloading. Quick actions expire after 15 minutes and are hidden when notification content is hidden or OrionMail is locked.</p></section><PreferencesSection section="notifications" /></div>; }

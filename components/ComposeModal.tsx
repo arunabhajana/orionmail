@@ -1,4 +1,5 @@
 "use client";
+import {queuedFeedback} from '@/lib/mail-feedback';
 
 import React, { useState, useRef, useEffect, useCallback, useId, useImperativeHandle } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -35,7 +36,6 @@ import { useAuth } from "./AuthContext";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useDraftComposer } from '@/hooks/useDraftComposer';
 import { draftStatus, type DraftPayload, type MailDraft } from '@/lib/drafts';
-import {toast as notify} from 'sonner';
 import {useNetworkStatus} from '@/hooks/useNetworkStatus';
 
 // --------------------------------------------------------------------------
@@ -436,7 +436,7 @@ export default function ComposeModal({ onClose, windowRef, initialDraft, initial
 
       draft.markQueued();
       setComposeStatus("queued");
-      notify.success('Message saved to Outbox', {description:'It sends automatically when connected. You can track it or return it to Drafts from Outbox.'});
+      queuedFeedback(user!.id, saved.id, subject);
 
       onClose();
     } catch (error) {
@@ -515,6 +515,23 @@ export default function ComposeModal({ onClose, windowRef, initialDraft, initial
       console.error("Failed to select attachments:", error);
       showToast(String(error));
     }
+  };
+
+  const importBusy = useRef(false);
+  const importFiles = async (files: File[]) => {
+    if (importBusy.current || editingDisabled || isAttaching || isProcessingAttachmentsRef.current || isHidden || isMinimized) return;
+    if(files.length+attachmentsRef.current.length>MAX_ATTACHMENTS || files.reduce((n,f)=>n+f.size,0)+attachmentsRef.current.reduce((n,f)=>n+f.size,0)>MAX_ATTACHMENT_BYTES){showToast('Attachments must fit within 25 files and 18 MB.');return;}
+    importBusy.current=true;
+    setIsAttaching(true);
+    const selected: Array<{handle:string;name:string;size:number;mime_type:string}>=[];
+    try {
+      for(const file of files){
+        const encoded=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read file'));reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.readAsDataURL(file);});
+        selected.push(await invoke('import_attachment',{name:file.name||'pasted-image.png',encoded}));
+      }
+      await processAttachments(selected);
+    }catch(error){await invoke('release_attachment_handles',{handles:selected.map(f=>f.handle)}).catch(()=>{});showToast(String(error));}
+    finally{importBusy.current=false;setIsAttaching(false);}
   };
 
   const removeAttachment = (id: string) => {
@@ -688,6 +705,9 @@ export default function ComposeModal({ onClose, windowRef, initialDraft, initial
       {/* Modal Window */}
       <motion.div
         ref={dialogRef}
+        onDragOver={event=>{if(event.dataTransfer.types.includes('Files')){event.preventDefault();event.dataTransfer.dropEffect='copy';}}}
+        onDrop={event=>{if(event.dataTransfer.files.length){event.preventDefault();event.stopPropagation();void importFiles(Array.from(event.dataTransfer.files));}}}
+        onPasteCapture={event=>{const files=Array.from(event.clipboardData.files);if(files.length){event.preventDefault();event.stopPropagation();void importFiles(files);}}}
         role="dialog"
         aria-modal={!isMinimized && !isHidden}
         aria-labelledby={titleId}
@@ -970,6 +990,7 @@ export default function ComposeModal({ onClose, windowRef, initialDraft, initial
               <label htmlFor="compose-subject" className="compose-field-label">Subject</label>
               <input
                 id="compose-subject"
+                autoComplete="off"
                 ref={subjectRef}
                 className="flex-1 bg-transparent border-none focus:ring-0 text-sm p-0 placeholder:text-muted-foreground/50 dark:placeholder:text-white/40 text-foreground dark:text-white/90 font-medium outline-none"
                 placeholder="Enter subject line"
